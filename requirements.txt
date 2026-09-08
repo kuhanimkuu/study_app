@@ -1,0 +1,58 @@
+# Study OS — server dependencies.
+#
+# Scoped to what this project's code actually imports (verified via a
+# grep across every features/*/engine.py and server/*.py), not a raw
+# `pip freeze` — this machine's global Python environment has ~160
+# packages installed from unrelated projects (Django, selenium,
+# playwright, google-generativeai, etc.); none of that belongs here.
+# Versions are pinned to what's actually been running and tested on this
+# machine throughout this build.
+#
+# Install with: pip install -r requirements.txt
+#
+# torch note: this project deliberately uses CPU-only PyTorch (see
+# model_router/README.md) — if `pip install` pulls a CUDA build or fails
+# to resolve, install from the CPU wheel index instead:
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+
+# --- server (server/) ---
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+pydantic==2.12.5
+bcrypt==5.0.0
+PyJWT==2.10.1
+cryptography==46.0.3
+
+# --- math_engine ---
+sympy==1.14.0
+numpy==2.5.3
+scipy==1.18.1
+Pint==0.25.3
+
+# --- visual_explanation / document_generation ---
+matplotlib==3.11.1
+reportlab==4.4.9
+pygltflib==1.16.5
+
+# --- ocr / image_processing ---
+opencv-python-headless==5.0.0.93
+pillow==12.1.0
+pytesseract==0.3.13
+
+# --- document_engine (PDF processing) ---
+pymupdf==1.28.0
+
+# --- input_pipeline (audio/web) ---
+faster-whisper==1.2.1
+requests==2.32.5
+beautifulsoup4==4.15.0
+
+# --- rag (embeddings for project search) ---
+fastembed==0.8.0
+
+# --- model_router (local LLM + BYOK backends) ---
+torch==2.14.0
+transformers==5.16.1
+anthropic==1.4.0
+openai==3.8.0

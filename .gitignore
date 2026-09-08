@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# runtime artifacts, not source
+server/uploads/
+features/personalization/memory_log/*.db
+features/rag/projects/projects/
+features/moderator/generated/
+
+# user accounts DB (auth essentials + per-user encryption keys, see
+# db.py/crypto.py) + the JWT signing secret — never committed, regenerated
+# per environment; see server/security.py's dev-mode notes
+server/users.db
+server/.jwt_secret
+
+# model_router's model weights are cached by huggingface_hub outside this
+# repo (~/.cache/huggingface), nothing to ignore here
