@@ -14,6 +14,7 @@ features/moderator/generated/
 # per environment; see server/security.py's dev-mode notes
 server/users.db
 server/.jwt_secret
+server/.encryption_key
 
 # model_router's model weights are cached by huggingface_hub outside this
 # repo (~/.cache/huggingface), nothing to ignore here
