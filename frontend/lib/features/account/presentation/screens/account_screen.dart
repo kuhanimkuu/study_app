@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/settings/model_settings_service.dart';
+import '../../../profile/presentation/screens/memory_screen.dart';
+import '../../../profile/presentation/screens/personality_settings_screen.dart';
 
 /// Profile + BYOK model preference. "backend" chooses between the app's
 /// free local model and the user's own Anthropic/OpenAI key.
@@ -29,14 +31,28 @@ class _AccountScreenState extends State<AccountScreen> {
   final _apiKeyController = TextEditingController();
   final _displayNameController = TextEditingController();
 
+  final _educationLevelController = TextEditingController();
+  final _courseController = TextEditingController();
+  final _institutionController = TextEditingController();
+  final _preferredLanguageController = TextEditingController();
+  final _dailyStudyTargetController = TextEditingController();
+
   bool _isSaving = false;
+  bool _isSavingProfile = false;
   String? _error;
   String? _savedMessage;
+  String? _profileSavedMessage;
 
   @override
   void initState() {
     super.initState();
-    _displayNameController.text = widget.authService.user?['display_name'] as String? ?? '';
+    final user = widget.authService.user;
+    _displayNameController.text = user?['display_name'] as String? ?? '';
+    _educationLevelController.text = user?['education_level'] as String? ?? '';
+    _courseController.text = user?['course'] as String? ?? '';
+    _institutionController.text = user?['institution'] as String? ?? '';
+    _preferredLanguageController.text = user?['preferred_language'] as String? ?? '';
+    _dailyStudyTargetController.text = (user?['daily_study_target_minutes'] as int?)?.toString() ?? '';
     if (_settings.hasApiKey) _apiKeyController.text = _settings.apiKey!;
   }
 
@@ -93,6 +109,29 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
+  Future<void> _saveStudentProfile() async {
+    setState(() {
+      _isSavingProfile = true;
+      _profileSavedMessage = null;
+    });
+    try {
+      final targetText = _dailyStudyTargetController.text.trim();
+      await widget.authService.updateStudentProfile(
+        educationLevel: _educationLevelController.text.trim().isEmpty ? null : _educationLevelController.text.trim(),
+        course: _courseController.text.trim().isEmpty ? null : _courseController.text.trim(),
+        institution: _institutionController.text.trim().isEmpty ? null : _institutionController.text.trim(),
+        preferredLanguage:
+            _preferredLanguageController.text.trim().isEmpty ? null : _preferredLanguageController.text.trim(),
+        dailyStudyTargetMinutes: targetText.isEmpty ? null : int.tryParse(targetText),
+      );
+      setState(() => _profileSavedMessage = 'Profile saved.');
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _isSavingProfile = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = widget.authService.user;
@@ -121,6 +160,69 @@ class _AccountScreenState extends State<AccountScreen> {
           Align(
             alignment: Alignment.centerRight,
             child: TextButton(onPressed: _isSaving ? null : _saveDisplayName, child: const Text('Update profile')),
+          ),
+          const Divider(height: 32),
+          Text('Student profile', style: Theme.of(context).textTheme.titleMedium),
+          Text(
+            'Optional — never required to use Study OS.',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _educationLevelController,
+            decoration: const InputDecoration(labelText: 'Education level'),
+          ),
+          const SizedBox(height: 8),
+          TextField(controller: _courseController, decoration: const InputDecoration(labelText: 'Course / program')),
+          const SizedBox(height: 8),
+          TextField(controller: _institutionController, decoration: const InputDecoration(labelText: 'Institution')),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _preferredLanguageController,
+            decoration: const InputDecoration(labelText: 'Preferred language'),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _dailyStudyTargetController,
+            decoration: const InputDecoration(labelText: 'Daily study target (minutes)'),
+            keyboardType: TextInputType.number,
+          ),
+          if (_profileSavedMessage != null) ...[
+            const SizedBox(height: 8),
+            Text(_profileSavedMessage!, style: TextStyle(color: Theme.of(context).colorScheme.primary)),
+          ],
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _isSavingProfile ? null : _saveStudentProfile,
+              child: const Text('Save profile'),
+            ),
+          ),
+          const Divider(height: 32),
+          Text('Personalization', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.tune_outlined),
+              title: const Text('Personality'),
+              subtitle: const Text('Tone, verbosity, teaching style, and more'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => PersonalitySettingsScreen(apiClient: widget.authService.apiClient)),
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.psychology_outlined),
+              title: const Text('Memory'),
+              subtitle: const Text('Facts and preferences you\'ve told it to remember'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => MemoryScreen(apiClient: widget.authService.apiClient)),
+              ),
+            ),
           ),
           const Divider(height: 32),
           Text('AI backend', style: Theme.of(context).textTheme.titleMedium),

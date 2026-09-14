@@ -259,6 +259,22 @@ async def run(**kwargs: Any) -> dict:
     # the memory_query route (below) to answer "what did I struggle with"
     # style questions; never persisted here.
     local_events: list[dict] = kwargs.get("local_events", [])
+    # Optional, additive (2026-09-14 — see STUDY_OS_PROGRESS.md): a
+    # pre-built prompt fragment covering the caller's personality +
+    # explicit-memory preferences (server/ai/moderator/style.py). None for
+    # any caller that doesn't pass it (this file's own __main__ demo
+    # included) — every function that threads this through treats absence
+    # as "append nothing," so this is strictly additive, not a behavior
+    # change for existing callers.
+    personality_style: str | None = kwargs.get("personality_style")
+    # Also optional/additive, alongside personality_style: a text-only
+    # verbosity instruction proved unreliable against the real local model
+    # in testing (see server/ai/moderator/explain.py's history) — this
+    # lets the caller mechanically cap response length the same way
+    # /explain does, instead of only hoping the model complies. None means
+    # each prompt-authoring function keeps its own existing hardcoded
+    # default, unchanged.
+    personality_max_tokens: int | None = kwargs.get("personality_max_tokens")
 
     if task is None and session_id in _pending:
         pending = _pending.pop(session_id)
@@ -272,7 +288,7 @@ async def run(**kwargs: Any) -> dict:
     try:
         blocks, engine_used, topic = await _route(
             input_type, content, task, detected, query, pdf_path, requested_format, project, params,
-            model_config, user_id, local_events,
+            model_config, user_id, local_events, personality_style, personality_max_tokens,
         )
     except NeedsClarification as exc:
         _pending[session_id] = {"asked": exc.question, "context": exc.context}
@@ -312,6 +328,8 @@ async def _route(
     model_config: dict,
     user_id: int | None,
     local_events: list[dict],
+    personality_style: str | None = None,
+    personality_max_tokens: int | None = None,
 ) -> tuple[list[dict], str, str]:
     if input_type == "pdf":
         return await _route_pdf(content, query, pdf_path)
@@ -320,7 +338,10 @@ async def _route(
     if input_type == "project":
         return await _route_project(content, project, query, user_id)
     if input_type == "text":
-        return await _route_text(content, task, detected, requested_format, params, model_config, user_id, local_events)
+        return await _route_text(
+            content, task, detected, requested_format, params, model_config, user_id, local_events,
+            personality_style, personality_max_tokens,
+        )
     raise NeedsClarification(f"I don't know how to handle input_type={input_type!r} yet.", {"input_type": input_type, "content": content})
 
 
@@ -546,6 +567,8 @@ async def _route_text(
     model_config: dict,
     user_id: int | None,
     local_events: list[dict],
+    personality_style: str | None = None,
+    personality_max_tokens: int | None = None,
 ) -> tuple[list[dict], str, str]:
     if task is None and requested_format in ("graph", "interactive_2d"):
         task = requested_format
@@ -553,7 +576,7 @@ async def _route_text(
     if task is None:
         task = _infer_task(content, detected)
     if task is None:
-        return await _route_research_or_clarify(content, model_config)
+        return await _route_research_or_clarify(content, model_config, personality_style, personality_max_tokens)
 
     if task in _STRUCTURED_ENGINES:
         return await _route_structured(task, params)
@@ -586,7 +609,7 @@ async def _route_text(
             result = await _symbolic.run(expression=expression, operation=operation)
         except Exception as exc:
             return [{"type": "error", "engine": "symbolic", "message": str(exc)}], "symbolic", expression
-        text = await _author_text(task, expression, result, model_config)
+        text = await _author_text(task, expression, result, model_config, personality_style, personality_max_tokens)
         blocks = [
             {"type": "text", "content": text, "source": "moderator"},
             {"type": "equation", "latex": result["latex"], "source": "symbolic"},
@@ -599,7 +622,12 @@ async def _route_text(
     )
 
 
-async def _route_research_or_clarify(content: str, model_config: dict) -> tuple[list[dict], str, str]:
+async def _route_research_or_clarify(
+    content: str,
+    model_config: dict,
+    personality_style: str | None = None,
+    personality_max_tokens: int | None = None,
+) -> tuple[list[dict], str, str]:
     """Reached when no task could be inferred at all. Three-step fallback,
     each one honest about why it's tried before falling through:
       1. research_engine/intent_analysis — if this genuinely looks like it
@@ -640,7 +668,7 @@ async def _route_research_or_clarify(content: str, model_config: dict) -> tuple[
                 )
             return blocks, "search_pipeline", content
 
-    general_reply = await _author_general_reply(content, model_config)
+    general_reply = await _author_general_reply(content, model_config, personality_style, personality_max_tokens)
     if general_reply is not None:
         return [{"type": "text", "content": general_reply, "source": "moderator"}], "model_router", content
 
@@ -651,19 +679,34 @@ async def _route_research_or_clarify(content: str, model_config: dict) -> tuple[
     )
 
 
-async def _author_general_reply(content: str, model_config: dict) -> str | None:
+async def _author_general_reply(
+    content: str,
+    model_config: dict,
+    personality_style: str | None = None,
+    personality_max_tokens: int | None = None,
+) -> str | None:
     """General-conversation fallback used by _route_research_or_clarify.
     Unlike _author_text's math routes, there's no non-LLM template that
     could stand in for an open-ended conversational answer — so a failed
     call here returns None (not a canned reply), and the caller falls
-    back to asking for clarification instead of faking an answer."""
+    back to asking for clarification instead of faking an answer.
+
+    personality_style/personality_max_tokens (2026-09-14, optional,
+    additive — see run()'s doc comment): when absent, this function is
+    byte-for-byte what it always was, including the fixed "2-4 sentences"
+    length guidance below; when present, the caller's own style note
+    (appended last, so it can't override anything above it) and a
+    mechanical max_tokens cap take over as the actual length driver
+    instead — the fixed phrase stays as a floor for when no personality
+    signal is provided, not a competing instruction when one is."""
     prompt = (
         "You are a helpful, knowledgeable study assistant having a normal conversation. "
         f"The student said: '{content}'. Reply naturally and concisely (2-4 sentences unless "
-        "the question clearly needs more detail)."
+        f"the question clearly needs more detail).{personality_style or ''}"
     )
+    max_tokens = personality_max_tokens or 220
     try:
-        llm_result = await _model_router.run(prompt=prompt, max_tokens=220, **model_config)
+        llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
         text = llm_result["text"].strip()
         return text or None
     except Exception:
@@ -905,7 +948,14 @@ def _task_from_clarification_reply(reply: str) -> str | None:
     return None
 
 
-async def _author_text(task: str, expression: str, result: dict, model_config: dict) -> str:
+async def _author_text(
+    task: str,
+    expression: str,
+    result: dict,
+    model_config: dict,
+    personality_style: str | None = None,
+    personality_max_tokens: int | None = None,
+) -> str:
     """Real LLM-authored explanation, given the engine's raw facts as
     context — falls back to the fixed-template version if the model call
     fails for any reason (wrong/expired BYOK key, local model not
@@ -914,16 +964,22 @@ async def _author_text(task: str, expression: str, result: dict, model_config: d
 
     `model_config` is the caller's chosen backend (per-user for BYOK —
     see model_router/README.md): {"backend": "local"|"anthropic"|"openai",
-    "tier"?: str, "api_key"?: str, "model_name"?: str}."""
+    "tier"?: str, "api_key"?: str, "model_name"?: str}.
+
+    personality_style/personality_max_tokens (2026-09-14, optional,
+    additive): same reasoning as _author_general_reply's — absent means
+    unchanged behavior, present means the caller's style note and
+    mechanical length cap take over as the actual style/length driver."""
     prompt = (
         "You are a concise, clear math tutor. A student asked to "
         f"{task} the expression '{expression}'. The computed result is: "
         f"answer = {result['answer']}, steps = {result['steps']}. "
         "In 1-2 short sentences, explain this result to the student. "
-        "Do not repeat the raw steps list verbatim; explain it naturally."
+        f"Do not repeat the raw steps list verbatim; explain it naturally.{personality_style or ''}"
     )
+    max_tokens = personality_max_tokens or 120
     try:
-        llm_result = await _model_router.run(prompt=prompt, max_tokens=120, **model_config)
+        llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
         text = llm_result["text"].strip()
         if text:
             return text

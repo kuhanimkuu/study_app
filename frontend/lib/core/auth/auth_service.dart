@@ -135,4 +135,21 @@ class AuthService extends ChangeNotifier {
     _user = await apiClient.updateAccount(displayName: displayName);
     notifyListeners();
   }
+
+  Future<void> updateStudentProfile({
+    String? educationLevel,
+    String? course,
+    String? institution,
+    String? preferredLanguage,
+    int? dailyStudyTargetMinutes,
+  }) async {
+    _user = await apiClient.updateAccount(
+      educationLevel: educationLevel,
+      course: course,
+      institution: institution,
+      preferredLanguage: preferredLanguage,
+      dailyStudyTargetMinutes: dailyStudyTargetMinutes,
+    );
+    notifyListeners();
+  }
 }

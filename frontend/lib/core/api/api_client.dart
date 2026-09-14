@@ -107,9 +107,23 @@ class ApiClient {
     return _decode(res);
   }
 
-  Future<Map<String, dynamic>> updateAccount({String? displayName}) async {
+  /// Student-profile fields (blueprint Section 5) — all optional, none
+  /// required to use the app.
+  Future<Map<String, dynamic>> updateAccount({
+    String? displayName,
+    String? educationLevel,
+    String? course,
+    String? institution,
+    String? preferredLanguage,
+    int? dailyStudyTargetMinutes,
+  }) async {
     final body = <String, dynamic>{
       if (displayName != null) 'display_name': displayName,
+      if (educationLevel != null) 'education_level': educationLevel,
+      if (course != null) 'course': course,
+      if (institution != null) 'institution': institution,
+      if (preferredLanguage != null) 'preferred_language': preferredLanguage,
+      if (dailyStudyTargetMinutes != null) 'daily_study_target_minutes': dailyStudyTargetMinutes,
     };
     final res = await http
         .patch(Uri.parse('$baseUrl/api/account'), headers: _jsonHeaders, body: jsonEncode(body))
@@ -333,6 +347,288 @@ class ApiClient {
     request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
     final streamed = await request.send().timeout(_requestTimeout, onTimeout: _timeoutError);
     final res = await http.Response.fromStream(streamed);
+    return _decode(res);
+  }
+
+  // --- concepts, mastery, assessment (blueprint Sections 15-18) ---
+  //
+  // All under /api/v1 — see server/domains/learning/router.py and
+  // server/domains/assessment/router.py. Same raw-JSON convention as
+  // everything above; no typed models introduced here to match.
+
+  Future<Map<String, dynamic>> listConcepts(String slug) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/concepts'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createConcept({
+    required String slug,
+    required String name,
+    String? description,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/concepts'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'name': name, if (description != null) 'description': description}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> getConceptMastery(int conceptId) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/mastery'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// See server/ai/moderator/router.py — depth/style adapt to the
+  /// student's real mastery, memory, and personality server-side; this
+  /// call itself takes no parameters beyond an optional BYOK modelConfig.
+  Future<Map<String, dynamic>> explainConcept(int conceptId, {Map<String, dynamic>? modelConfig}) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/concepts/$conceptId/explain'),
+          headers: _jsonHeaders,
+          body: jsonEncode({if (modelConfig != null) 'model_config': modelConfig}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> listQuestions(int conceptId) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/questions'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// `correctAnswer` shape depends on `type` — see
+  /// server/domains/assessment/grading.py's module docstring (a string
+  /// for mcq/true_false, a number for numerical, etc.). `options` is only
+  /// used by mcq. `tolerance` is only used by numerical.
+  Future<Map<String, dynamic>> createQuestion({
+    required int conceptId,
+    required String type,
+    required String prompt,
+    required dynamic correctAnswer,
+    List<String>? options,
+    double? tolerance,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/concepts/$conceptId/questions'),
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'type': type,
+            'prompt': prompt,
+            'correct_answer': correctAnswer,
+            if (options != null) 'options': options,
+            if (tolerance != null) 'tolerance': tolerance,
+          }),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> submitAttempt({
+    required int questionId,
+    required dynamic answer,
+    Map<String, dynamic>? modelConfig,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/questions/$questionId/attempt'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'answer': answer, if (modelConfig != null) 'model_config': modelConfig}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- planner: goals, generated plan, study sessions (blueprint Sections
+  // 21-22) ---
+  //
+  // See server/domains/planning/router.py. `knowledgeSpaceSlug` is
+  // optional throughout — a Goal/plan/session can be account-wide, not
+  // tied to one project, unlike everything in the concepts/questions
+  // section above.
+
+  Future<Map<String, dynamic>> listGoals() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/goals'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createGoal({
+    required String title,
+    DateTime? targetDate,
+    String? knowledgeSpaceSlug,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/goals'),
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'title': title,
+            if (targetDate != null) 'target_date': targetDate.toUtc().toIso8601String(),
+            if (knowledgeSpaceSlug != null) 'knowledge_space_slug': knowledgeSpaceSlug,
+          }),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> deleteGoal(int goalId) async {
+    final res = await http
+        .delete(Uri.parse('$baseUrl/api/v1/goals/$goalId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// Blends review urgency, weakness, deadline urgency, and prerequisite
+  /// importance into a prioritized study plan — see planner.py's own
+  /// docstring for the exact formula. Each phase's `concepts` field
+  /// (id+name) is what lets this render without a separate lookup.
+  Future<Map<String, dynamic>> getPlan({int durationMinutes = 60, String? knowledgeSpaceSlug}) async {
+    final uri = Uri.parse('$baseUrl/api/v1/plan').replace(
+      queryParameters: {
+        'duration_minutes': durationMinutes.toString(),
+        if (knowledgeSpaceSlug != null) 'knowledge_space_slug': knowledgeSpaceSlug,
+      },
+    );
+    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createStudySession({int durationMinutes = 60, String? knowledgeSpaceSlug}) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/study-sessions'),
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'duration_minutes': durationMinutes,
+            if (knowledgeSpaceSlug != null) 'knowledge_space_slug': knowledgeSpaceSlug,
+          }),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> listStudySessions() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/study-sessions'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> getStudySession(int sessionId) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/study-sessions/$sessionId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> completeStudySession(int sessionId) async {
+    final res = await http
+        .post(Uri.parse('$baseUrl/api/v1/study-sessions/$sessionId/complete'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- progress: mastery, misconceptions, attempts (all account-wide,
+  // each item already carries a resolved concept_name — see
+  // server/domains/learning/router.py and assessment/router.py) ---
+
+  Future<Map<String, dynamic>> getMastery() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/mastery'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> getMisconceptions() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/misconceptions'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> getAttempts({int limit = 50}) async {
+    final uri = Uri.parse('$baseUrl/api/v1/attempts').replace(queryParameters: {'limit': limit.toString()});
+    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- memory: explicit facts/preferences (blueprint Sections 8-9) ---
+  //
+  // Only "explicit" memories can be created by a client — "episodic" ones
+  // are system-generated internally (mastery/misconception events) and
+  // have no POST route of their own, see server/ai/memory/router.py.
+
+  Future<Map<String, dynamic>> listMemories({String? type}) async {
+    final uri = Uri.parse('$baseUrl/api/v1/memories').replace(
+      queryParameters: {if (type != null) 'type': type},
+    );
+    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createMemory({required String key, required dynamic value}) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/memories'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'key': key, 'value': value}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> deleteMemory(int memoryId) async {
+    final res = await http
+        .delete(Uri.parse('$baseUrl/api/v1/memories/$memoryId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- personality (blueprint Section 7) — 8 dimensions, get-or-create
+  // server-side so there's always a profile to read. ---
+
+  Future<Map<String, dynamic>> getPersonality() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/personality'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> updatePersonality({
+    String? tone,
+    String? formality,
+    double? humor,
+    double? encouragement,
+    double? directness,
+    double? challengeLevel,
+    String? verbosity,
+    String? teachingStyle,
+  }) async {
+    final body = <String, dynamic>{
+      if (tone != null) 'tone': tone,
+      if (formality != null) 'formality': formality,
+      if (humor != null) 'humor': humor,
+      if (encouragement != null) 'encouragement': encouragement,
+      if (directness != null) 'directness': directness,
+      if (challengeLevel != null) 'challenge_level': challengeLevel,
+      if (verbosity != null) 'verbosity': verbosity,
+      if (teachingStyle != null) 'teaching_style': teachingStyle,
+    };
+    final res = await http
+        .patch(Uri.parse('$baseUrl/api/v1/personality'), headers: _jsonHeaders, body: jsonEncode(body))
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 

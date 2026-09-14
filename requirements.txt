@@ -2,9 +2,6 @@
 #
 # Scoped to what this project's code actually imports (verified via a
 # grep across every features/*/engine.py and server/*.py), not a raw
-# `pip freeze` — this machine's global Python environment has ~160
-# packages installed from unrelated projects (Django, selenium,
-# playwright, google-generativeai, etc.); none of that belongs here.
 # Versions are pinned to what's actually been running and tested on this
 # machine throughout this build.
 #
@@ -23,6 +20,19 @@ pydantic==2.12.5
 bcrypt==5.0.0
 PyJWT==2.10.1
 cryptography==46.0.3
+
+# --- server/db, server/core (PostgreSQL — see STUDY_OS_PROGRESS.md's
+# 2026-09-14 hosting/DB decision: Postgres from day one, no SQLite) ---
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.31.0
+alembic==1.20.0
+pydantic-settings==2.15.0
+email-validator==2.3.0
+
+# --- server/domains/learning (spaced repetition) — the official
+# open-spaced-repetition reference implementation, not a hand-rolled
+# version of the FSRS algorithm's formulas ---
+fsrs==6.3.2
 
 # --- math_engine ---
 sympy==1.14.0

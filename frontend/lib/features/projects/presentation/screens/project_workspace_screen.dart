@@ -5,6 +5,7 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../chat/models/chat_message.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
+import '../../../learning/concepts/presentation/screens/concepts_list_screen.dart';
 
 /// A single project ("notebook") — Sources (add material), Chat (query
 /// that material), and Studio (generate study guides/flashcards/etc. over
@@ -233,17 +234,28 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.displayName),
-          bottom: const TabBar(tabs: [Tab(text: 'Sources'), Tab(text: 'Chat'), Tab(text: 'Studio')]),
+          bottom: const TabBar(
+            tabs: [Tab(text: 'Sources'), Tab(text: 'Chat'), Tab(text: 'Studio'), Tab(text: 'Concepts')],
+          ),
         ),
         body: TabBarView(
-          children: [_buildSourcesTab(context), _buildChatTab(context), _buildStudioTab(context)],
+          children: [
+            _buildSourcesTab(context),
+            _buildChatTab(context),
+            _buildStudioTab(context),
+            _buildConceptsTab(context),
+          ],
         ),
       ),
     );
+  }
+
+  Widget _buildConceptsTab(BuildContext context) {
+    return ConceptsListScreen(apiClient: widget.apiClient, slug: widget.slug);
   }
 
   Widget _buildSourcesTab(BuildContext context) {

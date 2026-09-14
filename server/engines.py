@@ -31,3 +31,11 @@ web_input = _load_engine("input_pipeline/web_input/engine.py")
 query_memory = _load_engine("personalization/query_memory/engine.py")
 rag_projects = _load_engine("rag/projects/engine.py")
 generate_docs = _load_engine("document_generation/generate_docs/engine.py")
+
+# Reuses the SAME loaded instance `moderator` already holds internally
+# (as `_model_router`) rather than a second `_load_engine(...)` call —
+# model_router eagerly loads LLM weights at import time (see its own
+# README), so loading it twice would double memory usage and startup time
+# for no benefit. Used by domains/assessment/grading.py for short-answer
+# AI evaluation.
+model_router = moderator._model_router

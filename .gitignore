@@ -16,5 +16,9 @@ server/users.db
 server/.jwt_secret
 server/.encryption_key
 
+# Postgres connection string (server/core/config.py) — real credentials,
+# per-environment, never committed. See .env.example for the shape.
+.env
+
 # model_router's model weights are cached by huggingface_hub outside this
 # repo (~/.cache/huggingface), nothing to ignore here

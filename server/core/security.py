@@ -1,16 +1,20 @@
 """
 Authentication logic — password hashing, JWT issuing/verification, and the
 FastAPI dependency (get_current_user) that protects every /api/ask/*,
-/api/account, and /api/history endpoint.
+/api/account, and knowledge-space endpoint.
 
 Auth is REQUIRED for this app (not optional/guest mode) — see the
 top-level README.md's "Architecture note" for why: per-user API keys and
 history only make sense tied to a real account, and a parallel anonymous
 mode would just duplicate the existing session_id system pointlessly.
 
-DEV-MODE NOTE on the JWT secret: same caveat as crypto.py's encryption
-key — generated into a local gitignored file on first run, not a proper
-secrets manager. Fine for local development, not for real deployment.
+DEV-MODE NOTE on the JWT secret: generated into a local gitignored file on
+first run, not a proper secrets manager. Fine for local development, not
+for real deployment.
+
+Moved here from server/security.py as part of the Postgres migration
+(STUDY_OS_PROGRESS.md, 2026-09-14) — get_current_user now queries Postgres
+via SQLAlchemy instead of sqlite3, and is async all the way through.
 """
 from __future__ import annotations
 
@@ -20,11 +24,14 @@ from pathlib import Path
 
 import bcrypt
 import jwt
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import db
+from ..db.session import get_db
+from ..domains.identity.models import User
 
-_SECRET_PATH = Path(__file__).resolve().parent / ".jwt_secret"
+_SECRET_PATH = Path(__file__).resolve().parent.parent / ".jwt_secret"
 _ALGORITHM = "HS256"
 _TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
@@ -51,10 +58,7 @@ def verify_password(password: str, password_hash: str) -> bool:
 def create_token(user_id: int) -> str:
     # "sub" must be a string per the JWT spec (RFC 7519) — recent PyJWT
     # versions enforce this on decode(), rejecting a raw int even though
-    # encode() accepts it silently. Found by testing: signup/login worked
-    # (encode), but every subsequent authenticated call failed with
-    # "Subject must be a string" (decode). str()/int() convert at the
-    # boundary so callers everywhere else still deal in real ints.
+    # encode() accepts it silently.
     payload = {"sub": str(user_id), "exp": int(time.time()) + _TOKEN_TTL_SECONDS}
     return jwt.encode(payload, _SECRET, algorithm=_ALGORITHM)
 
@@ -67,21 +71,27 @@ def _decode_token(token: str) -> int:
     return int(payload["sub"])
 
 
-async def get_current_user(authorization: str | None = Header(default=None)) -> dict:
+async def get_current_user(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """FastAPI dependency: `current_user: dict = Depends(get_current_user)`.
-    Returns the full user row as a dict (sqlite3.Row) — callers that send
-    data to the client must use db.public_user() to strip the password
-    hash / raw encrypted key first."""
+    Returns a dict (id/email/display_name/encryption_key), same shape the
+    old sqlite3-backed version returned — kept dict-shaped (rather than the
+    raw SQLAlchemy User) so every existing consumer (routers/ask.py's
+    current_user["id"]/["encryption_key"] etc.) keeps working unchanged;
+    only their `security` import path moves. Never includes password_hash."""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
     user_id = _decode_token(token)
 
-    conn = db.get_connection()
-    try:
-        row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
-    finally:
-        conn.close()
-    if row is None:
+    user = await db.get(User, user_id)
+    if user is None:
         raise HTTPException(status_code=401, detail="user no longer exists")
-    return dict(row)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "encryption_key": user.encryption_key,
+    }
