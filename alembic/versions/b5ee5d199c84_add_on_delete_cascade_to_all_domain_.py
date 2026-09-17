@@ -11,6 +11,19 @@ of None can't identify a specific constraint to drop). Given explicit
 names here matching server/db/base.py's new naming_convention, so both
 directions actually run — see that file's docstring for why the
 convention was added.
+
+2026-09-17: the original version of this migration hardcoded each
+column's *assumed* Postgres-implicit constraint name
+(`<table>_<column>_fkey`) to drop before recreating it. That assumption
+broke on a fresh database provisioned by a different Postgres host
+(Render) — the implicit name Postgres actually assigned there didn't
+match, so `upgrade()` failed with `UndefinedObjectError` on a brand-new
+DB even though it had already run fine, previously, against this
+project's own local Postgres. Rewritten to look the real current
+constraint name up from `information_schema` at migration-run time
+instead of assuming one — correct on any fresh database regardless of
+exactly how the previous migration's unnamed `ForeignKeyConstraint` got
+named by whichever Postgres created it.
 """
 from typing import Sequence, Union
 
@@ -24,42 +37,49 @@ down_revision: Union[str, Sequence[str], None] = '4d2bbe285525'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-# (table, column, referred_table, old_implicit_name, new_named_convention_name)
+# (table, column, referred_table, new_named_convention_name)
 _FKS = [
-    ("concepts", "knowledge_space_id", "knowledge_spaces",
-     "concepts_knowledge_space_id_fkey", "fk_concepts_knowledge_space_id_knowledge_spaces"),
-    ("generated_artifacts", "knowledge_space_id", "knowledge_spaces",
-     "generated_artifacts_knowledge_space_id_fkey", "fk_generated_artifacts_knowledge_space_id_knowledge_spaces"),
-    ("knowledge_spaces", "user_id", "users",
-     "knowledge_spaces_user_id_fkey", "fk_knowledge_spaces_user_id_users"),
-    ("knowledge_spaces", "parent_id", "knowledge_spaces",
-     "knowledge_spaces_parent_id_fkey", "fk_knowledge_spaces_parent_id_knowledge_spaces"),
-    ("mastery", "concept_id", "concepts",
-     "mastery_concept_id_fkey", "fk_mastery_concept_id_concepts"),
-    ("mastery", "user_id", "users",
-     "mastery_user_id_fkey", "fk_mastery_user_id_users"),
-    ("materials", "knowledge_space_id", "knowledge_spaces",
-     "materials_knowledge_space_id_fkey", "fk_materials_knowledge_space_id_knowledge_spaces"),
-    ("misconceptions", "concept_id", "concepts",
-     "misconceptions_concept_id_fkey", "fk_misconceptions_concept_id_concepts"),
-    ("misconceptions", "user_id", "users",
-     "misconceptions_user_id_fkey", "fk_misconceptions_user_id_users"),
-    ("question_attempts", "user_id", "users",
-     "question_attempts_user_id_fkey", "fk_question_attempts_user_id_users"),
-    ("question_attempts", "question_id", "questions",
-     "question_attempts_question_id_fkey", "fk_question_attempts_question_id_questions"),
-    ("questions", "concept_id", "concepts",
-     "questions_concept_id_fkey", "fk_questions_concept_id_concepts"),
+    ("concepts", "knowledge_space_id", "knowledge_spaces", "fk_concepts_knowledge_space_id_knowledge_spaces"),
+    ("generated_artifacts", "knowledge_space_id", "knowledge_spaces", "fk_generated_artifacts_knowledge_space_id_knowledge_spaces"),
+    ("knowledge_spaces", "user_id", "users", "fk_knowledge_spaces_user_id_users"),
+    ("knowledge_spaces", "parent_id", "knowledge_spaces", "fk_knowledge_spaces_parent_id_knowledge_spaces"),
+    ("mastery", "concept_id", "concepts", "fk_mastery_concept_id_concepts"),
+    ("mastery", "user_id", "users", "fk_mastery_user_id_users"),
+    ("materials", "knowledge_space_id", "knowledge_spaces", "fk_materials_knowledge_space_id_knowledge_spaces"),
+    ("misconceptions", "concept_id", "concepts", "fk_misconceptions_concept_id_concepts"),
+    ("misconceptions", "user_id", "users", "fk_misconceptions_user_id_users"),
+    ("question_attempts", "user_id", "users", "fk_question_attempts_user_id_users"),
+    ("question_attempts", "question_id", "questions", "fk_question_attempts_question_id_questions"),
+    ("questions", "concept_id", "concepts", "fk_questions_concept_id_concepts"),
 ]
+
+_FIND_CONSTRAINT_SQL = sa.text(
+    """
+    SELECT tc.constraint_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu
+      ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+      AND tc.table_name = :table_name
+      AND kcu.column_name = :column_name
+    """
+)
 
 
 def upgrade() -> None:
-    for table, column, referred_table, old_name, new_name in _FKS:
-        op.drop_constraint(old_name, table, type_='foreignkey')
+    bind = op.get_bind()
+    for table, column, referred_table, new_name in _FKS:
+        current_name = bind.execute(
+            _FIND_CONSTRAINT_SQL, {"table_name": table, "column_name": column}
+        ).scalar_one()
+        op.drop_constraint(current_name, table, type_='foreignkey')
         op.create_foreign_key(new_name, table, referred_table, [column], ['id'], ondelete='CASCADE')
 
 
 def downgrade() -> None:
-    for table, column, referred_table, old_name, new_name in _FKS:
+    for table, column, referred_table, new_name in _FKS:
         op.drop_constraint(new_name, table, type_='foreignkey')
-        op.create_foreign_key(old_name, table, referred_table, [column], ['id'])
+        # Recreated unnamed, same as before this migration first ran —
+        # whatever name the current Postgres host assigns it is fine,
+        # since nothing downstream depends on that name specifically.
+        op.create_foreign_key(None, table, referred_table, [column], ['id'])
