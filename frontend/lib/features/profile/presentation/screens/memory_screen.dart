@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/widgets/empty_state.dart';
+import '../../../../core/widgets/list_item_card.dart';
 
 /// Explicit memory (blueprint Sections 8-9) — facts/preferences the
 /// student states directly ("explain things using sailing analogies").
@@ -107,10 +109,7 @@ class _MemoryScreenState extends State<MemoryScreen> {
             if (_error != null) {
               return ListView(
                 children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  ),
+                  EmptyState(icon: Icons.error_outline, message: _error!, iconColor: Theme.of(context).colorScheme.error),
                 ],
               );
             }
@@ -118,21 +117,19 @@ class _MemoryScreenState extends State<MemoryScreen> {
             if (memories.isEmpty) {
               return ListView(
                 children: const [
-                  Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(child: Text('No stated preferences yet. Tap + to add one.')),
-                  ),
+                  EmptyState(icon: Icons.psychology_outlined, message: 'No stated preferences yet. Tap + to add one.'),
                 ],
               );
             }
             return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               itemCount: memories.length,
               itemBuilder: (context, index) {
                 final memory = memories[index] as Map<String, dynamic>;
-                return ListTile(
-                  leading: const Icon(Icons.psychology_outlined),
-                  title: Text(memory['key'] as String),
-                  subtitle: Text(memory['value'].toString()),
+                return ListItemCard(
+                  icon: Icons.psychology_outlined,
+                  title: memory['key'] as String,
+                  subtitle: memory['value'].toString(),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () => _deleteMemory(memory['id'] as int),

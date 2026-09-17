@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/empty_state.dart';
+import '../../../../../core/widgets/gradient_button.dart';
 
 /// A due-card review queue: show front, reveal back, rate recall on the
 /// full FSRS scale (Again/Hard/Good/Easy — see server/domains/learning/
@@ -78,16 +81,25 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
         builder: (context) {
           if (_isLoading) return const Center(child: CircularProgressIndicator());
           if (_error != null) {
-            return Center(child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)));
+            return EmptyState(icon: Icons.error_outline, message: _error!, iconColor: Theme.of(context).colorScheme.error);
           }
           if (_queue.isEmpty) {
             return Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.check_circle_outline, size: 48),
-                  const SizedBox(height: 12),
-                  Text(_reviewedCount > 0 ? 'All done for now — reviewed $_reviewedCount card(s).' : 'Nothing due right now.'),
+                  Container(
+                    width: 88,
+                    height: 88,
+                    decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+                    child: const Icon(Icons.check_rounded, color: Colors.white, size: 44),
+                  ),
+                  const SizedBox(height: 20),
+                  Text(
+                    _reviewedCount > 0 ? 'All done for now — reviewed $_reviewedCount card(s).' : 'Nothing due right now.',
+                    style: Theme.of(context).textTheme.titleMedium,
+                    textAlign: TextAlign.center,
+                  ),
                 ],
               ),
             );
@@ -138,16 +150,17 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
                 if (_isRevealed)
                   Row(
                     children: [
-                      _ratingButton('Again', 'again', Colors.red),
-                      _ratingButton('Hard', 'hard', Colors.orange),
-                      _ratingButton('Good', 'good', Colors.green),
-                      _ratingButton('Easy', 'easy', Colors.blue),
+                      _ratingButton('Again', 'again', Icons.replay_rounded, const Color(0xFFE11D48)),
+                      _ratingButton('Hard', 'hard', Icons.trending_down_rounded, const Color(0xFFF59E0B)),
+                      _ratingButton('Good', 'good', Icons.check_rounded, const Color(0xFF16A34A)),
+                      _ratingButton('Easy', 'easy', Icons.bolt_rounded, StudyOsColors.primary),
                     ],
                   )
                 else
-                  FilledButton(
+                  GradientButton(
+                    label: 'Show answer',
+                    icon: Icons.visibility_outlined,
                     onPressed: () => setState(() => _isRevealed = true),
-                    child: const Text('Show answer'),
                   ),
               ],
             ),
@@ -157,14 +170,21 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
     );
   }
 
-  Widget _ratingButton(String label, String rating, Color color) {
+  Widget _ratingButton(String label, String rating, IconData icon, Color color) {
     return Expanded(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: OutlinedButton(
-          style: OutlinedButton.styleFrom(foregroundColor: color),
+          style: OutlinedButton.styleFrom(foregroundColor: color, side: BorderSide(color: color.withValues(alpha: 0.4))),
           onPressed: _isSubmitting ? null : () => _rate(rating),
-          child: Text(label),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(height: 2),
+              Text(label, style: const TextStyle(fontSize: 12)),
+            ],
+          ),
         ),
       ),
     );

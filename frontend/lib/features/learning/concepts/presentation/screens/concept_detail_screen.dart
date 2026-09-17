@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/empty_state.dart';
+import '../../../../../core/widgets/gradient_button.dart';
 import '../../../../chat/presentation/widgets/block_view.dart';
 import '../../../../practice/questions/presentation/screens/create_question_screen.dart';
 import '../../../../practice/questions/presentation/screens/question_practice_screen.dart';
@@ -134,22 +137,48 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                     Text(description, style: Theme.of(context).textTheme.bodyMedium),
                     const SizedBox(height: 16),
                   ],
-                  Text('Mastery', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 8),
-                  LinearProgressIndicator(value: _mastery ?? 0, minHeight: 8),
-                  const SizedBox(height: 4),
-                  Text('${(((_mastery ?? 0)) * 100).round()}%'),
+                  Builder(builder: (context) {
+                    final theme = Theme.of(context);
+                    final mastery = _mastery ?? 0;
+                    final masteryColor = Color.lerp(theme.colorScheme.primary, StudyOsColors.accent, mastery)!;
+                    return Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Mastery', style: theme.textTheme.titleMedium),
+                              const SizedBox(height: 8),
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(4),
+                                child: LinearProgressIndicator(
+                                  value: mastery,
+                                  minHeight: 8,
+                                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                                  valueColor: AlwaysStoppedAnimation(masteryColor),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(9999)),
+                          child: Text(
+                            '${(mastery * 100).round()}%',
+                            style: theme.textTheme.titleSmall?.copyWith(color: masteryColor, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
+                    );
+                  }),
                   const SizedBox(height: 24),
-                  FilledButton.icon(
+                  GradientButton(
+                    label: 'Explain this to me',
+                    icon: Icons.auto_awesome_rounded,
+                    isLoading: _isExplaining,
                     onPressed: _isExplaining ? null : _explain,
-                    icon: _isExplaining
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.auto_awesome),
-                    label: const Text('Explain this to me'),
                   ),
                   if (_explainError != null) ...[
                     const SizedBox(height: 8),
@@ -195,15 +224,48 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                   ),
                   const SizedBox(height: 8),
                   if ((_questions ?? []).isEmpty)
-                    const Text('No questions yet. Tap + to add one.')
+                    const EmptyState(icon: Icons.quiz_outlined, message: 'No questions yet. Tap + to add one.')
                   else
                     for (final q in _questions!)
                       Card(
-                        child: ListTile(
-                          title: Text((q as Map<String, dynamic>)['prompt'] as String),
-                          subtitle: Text(q['type'] as String),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () => _practice(q),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(16),
+                          onTap: () => _practice(q as Map<String, dynamic>),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(Icons.quiz_outlined, size: 20, color: Theme.of(context).colorScheme.primary),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(q['prompt'] as String, maxLines: 2, overflow: TextOverflow.ellipsis),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        q['type'] as String,
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                 ],

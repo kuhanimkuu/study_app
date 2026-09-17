@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/empty_state.dart';
 
 /// Standalone semantic search within one Knowledge Space's stored
 /// material (blueprint Section 13) — a new 7th tab on
@@ -55,15 +56,16 @@ class _KnowledgeSearchScreenState extends State<KnowledgeSearchScreen> {
               Expanded(
                 child: TextField(
                   controller: _queryController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'Search this project\'s material...',
-                    border: OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
                   ),
                   onSubmitted: (_) => _search(),
                 ),
               ),
               const SizedBox(width: 8),
-              IconButton(icon: const Icon(Icons.search), onPressed: _isSearching ? null : _search),
+              IconButton.filled(icon: const Icon(Icons.arrow_forward), onPressed: _isSearching ? null : _search),
             ],
           ),
         ),
@@ -77,22 +79,52 @@ class _KnowledgeSearchScreenState extends State<KnowledgeSearchScreen> {
           child: Builder(
             builder: (context) {
               if (!_searched) {
-                return const Center(child: Text('Search this project\'s uploaded material.'));
+                return const EmptyState(icon: Icons.search_outlined, message: 'Search this project\'s uploaded material.');
               }
               final results = _results ?? [];
               if (!_isSearching && results.isEmpty && _error == null) {
-                return const Center(child: Text('No matching material found.'));
+                return const EmptyState(icon: Icons.search_off_outlined, message: 'No matching material found.');
               }
               return ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 itemCount: results.length,
                 itemBuilder: (context, index) {
                   final result = results[index] as Map<String, dynamic>;
                   final score = (result['score'] as num).toDouble();
+                  final theme = Theme.of(context);
                   return Card(
-                    margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    child: ListTile(
-                      title: Text(result['chunk'] as String, maxLines: 4, overflow: TextOverflow.ellipsis),
-                      trailing: Text('${(score * 100).round()}%', style: Theme.of(context).textTheme.labelSmall),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(Icons.description_outlined, size: 18, color: theme.colorScheme.primary),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(result['chunk'] as String, maxLines: 4, overflow: TextOverflow.ellipsis),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(9999),
+                            ),
+                            child: Text(
+                              '${(score * 100).round()}%',
+                              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.primary, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   );
                 },

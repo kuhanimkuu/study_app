@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../../core/api/api_client.dart';
 import '../../../../../core/errors/error_presentation.dart';
 import '../../../../../core/widgets/async_list_view.dart';
+import '../../../../../core/widgets/list_item_card.dart';
 import 'flashcard_review_screen.dart';
 
 /// Flashcards within one Knowledge Space (blueprint Sections 17, 27) — a
@@ -118,6 +119,7 @@ class _FlashcardsListScreenState extends State<FlashcardsListScreen> {
         items: _flashcards,
         onRefresh: _load,
         emptyMessage: 'No flashcards yet. Tap + to add one.',
+        emptyIcon: Icons.style_outlined,
         header: Padding(
           padding: const EdgeInsets.all(16),
           child: OutlinedButton.icon(
@@ -126,10 +128,10 @@ class _FlashcardsListScreenState extends State<FlashcardsListScreen> {
             label: const Text('Review due cards'),
           ),
         ),
-        itemBuilder: (context, flashcard) => ListTile(
-          leading: const Icon(Icons.style_outlined),
-          title: Text(flashcard['front'] as String),
-          subtitle: Text(flashcard['back'] as String),
+        itemBuilder: (context, flashcard) => ListItemCard(
+          icon: Icons.style_outlined,
+          title: flashcard['front'] as String,
+          subtitle: flashcard['back'] as String,
           trailing: IconButton(
             icon: const Icon(Icons.delete_outline),
             onPressed: () => _deleteFlashcard(flashcard['id'] as int),

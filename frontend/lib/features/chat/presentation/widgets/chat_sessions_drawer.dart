@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../../../core/widgets/empty_state.dart';
+
 /// Sidebar listing past general-chat sessions (see ChatScreen's session
 /// management) — tap to resume one, or start a new chat. Project chats
 /// aren't listed here; they're browsed from their own project instead
@@ -46,12 +48,7 @@ class ChatSessionsDrawer extends StatelessWidget {
             const Divider(height: 1),
             Expanded(
               child: sessions.isEmpty
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text('No past chats yet.'),
-                      ),
-                    )
+                  ? const EmptyState(icon: Icons.chat_bubble_outline, message: 'No past chats yet.')
                   : ListView.builder(
                       itemCount: sessions.length,
                       itemBuilder: (context, index) {

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
+import '../../../../core/widgets/empty_state.dart';
 import '../../../chat/presentation/widgets/block_view.dart';
 
 /// Personal activity history. Local-first pivot: the events themselves
@@ -69,15 +70,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 Expanded(
                   child: TextField(
                     controller: _queryController,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       hintText: 'e.g. "what did I struggle with yesterday"',
-                      border: OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.search),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
                     ),
                     onSubmitted: (_) => _load(),
                   ),
                 ),
                 const SizedBox(width: 8),
-                IconButton(icon: const Icon(Icons.search), onPressed: _load),
+                IconButton.filledTonal(icon: const Icon(Icons.arrow_forward), onPressed: _load),
               ],
             ),
           ),
@@ -89,7 +91,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           Expanded(
             child: (_blocks == null || _blocks!.isEmpty)
-                ? const Center(child: Text('No matching activity yet.'))
+                ? const EmptyState(icon: Icons.history_outlined, message: 'No matching activity yet.')
                 : ListView(
                     padding: const EdgeInsets.all(12),
                     children: [

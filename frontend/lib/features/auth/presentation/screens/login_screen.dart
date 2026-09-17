@@ -3,6 +3,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
+import '../../../../core/widgets/gradient_button.dart';
 import '../../../chat/presentation/widgets/server_settings_dialog.dart';
 import 'signup_screen.dart';
 
@@ -106,11 +107,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 ],
                 const SizedBox(height: 20),
-                FilledButton(
+                GradientButton(
+                  label: 'Log in',
+                  isLoading: _isLoading,
                   onPressed: _isLoading ? null : _login,
-                  child: _isLoading
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Log in'),
                 ),
                 const SizedBox(height: 12),
                 const Row(
@@ -121,7 +121,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   onPressed: _isGoogleLoading ? null : _loginWithGoogle,
                   icon: _isGoogleLoading
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Icon(Icons.g_mobiledata),
+                      : Text('G', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Theme.of(context).colorScheme.primary)),
                   label: const Text('Continue with Google'),
                 ),
                 TextButton(

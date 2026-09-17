@@ -419,11 +419,12 @@ class _CreateQuestionScreenState extends State<CreateQuestionScreen> {
           const SizedBox(height: 12),
           _buildTypeSpecificFields(),
           const SizedBox(height: 24),
-          FilledButton(
+          FilledButton.icon(
             onPressed: _isSaving ? null : _save,
-            child: _isSaving
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Save'),
+            icon: _isSaving
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.save_outlined, size: 18),
+            label: const Text('Save'),
           ),
         ],
       ),

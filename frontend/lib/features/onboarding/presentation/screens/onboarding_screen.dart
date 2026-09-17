@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/auth/auth_service.dart';
+import '../../../../core/widgets/brand_wordmark.dart';
+import '../../../../core/widgets/gradient_button.dart';
 
 /// Shown once, immediately after signup (see AuthService.justSignedUp) —
 /// never a gate the student must pass through, per blueprint Section 5
@@ -67,7 +69,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Welcome to Study OS', style: Theme.of(context).textTheme.headlineSmall),
+            Text('Welcome to', style: Theme.of(context).textTheme.bodyLarge),
+            BrandWordmark(style: Theme.of(context).textTheme.headlineMedium),
             const SizedBox(height: 8),
             Text(
               'Optional — you can start studying right away and fill this in later from Account.',
@@ -94,12 +97,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
             ],
             const SizedBox(height: 24),
-            FilledButton(
-              onPressed: _isSaving ? null : _getStarted,
-              child: _isSaving
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Get started'),
-            ),
+            GradientButton(label: 'Get started', isLoading: _isSaving, onPressed: _isSaving ? null : _getStarted),
           ],
         ),
       ),

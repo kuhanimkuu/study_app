@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
+import '../../../../core/widgets/empty_state.dart';
+import '../../../../core/widgets/list_item_card.dart';
 import '../../../chat/models/chat_message.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
 import '../../../knowledge/notes/presentation/screens/notes_list_screen.dart';
@@ -314,15 +316,13 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         TextField(
           controller: _materialController,
           maxLines: 6,
-          decoration: const InputDecoration(
-            labelText: 'Paste text to add',
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(labelText: 'Paste text to add'),
         ),
         const SizedBox(height: 8),
-        FilledButton(
+        FilledButton.icon(
           onPressed: _isAddingMaterial ? null : _addText,
-          child: const Text('Add text'),
+          icon: const Icon(Icons.note_add_outlined, size: 18),
+          label: const Text('Add text'),
         ),
         const Divider(height: 32),
         OutlinedButton.icon(
@@ -344,15 +344,26 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         if (_materials == null)
           const SizedBox.shrink()
         else if (_materials!.isEmpty)
-          const Text('Nothing uploaded yet.')
+          Row(
+            children: [
+              Icon(Icons.description_outlined, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
+              const SizedBox(width: 8),
+              Text(
+                'Nothing uploaded yet.',
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              ),
+            ],
+          )
         else
           ..._materials!.map((raw) {
             final material = raw as Map<String, dynamic>;
-            return ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.description_outlined),
-              title: Text(material['filename'] as String),
-              subtitle: Text('${material['mime_type']} · ${material['created_at']}'),
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ListItemCard(
+                icon: Icons.description_outlined,
+                title: material['filename'] as String,
+                subtitle: '${material['mime_type']} · ${material['created_at']}',
+              ),
             );
           }),
       ],
@@ -364,7 +375,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       children: [
         Expanded(
           child: _messages.isEmpty
-              ? const Center(child: Text('Ask a question about this project\'s material.'))
+              ? const EmptyState(icon: Icons.chat_outlined, message: 'Ask a question about this project\'s material.')
               : ListView.builder(
                   controller: _chatScrollController,
                   padding: const EdgeInsets.all(12),
@@ -390,11 +401,15 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                 Expanded(
                   child: TextField(
                     controller: _chatController,
-                    decoration: const InputDecoration(hintText: 'Ask about this project...', border: OutlineInputBorder()),
+                    decoration: InputDecoration(
+                      hintText: 'Ask about this project...',
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                    ),
                     onSubmitted: (_) => _sendQuery(),
                   ),
                 ),
-                IconButton(icon: const Icon(Icons.send), onPressed: _sendQuery),
+                const SizedBox(width: 8),
+                IconButton.filled(icon: const Icon(Icons.arrow_upward_rounded), onPressed: _sendQuery),
               ],
             ),
           ),
@@ -413,7 +428,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
               Expanded(
                 child: DropdownButtonFormField<String>(
                   initialValue: _selectedDocType,
-                  decoration: const InputDecoration(labelText: 'Document type', border: OutlineInputBorder()),
+                  decoration: const InputDecoration(labelText: 'Document type'),
                   items: [
                     for (final entry in _docTypeLabels.entries)
                       DropdownMenuItem(value: entry.key, child: Text(entry.value)),
@@ -422,11 +437,12 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                 ),
               ),
               const SizedBox(width: 12),
-              FilledButton(
+              FilledButton.icon(
                 onPressed: _isGenerating ? null : _generateStudioDoc,
-                child: _isGenerating
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('Generate'),
+                icon: _isGenerating
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.auto_awesome_rounded, size: 18),
+                label: const Text('Generate'),
               ),
             ],
           ),
@@ -439,26 +455,23 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         const Divider(height: 1),
         Expanded(
           child: (_artifacts == null || _artifacts!.isEmpty)
-              ? const Center(child: Text('No generated documents yet.'))
+              ? const EmptyState(icon: Icons.auto_awesome_outlined, message: 'No generated documents yet.')
               : ListView.builder(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                   itemCount: _artifacts!.length,
                   itemBuilder: (context, index) {
                     final artifact = _artifacts![index] as Map<String, dynamic>;
                     final docType = artifact['doc_type'] as String;
                     final url = artifact['url'] as String;
-                    return Card(
-                      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                      child: ListTile(
-                        leading: const Icon(Icons.picture_as_pdf_outlined),
-                        title: Text(artifact['title'] as String? ?? _docTypeLabels[docType] ?? docType),
-                        subtitle: Text(
-                          '${widget.apiClient.baseUrl}$url\n(no inline PDF viewer yet — file is real and downloadable)',
-                        ),
-                        isThreeLine: true,
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline),
-                          onPressed: () => _deleteArtifact(artifact['id'] as int),
-                        ),
+                    return ListItemCard(
+                      icon: Icons.picture_as_pdf_outlined,
+                      iconColor: Theme.of(context).colorScheme.secondary,
+                      title: artifact['title'] as String? ?? _docTypeLabels[docType] ?? docType,
+                      subtitle: '${widget.apiClient.baseUrl}$url · no inline viewer yet, file is real and downloadable',
+                      subtitleMaxLines: 2,
+                      trailing: IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        onPressed: () => _deleteArtifact(artifact['id'] as int),
                       ),
                     );
                   },

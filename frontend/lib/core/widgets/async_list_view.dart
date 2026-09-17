@@ -16,6 +16,7 @@ class AsyncListView<T> extends StatelessWidget {
     required this.items,
     required this.itemBuilder,
     required this.emptyMessage,
+    this.emptyIcon = Icons.inbox_outlined,
     this.onRefresh,
     this.header,
   });
@@ -28,6 +29,10 @@ class AsyncListView<T> extends StatelessWidget {
   final List<T>? items;
   final Widget Function(BuildContext context, T item) itemBuilder;
   final String emptyMessage;
+
+  /// 64px icon shown above [emptyMessage] — the same empty-state shape
+  /// (icon + heading + subtitle) used across this app's list screens.
+  final IconData emptyIcon;
   final Future<void> Function()? onRefresh;
 
   /// Optional widget rendered above the list/empty-state (e.g. Flashcards'
@@ -43,9 +48,22 @@ class AsyncListView<T> extends StatelessWidget {
     } else if (error != null) {
       child = ListView(
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Text(error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.error_outline, size: 64, color: Theme.of(context).colorScheme.error.withValues(alpha: 0.6)),
+                  const SizedBox(height: 16),
+                  Text(
+                    error!,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       );
@@ -56,8 +74,21 @@ class AsyncListView<T> extends StatelessWidget {
           if (header != null) header!,
           if (list.isEmpty)
             Padding(
-              padding: const EdgeInsets.all(32),
-              child: Center(child: Text(emptyMessage)),
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(emptyIcon, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                    const SizedBox(height: 16),
+                    Text(
+                      emptyMessage,
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
             )
           else
             for (final item in list) itemBuilder(context, item),

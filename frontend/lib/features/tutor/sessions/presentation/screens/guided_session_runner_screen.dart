@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/empty_state.dart';
+import '../../../../../core/widgets/gradient_button.dart';
 import '../../../../chat/presentation/widgets/block_view.dart';
 import '../../../../practice/questions/presentation/widgets/question_answer_input.dart';
 
@@ -200,7 +203,12 @@ class _GuidedSessionRunnerScreenState extends State<GuidedSessionRunnerScreen> {
   Widget _buildBody(BuildContext context) {
     if (_stage == _Stage.done) return _buildDone(context);
 
-    if (_queue.isEmpty) return const Center(child: Text('This plan has no concepts to guide you through.'));
+    if (_queue.isEmpty) {
+      return const EmptyState(
+        icon: Icons.school_outlined,
+        message: 'This plan has no concepts to guide you through.',
+      );
+    }
 
     return ListView(
       children: [
@@ -255,19 +263,27 @@ class _GuidedSessionRunnerScreenState extends State<GuidedSessionRunnerScreen> {
           ),
           const SizedBox(height: 16),
           if (_questionResult == null)
-            FilledButton(onPressed: _submitAnswer, child: const Text('Submit'))
+            GradientButton(label: 'Submit', onPressed: _submitAnswer)
           else
             _buildQuestionResult(context),
         ];
       case _Stage.betweenConcepts:
         return [
-          const Icon(Icons.check_circle_outline, size: 40),
-          const SizedBox(height: 8),
-          Text('Done with "${_current.conceptName}".'),
+          Center(
+            child: Container(
+              width: 64,
+              height: 64,
+              decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+              child: const Icon(Icons.check_rounded, color: Colors.white, size: 32),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text('Done with "${_current.conceptName}".', textAlign: TextAlign.center),
           const SizedBox(height: 16),
-          FilledButton(
+          GradientButton(
+            label: _conceptIndex < _queue.length - 1 ? 'Next concept' : 'Finish session',
+            icon: Icons.arrow_forward_rounded,
             onPressed: _nextConcept,
-            child: Text(_conceptIndex < _queue.length - 1 ? 'Next concept' : 'Finish session'),
           ),
         ];
       case _Stage.done:
@@ -278,43 +294,64 @@ class _GuidedSessionRunnerScreenState extends State<GuidedSessionRunnerScreen> {
   Widget _buildQuestionResult(BuildContext context) {
     final correct = _questionResult!['correct'] as bool;
     final feedback = _questionResult!['feedback'] as String?;
-    final color = correct ? Colors.green : Theme.of(context).colorScheme.error;
+    final color = correct ? const Color(0xFF16A34A) : Theme.of(context).colorScheme.error;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(correct ? Icons.check_circle : Icons.cancel, color: color),
-            const SizedBox(width: 8),
-            Text(correct ? 'Correct' : 'Incorrect', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-          ],
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(correct ? Icons.check_circle_rounded : Icons.cancel_rounded, color: color),
+                  const SizedBox(width: 8),
+                  Text(correct ? 'Correct' : 'Incorrect', style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+                ],
+              ),
+              if (feedback != null && feedback.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(feedback),
+              ],
+            ],
+          ),
         ),
-        if (feedback != null && feedback.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(feedback),
-        ],
         const SizedBox(height: 16),
-        FilledButton(onPressed: _nextQuestionOrConcept, child: const Text('Continue')),
+        GradientButton(label: 'Continue', icon: Icons.arrow_forward_rounded, onPressed: _nextQuestionOrConcept),
       ],
     );
   }
 
   Widget _buildDone(BuildContext context) {
+    final theme = Theme.of(context);
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.emoji_events_outlined, size: 48),
-          const SizedBox(height: 12),
-          Text('Session walkthrough complete', style: Theme.of(context).textTheme.titleMedium),
+          Container(
+            width: 88,
+            height: 88,
+            decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+            child: const Icon(Icons.emoji_events_rounded, color: Colors.white, size: 44),
+          ),
+          const SizedBox(height: 20),
+          Text('Session walkthrough complete', style: theme.textTheme.titleLarge),
           const SizedBox(height: 8),
-          if (_attemptedCount > 0) Text('$_correctCount/$_attemptedCount practice questions correct'),
-          const SizedBox(height: 24),
-          FilledButton(
-            onPressed: _isCompletingSession ? null : _finishSession,
-            child: _isCompletingSession
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Mark session complete'),
+          if (_attemptedCount > 0)
+            Text(
+              '$_correctCount/$_attemptedCount practice questions correct',
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          const SizedBox(height: 28),
+          SizedBox(
+            width: 240,
+            child: GradientButton(
+              label: 'Mark session complete',
+              isLoading: _isCompletingSession,
+              onPressed: _isCompletingSession ? null : _finishSession,
+            ),
           ),
         ],
       ),

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/settings/model_settings_service.dart';
+import '../../../../core/widgets/list_item_card.dart';
 import '../../../profile/presentation/screens/memory_screen.dart';
 import '../../../profile/presentation/screens/personality_settings_screen.dart';
 
@@ -219,8 +221,30 @@ class _AccountScreenState extends State<AccountScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(user?['email'] as String? ?? '', style: Theme.of(context).textTheme.bodySmall),
-          const SizedBox(height: 8),
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 72,
+                  height: 72,
+                  decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+                  child: Center(
+                    child: Text(
+                      (user?['display_name'] as String?)?.isNotEmpty == true
+                          ? (user!['display_name'] as String)[0].toUpperCase()
+                          : (user?['email'] as String? ?? '?')[0].toUpperCase(),
+                      style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(user?['email'] as String? ?? '', style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    )),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
           TextField(
             controller: _displayNameController,
             decoration: const InputDecoration(labelText: 'Display name'),
@@ -228,7 +252,11 @@ class _AccountScreenState extends State<AccountScreen> {
           const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerRight,
-            child: TextButton(onPressed: _isSaving ? null : _saveDisplayName, child: const Text('Update profile')),
+            child: TextButton.icon(
+              onPressed: _isSaving ? null : _saveDisplayName,
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Update profile'),
+            ),
           ),
           const Divider(height: 32),
           Text('Student profile', style: Theme.of(context).textTheme.titleMedium),
@@ -263,34 +291,32 @@ class _AccountScreenState extends State<AccountScreen> {
           const SizedBox(height: 8),
           Align(
             alignment: Alignment.centerRight,
-            child: TextButton(
+            child: TextButton.icon(
               onPressed: _isSavingProfile ? null : _saveStudentProfile,
-              child: const Text('Save profile'),
+              icon: const Icon(Icons.check, size: 16),
+              label: const Text('Save profile'),
             ),
           ),
           const Divider(height: 32),
           Text('Personalization', style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 8),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.tune_outlined),
-              title: const Text('Personality'),
-              subtitle: const Text('Tone, verbosity, teaching style, and more'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (context) => PersonalitySettingsScreen(apiClient: widget.authService.apiClient)),
-              ),
+          ListItemCard(
+            icon: Icons.tune_outlined,
+            title: 'Personality',
+            subtitle: 'Tone, verbosity, teaching style, and more',
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => PersonalitySettingsScreen(apiClient: widget.authService.apiClient)),
             ),
           ),
-          Card(
-            child: ListTile(
-              leading: const Icon(Icons.psychology_outlined),
-              title: const Text('Memory'),
-              subtitle: const Text('Facts and preferences you\'ve told it to remember'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (context) => MemoryScreen(apiClient: widget.authService.apiClient)),
-              ),
+          ListItemCard(
+            icon: Icons.psychology_outlined,
+            iconColor: Theme.of(context).colorScheme.secondary,
+            title: 'Memory',
+            subtitle: 'Facts and preferences you\'ve told it to remember',
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (context) => MemoryScreen(apiClient: widget.authService.apiClient)),
             ),
           ),
           const Divider(height: 32),
@@ -337,25 +363,34 @@ class _AccountScreenState extends State<AccountScreen> {
             Text(_savedMessage!, style: TextStyle(color: Theme.of(context).colorScheme.primary)),
           ],
           const SizedBox(height: 20),
-          FilledButton(
+          FilledButton.icon(
             onPressed: _isSaving ? null : _saveModelSettings,
-            child: _isSaving
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Save'),
+            icon: _isSaving
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.save_outlined, size: 18),
+            label: const Text('Save'),
           ),
           if (_settings.hasApiKey) ...[
             const SizedBox(height: 8),
-            OutlinedButton(onPressed: _isSaving ? null : _clearApiKey, child: const Text('Clear key & use local model')),
+            OutlinedButton.icon(
+              onPressed: _isSaving ? null : _clearApiKey,
+              icon: const Icon(Icons.restart_alt, size: 18),
+              label: const Text('Clear key & use local model'),
+            ),
           ],
           const Divider(height: 32),
           Text('Danger zone', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Theme.of(context).colorScheme.error)),
           const SizedBox(height: 8),
-          OutlinedButton(
-            style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Theme.of(context).colorScheme.error,
+              side: BorderSide(color: Theme.of(context).colorScheme.error.withValues(alpha: 0.4)),
+            ),
             onPressed: _isDeleting ? null : _confirmDeleteAccount,
-            child: _isDeleting
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Delete account'),
+            icon: _isDeleting
+                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.delete_forever_outlined, size: 18),
+            label: const Text('Delete account'),
           ),
         ],
       ),

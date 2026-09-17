@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
 import 'concept_detail_screen.dart';
 
@@ -134,38 +135,104 @@ class _ConceptsListScreenState extends State<ConceptsListScreen> {
             final concepts = _concepts ?? [];
             if (concepts.isEmpty) {
               return ListView(
-                children: const [
+                children: [
                   Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(child: Text('No concepts yet. Tap + to add one.')),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.school_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No concepts yet. Tap + to add one.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               );
             }
             return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               itemCount: concepts.length,
               itemBuilder: (context, index) {
                 final concept = concepts[index] as Map<String, dynamic>;
                 final id = concept['id'] as int;
                 final name = concept['name'] as String;
                 final mastery = _masteryById[id];
-                return ListTile(
-                  leading: const Icon(Icons.school_outlined),
-                  title: Text(name),
-                  subtitle: mastery == null
-                      ? null
-                      : LinearProgressIndicator(value: mastery, minHeight: 4),
-                  trailing: mastery == null
-                      ? null
-                      : Text('${(mastery * 100).round()}%', style: Theme.of(context).textTheme.labelSmall),
-                  onTap: () async {
-                    await Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (context) => ConceptDetailScreen(apiClient: widget.apiClient, concept: concept),
+                // Mastery is the one number this screen exists to move —
+                // it gets its own bespoke card (icon badge tinted by
+                // progress + a real progress bar + a percentage pill)
+                // rather than the plain ListItemCard row every other list
+                // screen uses, the same way Nexora gives its one
+                // state-driven card (ElectricFlashCard) its own anatomy.
+                final masteryColor = mastery == null
+                    ? Theme.of(context).colorScheme.primary
+                    : Color.lerp(Theme.of(context).colorScheme.primary, StudyOsColors.accent, mastery)!;
+                return Card(
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(16),
+                    onTap: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => ConceptDetailScreen(apiClient: widget.apiClient, concept: concept),
+                        ),
+                      );
+                      _load(); // mastery may have changed while the detail screen was open
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
+                            child: Icon(Icons.school_outlined, color: masteryColor),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(name, style: Theme.of(context).textTheme.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                                if (mastery != null) ...[
+                                  const SizedBox(height: 8),
+                                  ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: LinearProgressIndicator(
+                                      value: mastery,
+                                      minHeight: 6,
+                                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                      valueColor: AlwaysStoppedAnimation(masteryColor),
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          if (mastery != null) ...[
+                            const SizedBox(width: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(9999)),
+                              child: Text(
+                                '${(mastery * 100).round()}%',
+                                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: masteryColor, fontWeight: FontWeight.w800),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
-                    );
-                    _load(); // mastery may have changed while the detail screen was open
-                  },
+                    ),
+                  ),
                 );
               },
             );

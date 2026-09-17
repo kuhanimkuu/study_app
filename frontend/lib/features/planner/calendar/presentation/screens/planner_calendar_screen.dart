@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/empty_state.dart';
+import '../../../../../core/widgets/list_item_card.dart';
 
 class _CalendarEvent {
   _CalendarEvent({required this.label, required this.type});
@@ -176,20 +178,19 @@ class _PlannerCalendarScreenState extends State<PlannerCalendarScreen> {
         const Divider(height: 24),
         Expanded(
           child: _selectedDay == null
-              ? const Center(child: Text('Tap a marked day to see what\'s due.'))
+              ? const EmptyState(icon: Icons.event_outlined, message: 'Tap a marked day to see what\'s due.')
               : ListView(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
                   children: [
                     for (final e in _eventsByDay[_dateOnly(_selectedDay!)] ?? [])
-                      ListTile(
-                        leading: Icon(
-                          e.type == 'goal'
-                              ? Icons.flag_outlined
-                              : e.type == 'flashcard'
-                                  ? Icons.style_outlined
-                                  : Icons.school_outlined,
-                          color: _dotColor(e.type, context),
-                        ),
-                        title: Text(e.label),
+                      ListItemCard(
+                        icon: e.type == 'goal'
+                            ? Icons.flag_outlined
+                            : e.type == 'flashcard'
+                                ? Icons.style_outlined
+                                : Icons.school_outlined,
+                        iconColor: _dotColor(e.type, context),
+                        title: e.label,
                       ),
                   ],
                 ),

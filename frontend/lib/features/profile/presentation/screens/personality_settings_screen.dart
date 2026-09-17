@@ -141,11 +141,12 @@ class _PersonalitySettingsScreenState extends State<PersonalitySettingsScreen> {
                   Text(_savedMessage!, style: TextStyle(color: Theme.of(context).colorScheme.primary)),
                 ],
                 const SizedBox(height: 20),
-                FilledButton(
+                FilledButton.icon(
                   onPressed: _isSaving ? null : _save,
-                  child: _isSaving
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Save'),
+                  icon: _isSaving
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.save_outlined, size: 18),
+                  label: const Text('Save'),
                 ),
               ],
             ),

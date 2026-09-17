@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/widgets/list_item_card.dart';
 import 'project_workspace_screen.dart';
 
 /// Home screen for "notebooks" — see server/db.py's module docstring for
@@ -128,27 +129,42 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
             final projects = _projects ?? [];
             if (projects.isEmpty) {
               return ListView(
-                children: const [
+                children: [
                   Padding(
-                    padding: EdgeInsets.all(32),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
                     child: Center(
-                      child: Text('No projects yet. Tap + to create one and add material to it.'),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.folder_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No projects yet. Tap + to create one and add material to it.',
+                            textAlign: TextAlign.center,
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
               );
             }
             return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               itemCount: projects.length,
               itemBuilder: (context, index) {
                 final project = projects[index] as Map<String, dynamic>;
                 final slug = project['slug'] as String;
                 final displayName = project['display_name'] as String;
                 final chunkCount = project['chunk_count'] as int? ?? 0;
-                return ListTile(
-                  leading: const Icon(Icons.folder_outlined),
-                  title: Text(displayName),
-                  subtitle: Text(chunkCount == 0 ? 'No material yet' : '$chunkCount stored chunk(s)'),
+                return ListItemCard(
+                  icon: Icons.folder_outlined,
+                  title: displayName,
+                  subtitle: chunkCount == 0 ? 'No material yet' : '$chunkCount stored chunk(s)',
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () => _deleteProject(slug, displayName),

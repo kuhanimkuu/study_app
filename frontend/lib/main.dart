@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'app/auth_gate.dart';
+import 'app/theme.dart';
 import 'core/api/api_client.dart';
 import 'core/api/default_base_url.dart';
 import 'core/auth/auth_service.dart';
@@ -27,10 +28,8 @@ class StudyOsApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Study OS',
-      theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo)),
-      darkTheme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.indigo, brightness: Brightness.dark),
-      ),
+      theme: studyOsLightTheme,
+      darkTheme: studyOsDarkTheme,
       home: AuthGate(authService: authService),
     );
   }

@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/crypto/user_crypto.dart';
 import '../../../../core/storage/local_db.dart';
+import '../../../../core/widgets/brand_wordmark.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 import '../../models/chat_message.dart';
 import '../widgets/attachment_menu_sheet.dart';
@@ -411,11 +413,64 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _api.baseUrl = newUrl);
   }
 
+  static const _suggestedPrompts = [
+    'Explain a concept to me',
+    'Help me plan a study session',
+    'Quiz me on what I studied recently',
+    'What have I been struggling with?',
+  ];
+
+  void _fillPrompt(String prompt) {
+    _textController.text = prompt;
+    _textController.selection = TextSelection.collapsed(offset: prompt.length);
+  }
+
+  /// Shown instead of the (otherwise blank) transcript on a session with
+  /// no messages yet — an empty screen with nothing but an input bar at
+  /// the bottom read as broken, not "ready", before this existed.
+  Widget _buildEmptyState(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+              child: const Icon(Icons.forum_rounded, color: Colors.white, size: 40),
+            ),
+            const SizedBox(height: 20),
+            Text('Ask your AI study moderator', style: theme.textTheme.titleLarge, textAlign: TextAlign.center),
+            const SizedBox(height: 8),
+            Text(
+              'Ask a question, or send an image, PDF, audio, or web link.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            Wrap(
+              alignment: WrapAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final prompt in _suggestedPrompts)
+                  ActionChip(label: Text(prompt), onPressed: () => _fillPrompt(prompt)),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Study OS'),
+        title: BrandWordmark(style: Theme.of(context).appBarTheme.titleTextStyle),
         actions: [
           IconButton(
             icon: const Icon(Icons.create_new_folder_outlined),
@@ -438,16 +493,18 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.all(12),
-              itemCount: _messages.length,
-              itemBuilder: (context, index) => MessageBubble(
-                message: _messages[index],
-                baseUrl: _api.baseUrl,
-                onStillStuck: () => _markStillStuck(_messages[index]),
-              ),
-            ),
+            child: _messages.isEmpty
+                ? _buildEmptyState(context)
+                : ListView.builder(
+                    controller: _scrollController,
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _messages.length,
+                    itemBuilder: (context, index) => MessageBubble(
+                      message: _messages[index],
+                      baseUrl: _api.baseUrl,
+                      onStillStuck: () => _markStillStuck(_messages[index]),
+                    ),
+                  ),
           ),
           if (_isLoading) const LinearProgressIndicator(minHeight: 2),
           if (_pendingPdfName != null)

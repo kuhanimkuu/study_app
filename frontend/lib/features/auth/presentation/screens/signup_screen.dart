@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
+import '../../../../core/widgets/gradient_button.dart';
 
 class SignupScreen extends StatefulWidget {
   const SignupScreen({super.key, required this.authService});
@@ -75,11 +76,10 @@ class _SignupScreenState extends State<SignupScreen> {
                   Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
                 ],
                 const SizedBox(height: 20),
-                FilledButton(
+                GradientButton(
+                  label: 'Sign up',
+                  isLoading: _isLoading,
                   onPressed: _isLoading ? null : _signup,
-                  child: _isLoading
-                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                      : const Text('Sign up'),
                 ),
               ],
             ),

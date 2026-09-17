@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/list_item_card.dart';
 
 /// Study goals (blueprint Section 22) — create/delete only this slice,
 /// matching the backend's own CRUD surface (there's no PATCH /goals/{id}
@@ -179,15 +180,31 @@ class _GoalsListScreenState extends State<GoalsListScreen> {
             final goals = _goals ?? [];
             if (goals.isEmpty) {
               return ListView(
-                children: const [
+                children: [
                   Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(child: Text('No goals yet. Tap + to set one.')),
+                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
+                    child: Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.flag_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
+                          const SizedBox(height: 16),
+                          Text(
+                            'No goals yet. Tap + to set one.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               );
             }
             return ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               itemCount: goals.length,
               itemBuilder: (context, index) {
                 final goal = goals[index] as Map<String, dynamic>;
@@ -199,10 +216,11 @@ class _GoalsListScreenState extends State<GoalsListScreen> {
                   if (targetDate != null) 'Due ${DateTime.parse(targetDate).toLocal().toString().split(' ')[0]}',
                   if (projectName != null) projectName,
                 ];
-                return ListTile(
-                  leading: const Icon(Icons.flag_outlined),
-                  title: Text(title),
-                  subtitle: subtitleParts.isEmpty ? null : Text(subtitleParts.join(' · ')),
+                return ListItemCard(
+                  icon: Icons.flag_outlined,
+                  iconColor: Theme.of(context).colorScheme.secondary,
+                  title: title,
+                  subtitle: subtitleParts.isEmpty ? null : subtitleParts.join(' · '),
                   trailing: IconButton(
                     icon: const Icon(Icons.delete_outline),
                     onPressed: () => _deleteGoal(id, title),

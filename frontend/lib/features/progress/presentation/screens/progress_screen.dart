@@ -1,7 +1,9 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
+import '../../../../core/widgets/empty_state.dart';
 import '../../../planner/schedule/presentation/screens/study_session_screen.dart';
 
 /// Mastery/weak-spots overview + a merged recent-activity feed + Insights
@@ -111,7 +113,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               Text('Mastery & weak spots', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               if ((_mastery ?? []).isEmpty)
-                const Text('No concepts attempted yet.')
+                const EmptyState(icon: Icons.school_outlined, message: 'No concepts attempted yet.')
               else
                 for (final m in _mastery!) _MasteryRow(item: m),
               if ((_misconceptions ?? []).isNotEmpty) ...[
@@ -138,7 +140,7 @@ class _ProgressScreenState extends State<ProgressScreen> {
               Text('Recent activity', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
               if ((_activity ?? []).isEmpty)
-                const Text('No study sessions or practice attempts yet.')
+                const EmptyState(icon: Icons.timeline_outlined, message: 'No study sessions or practice attempts yet.')
               else
                 for (final item in _activity!) _ActivityRow(item: item, onOpenSession: _openSession),
             ],
@@ -149,6 +151,9 @@ class _ProgressScreenState extends State<ProgressScreen> {
   }
 }
 
+/// Same icon-badge/progress-bar/percentage-pill anatomy as
+/// `ConceptsListScreen`'s mastery card — the same number deserves the
+/// same look everywhere it's shown.
 class _MasteryRow extends StatelessWidget {
   const _MasteryRow({required this.item});
 
@@ -156,24 +161,51 @@ class _MasteryRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final mastery = (item['mastery'] as num).toDouble();
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(item['concept_name'] as String),
-                const SizedBox(height: 4),
-                LinearProgressIndicator(value: mastery, minHeight: 6),
-              ],
+    final masteryColor = Color.lerp(theme.colorScheme.primary, StudyOsColors.accent, mastery)!;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+              child: Icon(Icons.school_outlined, size: 20, color: masteryColor),
             ),
-          ),
-          const SizedBox(width: 12),
-          Text('${(mastery * 100).round()}%'),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(item['concept_name'] as String, style: theme.textTheme.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 6),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: mastery,
+                      minHeight: 6,
+                      backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                      valueColor: AlwaysStoppedAnimation(masteryColor),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(9999)),
+              child: Text(
+                '${(mastery * 100).round()}%',
+                style: theme.textTheme.labelSmall?.copyWith(color: masteryColor, fontWeight: FontWeight.w800),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -279,8 +311,12 @@ class _InsightsSection extends StatelessWidget {
           children: [
             Row(
               children: [
-                Expanded(child: _StatTile(label: 'Study streak', value: '$_streak day(s)')),
-                Expanded(child: _StatTile(label: 'This week', value: '$accuracyLabel accuracy')),
+                Expanded(
+                  child: _StatTile(icon: Icons.local_fire_department_rounded, label: 'Study streak', value: '$_streak day(s)'),
+                ),
+                Expanded(
+                  child: _StatTile(icon: Icons.track_changes_rounded, label: 'This week', value: '$accuracyLabel accuracy'),
+                ),
               ],
             ),
             const SizedBox(height: 16),
@@ -324,18 +360,27 @@ class _InsightsSection extends StatelessWidget {
 }
 
 class _StatTile extends StatelessWidget {
-  const _StatTile({required this.label, required this.value});
+  const _StatTile({required this.icon, required this.label, required this.value});
 
+  final IconData icon;
   final String label;
   final String value;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: Theme.of(context).textTheme.bodySmall),
-        Text(value, style: Theme.of(context).textTheme.titleMedium),
+        Row(
+          children: [
+            Icon(icon, size: 14, color: StudyOsColors.accent),
+            const SizedBox(width: 4),
+            Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          ],
+        ),
+        const SizedBox(height: 2),
+        Text(value, style: theme.textTheme.titleMedium),
       ],
     );
   }

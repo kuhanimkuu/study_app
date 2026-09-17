@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/gradient_button.dart';
 import 'study_session_screen.dart';
 
 /// Generates and shows a prioritized study plan (blueprint Section 21-22)
@@ -118,7 +119,7 @@ class _StudyPlanScreenState extends State<StudyPlanScreen> {
         const SizedBox(height: 8),
         DropdownButtonFormField<String?>(
           initialValue: _projectSlug,
-          decoration: const InputDecoration(border: OutlineInputBorder()),
+          decoration: const InputDecoration(labelText: 'Project'),
           items: [
             const DropdownMenuItem(value: null, child: Text('All projects')),
             if (_projects != null)
@@ -151,11 +152,11 @@ class _StudyPlanScreenState extends State<StudyPlanScreen> {
           const SizedBox(height: 8),
           PlanPhasesView(plan: _plan!),
           const SizedBox(height: 8),
-          FilledButton(
+          GradientButton(
+            label: 'Start this session',
+            icon: Icons.play_arrow_rounded,
+            isLoading: _isStarting,
             onPressed: _isStarting ? null : _startSession,
-            child: _isStarting
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Start this session'),
           ),
         ],
       ],

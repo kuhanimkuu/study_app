@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/gradient_button.dart';
 import '../../../questions/presentation/widgets/question_answer_input.dart';
 
 /// Sequential multi-question quiz (blueprint Section 18) — reuses
@@ -135,11 +136,10 @@ class _QuizRunnerScreenState extends State<QuizRunnerScreen> {
               Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
               const SizedBox(height: 8),
             ],
-            FilledButton(
+            GradientButton(
+              label: widget.examMode && _isLastQuestion ? 'Submit exam' : 'Submit',
+              isLoading: _isSubmitting,
               onPressed: _isSubmitting ? null : _submit,
-              child: _isSubmitting
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : Text(widget.examMode && _isLastQuestion ? 'Submit exam' : 'Submit'),
             ),
           ] else
             _buildResult(context),
@@ -152,48 +152,77 @@ class _QuizRunnerScreenState extends State<QuizRunnerScreen> {
     final result = _result!;
     final correct = result['correct'] as bool;
     final feedback = result['feedback'] as String?;
-    final color = correct ? Colors.green : Theme.of(context).colorScheme.error;
+    final color = correct ? const Color(0xFF16A34A) : Theme.of(context).colorScheme.error;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            Icon(correct ? Icons.check_circle : Icons.cancel, color: color),
-            const SizedBox(width: 8),
-            Text(correct ? 'Correct' : 'Incorrect', style: TextStyle(color: color, fontWeight: FontWeight.bold)),
-          ],
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(correct ? Icons.check_circle_rounded : Icons.cancel_rounded, color: color),
+                  const SizedBox(width: 8),
+                  Text(correct ? 'Correct' : 'Incorrect', style: TextStyle(color: color, fontWeight: FontWeight.w800)),
+                ],
+              ),
+              if (feedback != null && feedback.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(feedback),
+              ],
+            ],
+          ),
         ),
-        if (feedback != null && feedback.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(feedback),
-        ],
         const SizedBox(height: 24),
-        FilledButton(
+        GradientButton(
+          label: _isLastQuestion ? 'Finish' : 'Next question',
+          icon: _isLastQuestion ? Icons.flag_rounded : Icons.arrow_forward_rounded,
           onPressed: _next,
-          child: Text(_isLastQuestion ? 'Finish' : 'Next question'),
         ),
       ],
     );
   }
 
   Widget _buildFinalReview(BuildContext context) {
+    final theme = Theme.of(context);
+    final total = widget.questions.length;
+    final scorePercent = total == 0 ? 0 : (_correctCount / total * 100).round();
+    final scoreColor = Color.lerp(theme.colorScheme.error, const Color(0xFF16A34A), scorePercent / 100)!;
+
     return Scaffold(
       appBar: AppBar(title: const Text('Exam results')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text(
-            '$_correctCount/${widget.questions.length} correct',
-            style: Theme.of(context).textTheme.headlineSmall,
+          Center(
+            child: Column(
+              children: [
+                Container(
+                  width: 96,
+                  height: 96,
+                  decoration: BoxDecoration(color: scoreColor.withValues(alpha: 0.12), shape: BoxShape.circle),
+                  child: Center(
+                    child: Text(
+                      '$scorePercent%',
+                      style: theme.textTheme.headlineMedium?.copyWith(color: scoreColor, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text('$_correctCount/$total correct', style: theme.textTheme.titleMedium),
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 24),
           for (int i = 0; i < widget.questions.length; i++) _buildReviewRow(context, i),
-          const SizedBox(height: 16),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(context).pop({'correct': _correctCount, 'total': widget.questions.length}),
-            child: const Text('Done'),
+          const SizedBox(height: 8),
+          GradientButton(
+            label: 'Done',
+            onPressed: () => Navigator.of(context).pop({'correct': _correctCount, 'total': widget.questions.length}),
           ),
         ],
       ),
@@ -204,13 +233,44 @@ class _QuizRunnerScreenState extends State<QuizRunnerScreen> {
     final result = _examResults[i]!;
     final correct = result['correct'] as bool;
     final feedback = result['feedback'] as String?;
-    final color = correct ? Colors.green : Theme.of(context).colorScheme.error;
-    return Card(
-      child: ListTile(
-        leading: Icon(correct ? Icons.check_circle : Icons.cancel, color: color),
-        title: Text(widget.questions[i]['prompt'] as String),
-        subtitle: feedback != null && feedback.isNotEmpty ? Text(feedback) : null,
-        isThreeLine: feedback != null && feedback.isNotEmpty,
+    final color = correct ? const Color(0xFF16A34A) : Theme.of(context).colorScheme.error;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
+                child: Icon(correct ? Icons.check_rounded : Icons.close_rounded, size: 20, color: color),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(widget.questions[i]['prompt'] as String, style: Theme.of(context).textTheme.bodyMedium),
+                    if (feedback != null && feedback.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        feedback,
+                        style: Theme.of(context)
+                            .textTheme
+                            .bodySmall
+                            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

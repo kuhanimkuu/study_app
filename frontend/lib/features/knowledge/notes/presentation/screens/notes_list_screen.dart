@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../../core/api/api_client.dart';
 import '../../../../../core/errors/error_presentation.dart';
 import '../../../../../core/widgets/async_list_view.dart';
+import '../../../../../core/widgets/list_item_card.dart';
 import 'note_editor_screen.dart';
 
 /// Student-authored notes within a Knowledge Space (blueprint Section 14)
@@ -81,12 +82,14 @@ class _NotesListScreenState extends State<NotesListScreen> {
         items: _notes,
         onRefresh: _load,
         emptyMessage: 'No notes yet. Tap + to add one.',
+        emptyIcon: Icons.note_alt_outlined,
         itemBuilder: (context, note) {
           final body = note['body'] as String;
-          return ListTile(
-            leading: const Icon(Icons.notes_outlined),
-            title: Text(note['title'] as String),
-            subtitle: body.isEmpty ? null : Text(body, maxLines: 1, overflow: TextOverflow.ellipsis),
+          return ListItemCard(
+            icon: Icons.notes_outlined,
+            iconColor: Theme.of(context).colorScheme.secondary,
+            title: note['title'] as String,
+            subtitle: body.isEmpty ? null : body,
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline),
               onPressed: () => _deleteNote(note['id'] as int),
