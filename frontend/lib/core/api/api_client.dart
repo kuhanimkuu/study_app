@@ -86,6 +86,20 @@ class ApiClient {
     return _decode(res);
   }
 
+  /// Blueprint Section 4's required Google Sign-In — same response shape
+  /// as signup/login (token + auth_response including encryption_key),
+  /// so AuthService applies it through the exact same path.
+  Future<Map<String, dynamic>> googleSignIn({required String idToken}) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/auth/google'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'id_token': idToken}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
   Future<Map<String, dynamic>> me() async {
     final res = await http
         .get(Uri.parse('$baseUrl/api/auth/me'), headers: _authHeaders)
@@ -129,6 +143,21 @@ class ApiClient {
         .patch(Uri.parse('$baseUrl/api/account'), headers: _jsonHeaders, body: jsonEncode(body))
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
+  }
+
+  /// Irreversible. Requires re-entering the password server-side (see
+  /// server/domains/identity/router.py's delete_account) so a merely-held
+  /// token isn't enough on its own — the confirmation dialog in the UI is
+  /// a second, separate layer on top of that, not a substitute for it.
+  Future<void> deleteAccount({required String password}) async {
+    final res = await http
+        .delete(
+          Uri.parse('$baseUrl/api/account'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'password': password}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    _decode(res);
   }
 
   // --- projects ---
@@ -179,6 +208,18 @@ class ApiClient {
     }
     final streamed = await request.send().timeout(_requestTimeout, onTimeout: _timeoutError);
     final res = await http.Response.fromStream(streamed);
+    return _decode(res);
+  }
+
+  /// Per-upload metadata (filename/mime_type/status/created_at) — read
+  /// only, no delete: a material's chunks live merged into this space's
+  /// shared search index, not tagged by which upload they came from, so
+  /// there's no honest per-file delete yet (see server/domains/knowledge/
+  /// router.py's list_materials docstring).
+  Future<Map<String, dynamic>> listMaterials(String slug) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/projects/$slug/materials'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -381,6 +422,124 @@ class ApiClient {
   Future<Map<String, dynamic>> getConceptMastery(int conceptId) async {
     final res = await http
         .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/mastery'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- search ---
+
+  Future<Map<String, dynamic>> searchKnowledgeSpace({required String slug, required String query, int limit = 5}) async {
+    final uri = Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/search').replace(
+      queryParameters: {'q': query, 'limit': limit.toString()},
+    );
+    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- notes ---
+
+  Future<Map<String, dynamic>> listNotes(String slug) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/notes'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createNote({required String slug, required String title, String body = ''}) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/notes'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'title': title, 'body': body}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> updateNote({required int noteId, String? title, String? body}) async {
+    final res = await http
+        .patch(
+          Uri.parse('$baseUrl/api/v1/notes/$noteId'),
+          headers: _jsonHeaders,
+          body: jsonEncode({if (title != null) 'title': title, if (body != null) 'body': body}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<void> deleteNote(int noteId) async {
+    final res = await http
+        .delete(Uri.parse('$baseUrl/api/v1/notes/$noteId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    _decode(res);
+  }
+
+  // --- flashcards ---
+
+  Future<Map<String, dynamic>> listFlashcards(String slug) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/flashcards'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// Account-wide, every card regardless of due status — unlike
+  /// getDueFlashcards (filtered to already-due). Used by the Planner
+  /// calendar to plot every card's upcoming review date.
+  Future<Map<String, dynamic>> listAllFlashcards() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/flashcards'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createFlashcard({
+    required String slug,
+    required String front,
+    required String back,
+    int? conceptId,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/flashcards'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'front': front, 'back': back, if (conceptId != null) 'concept_id': conceptId}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<void> deleteFlashcard(int flashcardId) async {
+    final res = await http
+        .delete(Uri.parse('$baseUrl/api/v1/flashcards/$flashcardId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    _decode(res);
+  }
+
+  /// Account-wide by default (a review session usually spans every
+  /// Knowledge Space) — pass `knowledgeSpaceSlug` to scope it to one, same
+  /// convention as getPlan's optional scoping.
+  Future<Map<String, dynamic>> getDueFlashcards({String? knowledgeSpaceSlug, int limit = 20}) async {
+    final uri = Uri.parse('$baseUrl/api/v1/flashcards/due').replace(
+      queryParameters: {
+        'limit': limit.toString(),
+        if (knowledgeSpaceSlug != null) 'knowledge_space_slug': knowledgeSpaceSlug,
+      },
+    );
+    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// `rating` must be one of "again"/"hard"/"good"/"easy" (the full FSRS
+  /// scale — flashcards are self-graded, unlike quiz questions, so there's
+  /// no separate correctness signal to collapse it down to two values).
+  Future<Map<String, dynamic>> reviewFlashcard({required int flashcardId, required String rating}) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/flashcards/$flashcardId/review'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'rating': rating}),
+        )
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }

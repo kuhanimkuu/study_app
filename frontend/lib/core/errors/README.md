@@ -1,8 +1,16 @@
 # Error handling
 
-Status: **not yet implemented** (placeholder from the target project structure).
+Status: **implemented, minimally** (2026-09-16).
 
-Centralized error presentation beyond the current per-screen try/catch + ApiException.
+`error_presentation.dart`'s `showApiError(context, error)` — every screen
+already caught `ApiException` and showed its `.message` in a SnackBar by
+hand; this is that one line, named, so new screens reuse it instead of
+reinventing it. Adopted in the two newest list screens (Flashcards,
+Notes) as the real "not over-specialized to one call site" check; older
+screens are untouched, working code, not retrofitted just to use this.
 
-Blueprint reference: Section 29 (Flutter Product Structure) of `STUDY_OS_PRODUCTION_BLUEPRINT.md`.
-See `STUDY_OS_PROGRESS.md` for the staged build order this fits into.
+Deliberately not a bigger error-classification system (retry policies,
+offline banners) — this app has no offline mode to design around.
+
+Blueprint reference: Section 29 (Flutter Product Structure) of
+`STUDY_OS_PRODUCTION_BLUEPRINT.md`.

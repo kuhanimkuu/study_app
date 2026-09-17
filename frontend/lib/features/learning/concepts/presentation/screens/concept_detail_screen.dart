@@ -4,6 +4,7 @@ import '../../../../../core/api/api_client.dart';
 import '../../../../chat/presentation/widgets/block_view.dart';
 import '../../../../practice/questions/presentation/screens/create_question_screen.dart';
 import '../../../../practice/questions/presentation/screens/question_practice_screen.dart';
+import '../../../../practice/quizzes/presentation/screens/quiz_runner_screen.dart';
 
 /// One concept: description, mastery, an on-demand explanation (reuses the
 /// chat feature's BlockView rather than a new renderer — see the approved
@@ -92,6 +93,26 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
     _load(); // mastery may have changed
   }
 
+  Future<void> _startQuiz({required bool examMode}) async {
+    final questions = (_questions ?? []).cast<Map<String, dynamic>>();
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(
+        builder: (context) => QuizRunnerScreen(
+          apiClient: widget.apiClient,
+          questions: questions,
+          title: widget.concept['name'] as String,
+          examMode: examMode,
+        ),
+      ),
+    );
+    _load(); // mastery may have changed
+    if (result != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${examMode ? 'Exam' : 'Quiz'} complete: ${result['correct']}/${result['total']} correct')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final name = widget.concept['name'] as String;
@@ -150,7 +171,28 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                     ),
                   ],
                   const SizedBox(height: 24),
-                  Text('Questions', style: Theme.of(context).textTheme.titleMedium),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Questions', style: Theme.of(context).textTheme.titleMedium),
+                      if ((_questions ?? []).length >= 2)
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _startQuiz(examMode: false),
+                              icon: const Icon(Icons.quiz_outlined),
+                              label: const Text('Start quiz'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () => _startQuiz(examMode: true),
+                              icon: const Icon(Icons.timer_outlined),
+                              label: const Text('Exam mode'),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
                   const SizedBox(height: 8),
                   if ((_questions ?? []).isEmpty)
                     const Text('No questions yet. Tap + to add one.')

@@ -21,6 +21,12 @@ bcrypt==5.0.0
 PyJWT==2.10.1
 cryptography==46.0.3
 
+# --- server/domains/identity (Google Sign-In ID token verification,
+# blueprint Section 4) — was already present transitively (pulled in by
+# another dependency) but never declared; verifying real user credentials
+# against an undeclared dependency isn't something to leave implicit ---
+google-auth==2.48.0rc0
+
 # --- server/db, server/core (PostgreSQL — see STUDY_OS_PROGRESS.md's
 # 2026-09-14 hosting/DB decision: Postgres from day one, no SQLite) ---
 sqlalchemy[asyncio]==2.0.52

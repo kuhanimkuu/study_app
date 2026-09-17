@@ -5,7 +5,10 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../chat/models/chat_message.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
+import '../../../knowledge/notes/presentation/screens/notes_list_screen.dart';
+import '../../../knowledge/search/presentation/screens/knowledge_search_screen.dart';
 import '../../../learning/concepts/presentation/screens/concepts_list_screen.dart';
+import '../../../practice/flashcards/presentation/screens/flashcards_list_screen.dart';
 
 /// A single project ("notebook") — Sources (add material), Chat (query
 /// that material), and Studio (generate study guides/flashcards/etc. over
@@ -43,6 +46,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   int? _chunkCount;
   bool _isAddingMaterial = false;
   String? _sourcesError;
+  List<dynamic>? _materials;
 
   // --- Chat tab state ---
   final List<ChatMessage> _messages = [];
@@ -70,8 +74,18 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   void initState() {
     super.initState();
     _loadChunkCount();
+    _loadMaterials();
     _loadChatHistory();
     _loadArtifacts();
+  }
+
+  Future<void> _loadMaterials() async {
+    try {
+      final result = await widget.apiClient.listMaterials(widget.slug);
+      if (mounted) setState(() => _materials = result['materials'] as List<dynamic>);
+    } catch (_) {
+      // non-critical — Sources tab just won't show upload history yet
+    }
   }
 
   Future<void> _loadArtifacts() async {
@@ -135,6 +149,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       final result = await widget.apiClient.addProjectMaterial(slug: widget.slug, text: text);
       _materialController.clear();
       setState(() => _chunkCount = result['chunks'] as int?);
+      await _loadMaterials();
     } on ApiException catch (e) {
       setState(() => _sourcesError = e.message);
     } finally {
@@ -158,6 +173,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         filename: file.name,
       );
       setState(() => _chunkCount = response['chunks'] as int?);
+      await _loadMaterials();
     } on ApiException catch (e) {
       setState(() => _sourcesError = e.message);
     } finally {
@@ -234,12 +250,21 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 7,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.displayName),
-          bottom: const TabBar(
-            tabs: [Tab(text: 'Sources'), Tab(text: 'Chat'), Tab(text: 'Studio'), Tab(text: 'Concepts')],
+          bottom: TabBar(
+            isScrollable: true,
+            tabs: const [
+              Tab(text: 'Sources'),
+              Tab(text: 'Chat'),
+              Tab(text: 'Studio'),
+              Tab(text: 'Concepts'),
+              Tab(text: 'Flashcards'),
+              Tab(text: 'Notes'),
+              Tab(text: 'Search'),
+            ],
           ),
         ),
         body: TabBarView(
@@ -248,14 +273,29 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
             _buildChatTab(context),
             _buildStudioTab(context),
             _buildConceptsTab(context),
+            _buildFlashcardsTab(context),
+            _buildNotesTab(context),
+            _buildSearchTab(context),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildSearchTab(BuildContext context) {
+    return KnowledgeSearchScreen(apiClient: widget.apiClient, slug: widget.slug);
+  }
+
   Widget _buildConceptsTab(BuildContext context) {
     return ConceptsListScreen(apiClient: widget.apiClient, slug: widget.slug);
+  }
+
+  Widget _buildFlashcardsTab(BuildContext context) {
+    return FlashcardsListScreen(apiClient: widget.apiClient, slug: widget.slug);
+  }
+
+  Widget _buildNotesTab(BuildContext context) {
+    return NotesListScreen(apiClient: widget.apiClient, slug: widget.slug);
   }
 
   Widget _buildSourcesTab(BuildContext context) {
@@ -298,6 +338,23 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
           const SizedBox(height: 12),
           Text(_sourcesError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
         ],
+        const Divider(height: 32),
+        Text('Uploaded material', style: Theme.of(context).textTheme.titleSmall),
+        const SizedBox(height: 8),
+        if (_materials == null)
+          const SizedBox.shrink()
+        else if (_materials!.isEmpty)
+          const Text('Nothing uploaded yet.')
+        else
+          ..._materials!.map((raw) {
+            final material = raw as Map<String, dynamic>;
+            return ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.description_outlined),
+              title: Text(material['filename'] as String),
+              subtitle: Text('${material['mime_type']} · ${material['created_at']}'),
+            );
+          }),
       ],
     );
   }

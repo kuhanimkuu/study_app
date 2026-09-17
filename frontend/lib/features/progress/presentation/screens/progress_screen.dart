@@ -1,12 +1,22 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../planner/schedule/presentation/screens/study_session_screen.dart';
 
-/// Mastery/weak-spots overview + a merged recent-activity feed (blueprint
-/// Section 39). One screen, not split into dashboard/history/insights sub-
-/// screens — avoids a tab-inside-tab layout under the Planner tab's own
-/// TabBar. "Insights" (trend analysis) is deliberately not built this pass.
+/// Mastery/weak-spots overview + a merged recent-activity feed + Insights
+/// (blueprint Section 39). One screen, not split into dashboard/history/
+/// insights sub-screens — avoids a tab-inside-tab layout under the
+/// Planner tab's own TabBar.
+///
+/// Insights (streak, this-week accuracy, weekly activity chart) are
+/// derived entirely client-side from `_activity` — no new backend
+/// endpoint or stored history needed, since GET /api/v1/attempts and
+/// GET /api/v1/study-sessions already carry real timestamps. A genuine
+/// mastery-trend-over-time chart would need periodic snapshots this
+/// project doesn't store yet — deliberately not attempted; these
+/// insights are honestly derivable from what already exists, not a
+/// stand-in for that.
 class ProgressScreen extends StatefulWidget {
   const ProgressScreen({super.key, required this.apiClient});
 
@@ -118,6 +128,12 @@ class _ProgressScreenState extends State<ProgressScreen> {
                     ),
                   ),
               ],
+              if ((_activity ?? []).isNotEmpty) ...[
+                const SizedBox(height: 24),
+                Text('Insights', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 8),
+                _InsightsSection(activity: _activity!),
+              ],
               const SizedBox(height: 24),
               Text('Recent activity', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 8),
@@ -197,6 +213,130 @@ class _ActivityRow extends StatelessWidget {
         subtitle: Text('${item['question_prompt']}\n$timeLabel'),
         isThreeLine: true,
       ),
+    );
+  }
+}
+
+/// Streak / this-week-accuracy / weekly-activity-chart, all derived from
+/// the same merged activity feed the "Recent activity" section already
+/// renders — see this file's header comment for why nothing new was
+/// added to the backend for this.
+class _InsightsSection extends StatelessWidget {
+  const _InsightsSection({required this.activity});
+
+  final List<Map<String, dynamic>> activity;
+
+  DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  Set<DateTime> get _activeDays =>
+      activity.map((a) => _dateOnly(DateTime.parse(a['_timestamp'] as String).toLocal())).toSet();
+
+  int get _streak {
+    var streak = 0;
+    var day = _dateOnly(DateTime.now());
+    final active = _activeDays;
+    while (active.contains(day)) {
+      streak++;
+      day = day.subtract(const Duration(days: 1));
+    }
+    return streak;
+  }
+
+  List<Map<String, dynamic>> get _attemptsThisWeek {
+    final cutoff = DateTime.now().subtract(const Duration(days: 7));
+    return activity
+        .where((a) => a['_kind'] == 'attempt' && DateTime.parse(a['_timestamp'] as String).toLocal().isAfter(cutoff))
+        .toList();
+  }
+
+  /// Oldest-to-newest counts of attempts per day for the last 7 days
+  /// (including today) — index 0 is 6 days ago, index 6 is today.
+  List<int> get _dailyAttemptCounts {
+    final today = _dateOnly(DateTime.now());
+    final counts = List<int>.filled(7, 0);
+    for (final a in activity) {
+      if (a['_kind'] != 'attempt') continue;
+      final day = _dateOnly(DateTime.parse(a['_timestamp'] as String).toLocal());
+      final offset = today.difference(day).inDays;
+      if (offset >= 0 && offset < 7) counts[6 - offset]++;
+    }
+    return counts;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final weekAttempts = _attemptsThisWeek;
+    final weekCorrect = weekAttempts.where((a) => a['is_correct'] as bool).length;
+    final accuracyLabel = weekAttempts.isEmpty ? '—' : '${((weekCorrect / weekAttempts.length) * 100).round()}%';
+    final counts = _dailyAttemptCounts;
+    final maxCount = counts.fold<int>(1, (m, c) => c > m ? c : m);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: _StatTile(label: 'Study streak', value: '$_streak day(s)')),
+                Expanded(child: _StatTile(label: 'This week', value: '$accuracyLabel accuracy')),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text('Practice attempts, last 7 days', style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 100,
+              child: BarChart(
+                BarChartData(
+                  maxY: maxCount.toDouble() + 1,
+                  gridData: const FlGridData(show: false),
+                  borderData: FlBorderData(show: false),
+                  titlesData: const FlTitlesData(
+                    topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                  ),
+                  barGroups: [
+                    for (int i = 0; i < counts.length; i++)
+                      BarChartGroupData(
+                        x: i,
+                        barRods: [
+                          BarChartRodData(
+                            toY: counts[i].toDouble(),
+                            color: Theme.of(context).colorScheme.primary,
+                            width: 18,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatTile extends StatelessWidget {
+  const _StatTile({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.bodySmall),
+        Text(value, style: Theme.of(context).textTheme.titleMedium),
+      ],
     );
   }
 }

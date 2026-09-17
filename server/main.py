@@ -61,7 +61,9 @@ from .ai.personality.router import router as personality_router
 from .core.config import get_settings
 from .domains.assessment.router import router as assessment_router
 from .domains.identity.router import router as identity_router
+from .domains.knowledge.notes_router import router as notes_router
 from .domains.knowledge.router import router as knowledge_router
+from .domains.knowledge.search_router import router as search_router
 from .domains.learning.router import router as learning_router
 from .domains.planning.router import router as planning_router
 from .routers import ask, health
@@ -93,6 +95,8 @@ app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
 app.include_router(health.router)
 app.include_router(identity_router)
 app.include_router(knowledge_router)
+app.include_router(notes_router)
+app.include_router(search_router)
 app.include_router(ask.router)
 app.include_router(learning_router)
 app.include_router(assessment_router)

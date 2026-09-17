@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...db.base import Base
@@ -49,6 +49,7 @@ class KnowledgeSpace(Base):
     artifacts: Mapped[list["GeneratedArtifact"]] = relationship(
         back_populates="knowledge_space", cascade="all, delete-orphan"
     )
+    notes: Mapped[list["Note"]] = relationship(back_populates="knowledge_space", cascade="all, delete-orphan")
 
     def public(self) -> dict:
         return {
@@ -82,6 +83,41 @@ class Material(Base):
             "mime_type": self.mime_type,
             "status": self.status,
             "created_at": self.created_at.isoformat(),
+        }
+
+
+class Note(Base):
+    """Student-authored notes within a Knowledge Space (blueprint Section
+    14 lists Notes as a sibling of Materials/Concepts/etc., not nested
+    under a Concept) — real free-text content the student writes
+    themselves, distinct from Materials (uploaded/pasted source content)
+    and GeneratedArtifact (AI-generated Studio documents)."""
+
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    knowledge_space_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+    knowledge_space: Mapped[KnowledgeSpace] = relationship(back_populates="notes")
+
+    def public(self) -> dict:
+        return {
+            "id": self.id,
+            "knowledge_space_id": self.knowledge_space_id,
+            "title": self.title,
+            "body": self.body,
+            "created_at": self.created_at.isoformat(),
+            "updated_at": self.updated_at.isoformat(),
         }
 
 

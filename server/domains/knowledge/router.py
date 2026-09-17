@@ -134,6 +134,31 @@ async def delete_project(
     return {"deleted": slug}
 
 
+@router.get("/api/projects/{slug}/materials")
+async def list_materials(
+    slug: str,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Per-upload metadata (blueprint Section 12) — distinct from the
+    aggregate `chunk_count` on GET /api/projects. Deliberately read-only:
+    a material's chunks live merged into rag_projects' shared per-space
+    JSON index (chunks+vectors appended together, not tagged by which
+    upload they came from — see that engine's docstring), so there is no
+    honest way to delete just one material's searchable content without
+    re-architecting that storage. Deleting a material ROW here without
+    also removing its chunks would be misleading (the UI would say it's
+    gone while its content still answers searches), so no DELETE exists
+    yet — a real, named gap, not an oversight."""
+    space = await get_space_or_404(db, current_user["id"], slug)
+    materials = (
+        await db.scalars(
+            select(Material).where(Material.knowledge_space_id == space.id).order_by(Material.created_at.desc())
+        )
+    ).all()
+    return {"materials": [m.public() for m in materials]}
+
+
 @router.post("/api/projects/{slug}/material")
 async def add_material(
     slug: str,

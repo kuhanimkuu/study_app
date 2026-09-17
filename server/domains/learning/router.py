@@ -7,6 +7,8 @@ ones, see STUDY_OS_PROGRESS.md, 2026-09-14.
 """
 from __future__ import annotations
 
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import or_, select
@@ -17,7 +19,8 @@ from ...core import security
 from ...db.session import get_db
 from ..knowledge.models import KnowledgeSpace
 from ..knowledge.router import get_space_or_404
-from .models import Concept, ConceptRelationship, Mastery, RELATIONSHIP_TYPES
+from .flashcard_scheduler import RATINGS, review_flashcard
+from .models import Concept, ConceptRelationship, Flashcard, Mastery, RELATIONSHIP_TYPES
 from .scheduler import serialize_mastery
 
 router = APIRouter(prefix="/api/v1")
@@ -208,3 +211,139 @@ async def delete_relationship(
     await db.delete(relationship)
     await db.commit()
     return {"deleted": relationship_id}
+
+
+# --- Flashcards (blueprint Sections 17, 27, 32) ---
+
+
+async def get_flashcard_or_404(db: AsyncSession, user_id: int, flashcard_id: int) -> Flashcard:
+    """A flashcard has no user_id of its own — ownership is via its
+    Knowledge Space, same join pattern as get_concept_or_404."""
+    flashcard = await db.scalar(
+        select(Flashcard)
+        .join(KnowledgeSpace, KnowledgeSpace.id == Flashcard.knowledge_space_id)
+        .where(Flashcard.id == flashcard_id, KnowledgeSpace.user_id == user_id)
+    )
+    if flashcard is None:
+        raise HTTPException(status_code=404, detail=f"no flashcard with id {flashcard_id}")
+    return flashcard
+
+
+class CreateFlashcard(BaseModel):
+    front: str
+    back: str
+    concept_id: int | None = None
+
+
+@router.post("/knowledge-spaces/{slug}/flashcards")
+async def create_flashcard(
+    slug: str,
+    payload: CreateFlashcard,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    space = await get_space_or_404(db, current_user["id"], slug)
+    if payload.concept_id is not None:
+        # Must belong to the same user (and, since concepts are scoped to
+        # one space, this also confirms it's a real concept — not
+        # necessarily THIS space, matching between spaces is allowed the
+        # same way a relationship can cross concepts, but cross-user is not).
+        await get_concept_or_404(db, current_user["id"], payload.concept_id)
+
+    flashcard = Flashcard(
+        knowledge_space_id=space.id, concept_id=payload.concept_id, front=payload.front, back=payload.back
+    )
+    db.add(flashcard)
+    await db.commit()
+    await db.refresh(flashcard)
+    return flashcard.public()
+
+
+@router.get("/knowledge-spaces/{slug}/flashcards")
+async def list_flashcards(
+    slug: str,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    space = await get_space_or_404(db, current_user["id"], slug)
+    flashcards = (
+        await db.scalars(
+            select(Flashcard).where(Flashcard.knowledge_space_id == space.id).order_by(Flashcard.created_at)
+        )
+    ).all()
+    return {"flashcards": [f.public() for f in flashcards]}
+
+
+@router.get("/flashcards")
+async def list_my_flashcards(
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Account-wide, every card regardless of due status — unlike
+    /flashcards/due (filtered to fsrs_due <= now). Exists for the Planner
+    calendar (blueprint Section 22), which needs to plot every card's
+    upcoming review date, not just the ones already due today."""
+    flashcards = (
+        await db.scalars(
+            select(Flashcard)
+            .join(KnowledgeSpace, KnowledgeSpace.id == Flashcard.knowledge_space_id)
+            .where(KnowledgeSpace.user_id == current_user["id"])
+            .order_by(Flashcard.fsrs_due)
+        )
+    ).all()
+    return {"flashcards": [f.public() for f in flashcards]}
+
+
+@router.get("/flashcards/due")
+async def list_due_flashcards(
+    knowledge_space_slug: str | None = None,
+    limit: int = 20,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Account-wide by default (a review session usually spans every space,
+    same reasoning as GET /mastery) — optionally scoped to one space via
+    `knowledge_space_slug`."""
+    query = (
+        select(Flashcard)
+        .join(KnowledgeSpace, KnowledgeSpace.id == Flashcard.knowledge_space_id)
+        .where(KnowledgeSpace.user_id == current_user["id"], Flashcard.fsrs_due <= datetime.datetime.now(datetime.timezone.utc))
+        .order_by(Flashcard.fsrs_due)
+        .limit(limit)
+    )
+    if knowledge_space_slug is not None:
+        query = query.where(KnowledgeSpace.slug == knowledge_space_slug)
+    flashcards = (await db.scalars(query)).all()
+    return {"flashcards": [f.public() for f in flashcards]}
+
+
+@router.delete("/flashcards/{flashcard_id}")
+async def delete_flashcard(
+    flashcard_id: int,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    flashcard = await get_flashcard_or_404(db, current_user["id"], flashcard_id)
+    await db.delete(flashcard)
+    await db.commit()
+    return {"deleted": flashcard_id}
+
+
+class ReviewFlashcard(BaseModel):
+    rating: str
+
+
+@router.post("/flashcards/{flashcard_id}/review")
+async def review_flashcard_endpoint(
+    flashcard_id: int,
+    payload: ReviewFlashcard,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    if payload.rating not in RATINGS:
+        raise HTTPException(status_code=400, detail=f"rating must be one of {sorted(RATINGS)}")
+    flashcard = await get_flashcard_or_404(db, current_user["id"], flashcard_id)
+    review_flashcard(flashcard, payload.rating)
+    await db.commit()
+    await db.refresh(flashcard)
+    return flashcard.public()

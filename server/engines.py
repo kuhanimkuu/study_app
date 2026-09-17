@@ -30,6 +30,7 @@ audio_input = _load_engine("input_pipeline/audio_input/engine.py")
 web_input = _load_engine("input_pipeline/web_input/engine.py")
 query_memory = _load_engine("personalization/query_memory/engine.py")
 rag_projects = _load_engine("rag/projects/engine.py")
+semantic_search = _load_engine("rag/semantic_search/engine.py")
 generate_docs = _load_engine("document_generation/generate_docs/engine.py")
 
 # Reuses the SAME loaded instance `moderator` already holds internally

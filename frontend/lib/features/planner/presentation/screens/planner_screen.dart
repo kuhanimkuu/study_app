@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../progress/presentation/screens/progress_screen.dart';
+import '../../calendar/presentation/screens/planner_calendar_screen.dart';
 import '../../goals/presentation/screens/goals_list_screen.dart';
 import '../../schedule/presentation/screens/study_plan_screen.dart';
 
@@ -19,17 +20,20 @@ class PlannerScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Planner'),
-          bottom: const TabBar(tabs: [Tab(text: 'Plan'), Tab(text: 'Goals'), Tab(text: 'Progress')]),
+          bottom: const TabBar(
+            tabs: [Tab(text: 'Plan'), Tab(text: 'Goals'), Tab(text: 'Progress'), Tab(text: 'Calendar')],
+          ),
         ),
         body: TabBarView(
           children: [
             StudyPlanScreen(apiClient: apiClient),
             GoalsListScreen(apiClient: apiClient),
             ProgressScreen(apiClient: apiClient),
+            PlannerCalendarScreen(apiClient: apiClient),
           ],
         ),
       ),

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
+import '../../../../tutor/sessions/presentation/screens/guided_session_runner_screen.dart';
 
 /// Renders one generated plan's phases — shared by StudyPlanScreen (a plan
 /// not yet saved as a session) and StudySessionScreen (a saved session's
@@ -104,6 +105,24 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
     }
   }
 
+  Future<void> _startGuided() async {
+    final completed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (context) => GuidedSessionRunnerScreen(apiClient: widget.apiClient, session: _session),
+      ),
+    );
+    if (completed == true) {
+      // The runner already called completeStudySession — refetch this
+      // screen's copy so its own "Active"/"Completed" banner matches.
+      try {
+        final refreshed = await widget.apiClient.getStudySession(_session['id'] as int);
+        if (mounted) setState(() => _session = refreshed);
+      } catch (_) {
+        // non-critical — worst case this screen's banner is one refresh stale
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = _session['status'] as String;
@@ -132,13 +151,20 @@ class _StudySessionScreenState extends State<StudySessionScreen> {
             Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ],
           const SizedBox(height: 16),
-          if (!isCompleted)
-            FilledButton(
+          if (!isCompleted) ...[
+            FilledButton.icon(
+              onPressed: _startGuided,
+              icon: const Icon(Icons.school_outlined),
+              label: const Text('Start guided session'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton(
               onPressed: _isCompleting ? null : _complete,
               child: _isCompleting
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Text('Mark complete'),
             ),
+          ],
         ],
       ),
     );

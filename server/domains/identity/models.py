@@ -21,9 +21,22 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nullable since blueprint Section 4's Google Sign-In: an account
+    # created via Google has no password of its own — Google already
+    # verified the email, so there's nothing for us to hash. `login()`
+    # (password path) and `delete_account` both check for None explicitly
+    # rather than ever calling bcrypt against it.
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     encryption_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Google's stable per-user id ("sub" claim) — stored (not just the
+    # email) so a future login can confirm this is genuinely the same
+    # Google account even if the account's email were ever to change
+    # Google-side. Unique but nullable: only set for accounts that have
+    # signed in with Google at least once (a password-only account has
+    # this null; an account created via Google, or a password account
+    # that later links Google, has it set).
+    google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )

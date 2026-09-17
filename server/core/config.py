@@ -35,6 +35,18 @@ class Settings(BaseSettings):
             return ["*"]
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
+    # The "Web application" OAuth client id (blueprint Section 4, Google
+    # Sign-In) — this is the token *audience* the app's Android-side
+    # google_sign_in plugin requests via `serverClientId`, and what the
+    # server verifies every Google ID token against. Deliberately not the
+    # Android OAuth client's own id: that one is matched by Google Play
+    # Services automatically from the app's package name + signing
+    # certificate and never appears in code on either side. Empty by
+    # default so a server with no Google OAuth configured at all still
+    # starts cleanly; POST /api/auth/google fails clearly if this is unset
+    # rather than silently accepting unverifiable tokens.
+    google_oauth_client_id: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

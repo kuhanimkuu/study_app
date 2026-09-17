@@ -39,6 +39,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
   bool _isSaving = false;
   bool _isSavingProfile = false;
+  bool _isDeleting = false;
   String? _error;
   String? _savedMessage;
   String? _profileSavedMessage;
@@ -129,6 +130,74 @@ class _AccountScreenState extends State<AccountScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     } finally {
       if (mounted) setState(() => _isSavingProfile = false);
+    }
+  }
+
+  Future<void> _confirmDeleteAccount() async {
+    final passwordController = TextEditingController();
+    String? dialogError;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Delete account?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This permanently deletes your account and everything in it — Knowledge '
+                'Spaces, materials, mastery, memories, and history. This cannot be undone.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                autofocus: true,
+                decoration: const InputDecoration(labelText: 'Confirm your password'),
+              ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 8),
+                Text(dialogError!, style: TextStyle(color: Theme.of(dialogContext).colorScheme.error)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Theme.of(dialogContext).colorScheme.error),
+              onPressed: () async {
+                if (passwordController.text.isEmpty) {
+                  setDialogState(() => dialogError = 'Enter your password.');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(true);
+              },
+              child: const Text('Delete permanently'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _isDeleting = true;
+      _error = null;
+    });
+    try {
+      await widget.authService.deleteAccount(password: passwordController.text);
+      // AuthGate reacts to authService's user becoming null (same path as
+      // logout) — nothing further to navigate here.
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = e.statusCode == 401 ? 'Incorrect password.' : e.message;
+          _isDeleting = false;
+        });
+      }
     }
   }
 
@@ -278,6 +347,16 @@ class _AccountScreenState extends State<AccountScreen> {
             const SizedBox(height: 8),
             OutlinedButton(onPressed: _isSaving ? null : _clearApiKey, child: const Text('Clear key & use local model')),
           ],
+          const Divider(height: 32),
+          Text('Danger zone', style: Theme.of(context).textTheme.titleMedium?.copyWith(color: Theme.of(context).colorScheme.error)),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+            onPressed: _isDeleting ? null : _confirmDeleteAccount,
+            child: _isDeleting
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text('Delete account'),
+          ),
         ],
       ),
     );

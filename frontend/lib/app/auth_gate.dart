@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../core/auth/auth_service.dart';
 import '../features/auth/presentation/screens/login_screen.dart';
+import '../features/onboarding/presentation/screens/onboarding_screen.dart';
 import 'app_shell.dart';
 
 /// Root decision point: restores any saved session on first build, then
@@ -42,6 +43,9 @@ class _AuthGateState extends State<AuthGate> {
     }
     if (!widget.authService.isAuthenticated) {
       return LoginScreen(authService: widget.authService);
+    }
+    if (widget.authService.justSignedUp) {
+      return OnboardingScreen(authService: widget.authService);
     }
     return AppShell(authService: widget.authService);
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
@@ -18,6 +19,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
+  bool _isGoogleLoading = false;
   String? _error;
 
   Future<void> _login() async {
@@ -33,6 +35,30 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _loginWithGoogle() async {
+    setState(() {
+      _isGoogleLoading = true;
+      _error = null;
+    });
+    try {
+      await widget.authService.signInWithGoogle();
+      // AuthGate (listening to authService) swaps to the app shell
+      // automatically once this succeeds — nothing else to do here.
+    } on GoogleSignInException catch (e) {
+      // A user backing out of the account picker isn't an error worth
+      // surfacing — every other GoogleSignInException code is.
+      if (e.code != GoogleSignInExceptionCode.canceled) {
+        setState(() => _error = 'Google sign-in failed: ${e.description ?? e.code}');
+      }
+    } on ApiException catch (e) {
+      setState(() => _error = e.message);
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isGoogleLoading = false);
     }
   }
 
@@ -85,6 +111,18 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: _isLoading
                       ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                       : const Text('Log in'),
+                ),
+                const SizedBox(height: 12),
+                const Row(
+                  children: [Expanded(child: Divider()), Padding(padding: EdgeInsets.symmetric(horizontal: 8), child: Text('or')), Expanded(child: Divider())],
+                ),
+                const SizedBox(height: 12),
+                OutlinedButton.icon(
+                  onPressed: _isGoogleLoading ? null : _loginWithGoogle,
+                  icon: _isGoogleLoading
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.g_mobiledata),
+                  label: const Text('Continue with Google'),
                 ),
                 TextButton(
                   onPressed: () => Navigator.of(context).push(

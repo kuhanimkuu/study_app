@@ -99,6 +99,63 @@ class Mastery(Base):
     concept: Mapped[Concept] = relationship()
 
 
+class Flashcard(Base):
+    """Blueprint Section 27 (Generated Study Content) / Section 32's
+    suggested `flashcards` table. Deliberately no separate
+    `flashcard_reviews` log table (also in Section 32's wishlist) — same
+    precedent as Mastery just above: FSRS state + a raw review counter on
+    the row itself is enough to schedule reviews, and a full history isn't
+    consumed by anything yet.
+
+    Unlike Mastery (one row per user+concept, because a Concept is shared
+    authored content reviewed by whoever owns its Knowledge Space), a
+    Flashcard's FSRS state lives directly on the card row — there's only
+    ever one reviewer (whoever owns the Knowledge Space), so no separate
+    join table is needed the way Mastery needs one to key by (user,
+    concept) pairs.
+    """
+
+    __tablename__ = "flashcards"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    knowledge_space_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Optional — a card can stand alone or be linked to a Concept for
+    # context. SET NULL (not CASCADE): deleting a Concept shouldn't destroy
+    # flashcards a student wrote against it, just unlink them.
+    concept_id: Mapped[int | None] = mapped_column(
+        ForeignKey("concepts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    front: Mapped[str] = mapped_column(Text, nullable=False)
+    back: Mapped[str] = mapped_column(Text, nullable=False)
+
+    fsrs_state: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    fsrs_step: Mapped[int | None] = mapped_column(Integer, nullable=True, default=0)
+    fsrs_stability: Mapped[float | None] = mapped_column(nullable=True)
+    fsrs_difficulty: Mapped[float | None] = mapped_column(nullable=True)
+    fsrs_due: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    fsrs_last_review: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    reviews: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+
+    def public(self) -> dict:
+        return {
+            "id": self.id,
+            "knowledge_space_id": self.knowledge_space_id,
+            "concept_id": self.concept_id,
+            "front": self.front,
+            "back": self.back,
+            "reviews": self.reviews,
+            "due": self.fsrs_due.isoformat(),
+            "last_review": self.fsrs_last_review.isoformat() if self.fsrs_last_review else None,
+            "created_at": self.created_at.isoformat(),
+        }
+
+
 class ConceptRelationship(Base):
     __tablename__ = "concept_relationships"
     __table_args__ = (

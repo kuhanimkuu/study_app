@@ -209,7 +209,18 @@ async def test_add_material_indexes_and_tracks_metadata(client, signed_up_user):
     thermo = next(p for p in listed.json()["projects"] if p["slug"] == "thermo")
     assert thermo["chunk_count"] >= 1
 
+    materials = await client.get("/api/projects/thermo/materials", headers=headers)
+    assert materials.status_code == 200, materials.text
+    assert len(materials.json()["materials"]) == 1
+    assert materials.json()["materials"][0]["filename"] == "pasted_text.txt"
+    assert materials.json()["materials"][0]["mime_type"] == "text/plain"
+
     await client.delete("/api/projects/thermo", headers=headers)
+
+
+async def test_list_materials_requires_existing_space(client, signed_up_user):
+    resp = await client.get("/api/projects/does-not-exist/materials", headers=signed_up_user["headers"])
+    assert resp.status_code == 404
 
 
 async def test_material_requires_existing_space(client, signed_up_user):
@@ -219,3 +230,73 @@ async def test_material_requires_existing_space(client, signed_up_user):
         headers=signed_up_user["headers"],
     )
     assert resp.status_code == 404
+
+
+async def test_delete_account_requires_correct_password(client):
+    email = _unique_email()
+    signup = await client.post("/api/auth/signup", json={"email": email, "password": "testpass123"})
+    headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+
+    wrong = await client.request(
+        "DELETE", "/api/account", json={"password": "wrong-password"}, headers=headers
+    )
+    assert wrong.status_code == 401
+
+    # Account must still exist and be usable after a rejected delete attempt.
+    still_there = await client.get("/api/auth/me", headers=headers)
+    assert still_there.status_code == 200
+
+    async with async_session() as db:
+        await db.execute(delete(User).where(User.email == email))
+        await db.commit()
+
+
+async def test_delete_account_cascades_and_invalidates_token(client):
+    email = _unique_email()
+    signup = await client.post("/api/auth/signup", json={"email": email, "password": "testpass123"})
+    body = signup.json()
+    headers = {"Authorization": f"Bearer {body['token']}"}
+    user_id = body["user"]["id"]
+
+    space = await client.post("/api/projects", json={"display_name": "Delete Me"}, headers=headers)
+    assert space.status_code == 200, space.text
+    await client.post(
+        "/api/projects/delete_me/material",
+        data={"text": "some material that should be gone after account deletion."},
+        headers=headers,
+    )
+
+    ok = await client.request("DELETE", "/api/account", json={"password": "testpass123"}, headers=headers)
+    assert ok.status_code == 200
+    assert ok.json() == {"deleted": True}
+
+    # The now-invalid token must be rejected, not silently accepted.
+    after = await client.get("/api/auth/me", headers=headers)
+    assert after.status_code == 401
+
+    async with async_session() as db:
+        assert await db.get(User, user_id) is None
+
+    from server.domains.identity.router import _RAG_PROJECTS_ROOT
+
+    assert not (_RAG_PROJECTS_ROOT / f"user_{user_id}").exists()
+
+
+async def test_delete_account_rate_limited(client):
+    email = _unique_email()
+    signup = await client.post("/api/auth/signup", json={"email": email, "password": "testpass123"})
+    headers = {"Authorization": f"Bearer {signup.json()['token']}"}
+
+    from server.domains.identity.router import _DELETE_MAX_ATTEMPTS
+
+    last_status = None
+    for _ in range(_DELETE_MAX_ATTEMPTS + 1):
+        resp = await client.request(
+            "DELETE", "/api/account", json={"password": "wrong-password"}, headers=headers
+        )
+        last_status = resp.status_code
+    assert last_status == 429
+
+    async with async_session() as db:
+        await db.execute(delete(User).where(User.email == email))
+        await db.commit()

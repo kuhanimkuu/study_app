@@ -1,8 +1,17 @@
 # Materials browser
 
-Status: **not yet implemented** (placeholder from the target project structure).
+Status: **implemented, read-only** (2026-09-16).
 
-Browse/manage uploaded materials within a Knowledge Space beyond the current upload-only flow in the projects workspace.
+Upload history (filename/type/upload date) now lists at the bottom of the
+existing Sources tab in `project_workspace_screen.dart`, backed by
+`GET /api/projects/{slug}/materials`.
 
-Blueprint reference: Section 12 (RAG Strategy) of `STUDY_OS_PRODUCTION_BLUEPRINT.md`.
-See `STUDY_OS_PROGRESS.md` for the staged build order this fits into.
+**Deliberately no delete-per-material**: a material's chunks live merged
+into this space's shared search index (`features/rag/projects`), not
+tagged by which upload they came from — deleting the metadata row without
+also removing its chunks would be misleading (the UI would say it's gone
+while its content still answers searches). A real gap, not an oversight;
+would need the chunk-storage format to track a source material id first.
+
+Blueprint reference: Section 12 (RAG Strategy) of
+`STUDY_OS_PRODUCTION_BLUEPRINT.md`.

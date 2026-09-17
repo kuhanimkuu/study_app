@@ -1,8 +1,18 @@
 # Knowledge search
 
-Status: **not yet implemented** (placeholder from the target project structure).
+Status: **implemented, scoped down** (2026-09-16).
 
-Cross-material hybrid search UI within a Knowledge Space.
+A standalone semantic search UI within a Knowledge Space — a 7th tab on
+`ProjectWorkspaceScreen` (`KnowledgeSearchScreen`). Hits
+`GET /api/v1/knowledge-spaces/{slug}/search` and renders raw ranked
+chunks directly (chunk text + match %), unlike the Chat tab's
+`/api/ask/project` which returns a conversational response over the same
+material.
 
-Blueprint reference: Section 13 (Hybrid Retrieval) of `STUDY_OS_PRODUCTION_BLUEPRINT.md`.
-See `STUDY_OS_PROGRESS.md` for the staged build order this fits into.
+**Scoped down from blueprint Section 13's full "Hybrid Retrieval"**:
+semantic search only (fastembed cosine similarity over the existing
+per-space chunk index) — no keyword search, metadata filtering,
+reranking, or knowledge-graph-relationship blending yet. Those remain
+real, named gaps, not silently dropped.
+
+See `STUDY_OS_PROGRESS.md`'s 2026-09-16 entry for what shipped.
