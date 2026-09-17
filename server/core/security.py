@@ -8,9 +8,12 @@ top-level README.md's "Architecture note" for why: per-user API keys and
 history only make sense tied to a real account, and a parallel anonymous
 mode would just duplicate the existing session_id system pointlessly.
 
-DEV-MODE NOTE on the JWT secret: generated into a local gitignored file on
-first run, not a proper secrets manager. Fine for local development, not
-for real deployment.
+JWT secret: an env var (`JWT_SECRET`) takes precedence when set — required
+for any host with an ephemeral/non-persistent filesystem (e.g. a Railway
+container without an attached volume), since a secret regenerated on every
+restart invalidates every existing session. Falls back to a local
+gitignored file, auto-generated on first run, for local dev where no env
+var is set.
 
 Moved here from server/security.py as part of the Postgres migration
 (STUDY_OS_PROGRESS.md, 2026-09-14) — get_current_user now queries Postgres
@@ -18,6 +21,7 @@ via SQLAlchemy instead of sqlite3, and is async all the way through.
 """
 from __future__ import annotations
 
+import os
 import secrets
 import time
 from pathlib import Path
@@ -37,6 +41,9 @@ _TOKEN_TTL_SECONDS = 60 * 60 * 24 * 30  # 30 days
 
 
 def _get_secret() -> str:
+    env_secret = os.environ.get("JWT_SECRET")
+    if env_secret:
+        return env_secret
     if _SECRET_PATH.exists():
         return _SECRET_PATH.read_text()
     secret = secrets.token_hex(32)

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: study-os-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: alembic upgrade head && uvicorn server.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: study-os-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        value: 396041418818-nj9krnthuc95trqosmgpoun0tkg3h30k.apps.googleusercontent.com
+      - key: CORS_ALLOWED_ORIGINS
+        value: "*"
+
+databases:
+  - name: study-os-db
+    plan: free
+    postgresMajorVersion: "16"

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,6 +21,17 @@ class Settings(BaseSettings):
     # asyncpg driver — SQLAlchemy's async engine requires the "+asyncpg"
     # dialect suffix, not a plain "postgresql://" URL.
     database_url: str = "postgresql+asyncpg://study_os_app:study_os_app@localhost:5432/study_os"
+
+    @field_validator("database_url")
+    @classmethod
+    def _ensure_asyncpg_driver(cls, value: str) -> str:
+        # A managed-Postgres host (Render, Railway, ...) hands you a plain
+        # "postgresql://" connection string via its own env var/reference —
+        # normalize it here rather than requiring every hosting provider's
+        # config to know this app's driver choice.
+        if value.startswith("postgresql://"):
+            return "postgresql+asyncpg://" + value[len("postgresql://"):]
+        return value
 
     # Comma-separated origins, e.g. "https://app.example.com,https://staging.example.com".
     # Defaults to "*" (every origin) so local dev against the Flutter app
