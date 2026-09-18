@@ -149,9 +149,19 @@ expressing an answer. Two origins of content:
 ```json
 { "type": "error", "engine": "math_engine", "message": "could not parse expression" }
 ```
+```json
+{
+  "type": "model_unavailable",
+  "message": "The free local AI model is currently unavailable.",
+  "attempted_backend": "local",
+  "suggested_backend": "deepseek",
+  "suggested_model": "deepseek-reasoner"
+}
+```
 
 - `clarification` — moderator asks the user (ambiguous input). Drives the conversational loop.
 - `error` — an engine failed; the moderator surfaces it honestly rather than guessing.
+- `model_unavailable` — a model call itself failed (not ambiguous input, which is still a plain `clarification`). Two shapes: the free local model failing includes `suggested_backend`/`suggested_model` (try BYOK); a BYOK backend failing omits those (recommending the backend that just failed would be nonsensical) and `message` carries the real reason instead, e.g. `"Your deepseek backend didn't respond: <the SDK's own error>"`. Client renders setup/fix steps instead of a plain question either way.
 
 ---
 

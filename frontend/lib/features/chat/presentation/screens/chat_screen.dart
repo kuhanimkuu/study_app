@@ -9,6 +9,7 @@ import '../../../../core/auth/auth_service.dart';
 import '../../../../core/crypto/user_crypto.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../../core/widgets/brand_wordmark.dart';
+import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 import '../../models/chat_message.dart';
 import '../widgets/attachment_menu_sheet.dart';
@@ -466,6 +467,12 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
+  void _openAccountSettings() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => AccountScreen(authService: widget.authService)),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -503,6 +510,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       message: _messages[index],
                       baseUrl: _api.baseUrl,
                       onStillStuck: () => _markStillStuck(_messages[index]),
+                      onSetUpByok: _openAccountSettings,
                     ),
                   ),
           ),

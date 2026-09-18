@@ -137,6 +137,27 @@ class NeedsClarification(Exception):
         self.context = context
 
 
+class ModelUnavailable(Exception):
+    """Raised (2026-09-18) only for the one case a plain NeedsClarification
+    used to swallow indistinguishably: general-conversation replies (see
+    _author_general_reply) with no non-LLM template fallback (unlike
+    _author_text's math routes, which already degrade gracefully to
+    _author_symbolic_text) whose *specific* cause was the free local model
+    itself failing — not genuinely ambiguous input. That distinction
+    matters to the user: "the free option is temporarily down, here's how
+    to bring your own key" is real, actionable information the old fixed
+    clarification text (still used for every other case) never gave them.
+    Only raised when `model_config`'s backend was "local" — a failed BYOK
+    call (their own key/backend) still falls through to the generic
+    clarification, since "switch to BYOK" isn't useful advice when BYOK is
+    what just failed."""
+
+    def __init__(self, message: str, attempted_backend: str):
+        super().__init__(message)
+        self.message = message
+        self.attempted_backend = attempted_backend
+
+
 # --- state (per PATHWAY.md: _pending is the sanctioned short-term in-memory
 # stub; long-term memory now goes through the real personalization/
 # memory_log engine — see _log_event — not an in-memory stub anymore) ---
@@ -293,6 +314,19 @@ async def run(**kwargs: Any) -> dict:
     except NeedsClarification as exc:
         _pending[session_id] = {"asked": exc.question, "context": exc.context}
         return {"blocks": [{"type": "clarification", "question": exc.question}], "session_id": session_id}
+    except ModelUnavailable as exc:
+        block = {
+            "type": "model_unavailable",
+            "message": exc.message,
+            "attempted_backend": exc.attempted_backend,
+        }
+        # Only suggest a specific alternative when the *free* backend was
+        # the one that failed — recommending "deepseek" to someone whose
+        # deepseek call just failed would be nonsensical.
+        if exc.attempted_backend == "local":
+            block["suggested_backend"] = "deepseek"
+            block["suggested_model"] = "deepseek-reasoner"
+        return {"blocks": [block], "session_id": session_id}
 
     # NOT persisted here — this project moved to a local-first model where
     # the DEVICE stores its own activity log (see README.md's "Architecture
@@ -668,7 +702,28 @@ async def _route_research_or_clarify(
                 )
             return blocks, "search_pipeline", content
 
-    general_reply = await _author_general_reply(content, model_config, personality_style, personality_max_tokens)
+    backend = model_config.get("backend", "local")
+    try:
+        general_reply = await _author_general_reply(content, model_config, personality_style, personality_max_tokens)
+    except Exception as exc:
+        if backend == "local":
+            raise ModelUnavailable(
+                "The free local AI model is currently unavailable.",
+                attempted_backend="local",
+            ) from exc
+        # A BYOK backend's own SDK client failed — surface the real reason
+        # (these SDKs raise clean, user-safe messages like "Authentication
+        # Fails, Your api key: ... is invalid", not stack traces) instead
+        # of the same generic "I don't understand" every other failure
+        # mode gets. "Switch to BYOK" isn't useful advice when BYOK is
+        # what just failed, so no suggested_backend/suggested_model here —
+        # the button still points at Account settings, just to fix the
+        # existing config rather than to set up a new one.
+        raise ModelUnavailable(
+            f"Your {backend} backend didn't respond: {exc}",
+            attempted_backend=backend,
+        ) from exc
+
     if general_reply is not None:
         return [{"type": "text", "content": general_reply, "source": "moderator"}], "model_router", content
 
@@ -691,6 +746,16 @@ async def _author_general_reply(
     call here returns None (not a canned reply), and the caller falls
     back to asking for clarification instead of faking an answer.
 
+    2026-09-18: no longer swallows the model_router exception itself —
+    only returns None for a genuinely empty (but successful) generation.
+    A real call failure (wrong/expired BYOK key, local model unavailable,
+    DeepSeek/OpenAI/Anthropic network or auth error, ...) now propagates
+    to the caller, which needs the actual reason to tell the user
+    something more useful than a generic "I don't understand" (found via
+    a real DeepSeek BYOK misconfiguration going unexplained — the old
+    swallow-to-None here made every failure mode, from "ambiguous input"
+    to "your API key is wrong," look identical to the user).
+
     personality_style/personality_max_tokens (2026-09-14, optional,
     additive — see run()'s doc comment): when absent, this function is
     byte-for-byte what it always was, including the fixed "2-4 sentences"
@@ -705,12 +770,9 @@ async def _author_general_reply(
         f"the question clearly needs more detail).{personality_style or ''}"
     )
     max_tokens = personality_max_tokens or 220
-    try:
-        llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
-        text = llm_result["text"].strip()
-        return text or None
-    except Exception:
-        return None
+    llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
+    text = llm_result["text"].strip()
+    return text or None
 
 
 async def _route_unit_convert(content: str) -> tuple[list[dict], str, str]:

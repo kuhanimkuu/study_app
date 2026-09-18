@@ -7,7 +7,7 @@ import 'block_view.dart';
 /// user sent, or a left-aligned bubble containing the moderator's rendered
 /// blocks (see BlockView) for a response.
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.message, required this.baseUrl, this.onStillStuck});
+  const MessageBubble({super.key, required this.message, required this.baseUrl, this.onStillStuck, this.onSetUpByok});
 
   final ChatMessage message;
   final String baseUrl;
@@ -16,6 +16,9 @@ class MessageBubble extends StatelessWidget {
   /// ChatScreen._markStillStuck's doc comment. Null (and the affordance
   /// hidden) when this message has no `activity` to attach the report to.
   final VoidCallback? onStillStuck;
+
+  /// Passed straight through to BlockView — see its own doc comment.
+  final VoidCallback? onSetUpByok;
 
   @override
   Widget build(BuildContext context) {
@@ -64,7 +67,7 @@ class MessageBubble extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             for (final block in (message.blocks ?? []))
-              BlockView(block: block as Map<String, dynamic>, baseUrl: baseUrl),
+              BlockView(block: block as Map<String, dynamic>, baseUrl: baseUrl, onSetUpByok: onSetUpByok),
             if (topic != null) ...[
               const SizedBox(height: 4),
               message.struggleMarked

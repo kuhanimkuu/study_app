@@ -90,6 +90,42 @@ void main() {
     expect(find.textContaining('could not parse expression'), findsOneWidget);
   });
 
+  // Real shape from features/moderator/engine.py's ModelUnavailable handler.
+  const modelUnavailableBlock = {
+    'type': 'model_unavailable',
+    'message': 'The free local AI model is currently unavailable.',
+    'attempted_backend': 'local',
+    'suggested_backend': 'deepseek',
+    'suggested_model': 'deepseek-reasoner',
+  };
+
+  testWidgets('model_unavailable block renders the message and suggested model', (tester) async {
+    await tester.pumpWidget(_wrap(const BlockView(
+      block: modelUnavailableBlock,
+      baseUrl: _testBaseUrl,
+    )));
+    expect(find.textContaining('currently unavailable'), findsOneWidget);
+    expect(find.textContaining('deepseek-reasoner'), findsOneWidget);
+    // No callback supplied (this host screen has no AuthService) — the
+    // "set up my own key" button must not appear, only the informational
+    // steps and the provider quick links.
+    expect(find.text('Set up my own API key'), findsNothing);
+    expect(find.text('DeepSeek'), findsOneWidget);
+  });
+
+  testWidgets('model_unavailable block shows the BYOK button when a callback is supplied', (tester) async {
+    var tapped = false;
+    await tester.pumpWidget(_wrap(BlockView(
+      block: modelUnavailableBlock,
+      baseUrl: _testBaseUrl,
+      onSetUpByok: () => tapped = true,
+    )));
+    final button = find.text('Set up my own API key');
+    expect(button, findsOneWidget);
+    await tester.tap(button);
+    expect(tapped, isTrue);
+  });
+
   // Real shape from ocr/table_extraction's engine.py output.
   testWidgets('table block renders headers and rows', (tester) async {
     await tester.pumpWidget(_wrap(const BlockView(
