@@ -57,7 +57,7 @@ async def test_local_model_failure_returns_actionable_model_unavailable_block(mo
             "message": "The free local AI model is currently unavailable.",
             "attempted_backend": "local",
             "suggested_backend": "deepseek",
-            "suggested_model": "deepseek-reasoner",
+            "suggested_model": "deepseek-chat",
         }
     ]
 

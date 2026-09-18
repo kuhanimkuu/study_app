@@ -178,6 +178,19 @@ _MEMORY_QUERY_RE = re.compile(
 _INTERACTIVE_RE = re.compile(r"\binteractive\b", re.IGNORECASE)
 _STATIC_IMAGE_RE = re.compile(r"\b(image of|picture of|draw)\b", re.IGNORECASE)
 _PDF_EXPORT_RE = re.compile(r"\bpdf\b", re.IGNORECASE)
+# Disambiguates a "pdf" request between the two very different things it
+# can mean here: a math expression rendered to an image/PDF
+# (_route_static_image, via _GRAPH_RE/_STATIC_IMAGE_RE) vs. a written
+# document (_route_write_doc) — e.g. "make me a guide to thermodynamics
+# as a pdf" has no math expression to graph at all, and used to be routed
+# to static_image regardless, handing the whole sentence to sympy as an
+# "expression" (real bug: crashed with a sympy syntax error on real input,
+# since a full sentence obviously isn't parseable as math).
+_DOC_REQUEST_RE = re.compile(
+    r"\b(guide|notes?|summary|summarise|summarize|overview|revision|explain|explanation|report|"
+    r"worksheet|cheat sheet|handout|introduction|intro|document|essay)\b",
+    re.IGNORECASE,
+)
 _STRIP_KEYWORDS_RE = re.compile(
     r"^\s*(what('?s| is)|calculate|compute|show( me)?|give me|generate)?\s*(an?\s+)?(interactive\s+)?"
     r"(graph|plot|chart|differentiate|derivative of|integrate|integral of|solve|simplify|image of|picture of|draw)?\s+(the\s+)?(of\s+)?",
@@ -297,14 +310,32 @@ async def run(**kwargs: Any) -> dict:
     # default, unchanged.
     personality_max_tokens: int | None = kwargs.get("personality_max_tokens")
 
+    pending: dict | None = None
     if task is None and session_id in _pending:
         pending = _pending.pop(session_id)
-        task = _task_from_clarification_reply(content)
-        input_type = pending["context"]["input_type"]
-        content = pending["context"]["content"]
-        query = query or pending["context"].get("query")
-        pdf_path = pdf_path or pending["context"].get("pdf_path")
-        project = project or pending["context"].get("project")
+        inferred_task = _task_from_clarification_reply(content)
+        pending_input_type = pending["context"]["input_type"]
+        # A real chat used to get stuck here forever: once a clarification
+        # was asked, EVERY later message was treated as a reply to it, no
+        # matter what it actually said — a reply matching no known
+        # follow-up keyword left `task` as None and overwrote `content`
+        # with the OLD (already-failed) pending content, so the user's new
+        # question was silently discarded and the same failing message got
+        # re-sent, reproducing the exact same clarification every time.
+        # Only bail out of resuming when BOTH sides were plain text, though
+        # — a pdf/project follow-up still MUST always resume regardless of
+        # keyword match, since those depend on the stored pdf_path/project
+        # to mean anything at all (there's no fresh pdf_path/project on a
+        # bare text reply to recover those from).
+        if inferred_task is None and input_type == "text" and pending_input_type == "text":
+            pending = None
+        else:
+            task = inferred_task
+            input_type = pending_input_type
+            content = pending["context"]["content"]
+            query = query or pending["context"].get("query")
+            pdf_path = pdf_path or pending["context"].get("pdf_path")
+            project = project or pending["context"].get("project")
 
     try:
         blocks, engine_used, topic = await _route(
@@ -325,7 +356,13 @@ async def run(**kwargs: Any) -> dict:
         # deepseek call just failed would be nonsensical.
         if exc.attempted_backend == "local":
             block["suggested_backend"] = "deepseek"
-            block["suggested_model"] = "deepseek-reasoner"
+            # Not "deepseek-reasoner" — the reasoner spends its max_tokens
+            # budget on hidden reasoning tokens before ever writing a
+            # visible reply, and this app's chat/math prompts cap
+            # max_tokens at 120-220, so the reasoner reliably returns
+            # empty (found via real testing, not theoretical) at those
+            # budgets. "deepseek-chat" answers directly instead.
+            block["suggested_model"] = "deepseek-chat"
         return {"blocks": [block], "session_id": session_id}
 
     # NOT persisted here — this project moved to a local-first model where
@@ -612,6 +649,14 @@ async def _route_text(
     if task is None:
         return await _route_research_or_clarify(content, model_config, personality_style, personality_max_tokens)
 
+    # A distinct task name from "generate_doc" (the _STRUCTURED_ENGINES
+    # entry) deliberately — that one is explicit-task-only and needs the
+    # caller to already have structured `material`/`doc_type` params (see
+    # _STRUCTURED_ENGINES's own doc comment); write_doc is the free-text
+    # path that gets there by asking the LLM to author the material first.
+    if task == "write_doc":
+        return await _route_write_doc(content, model_config, personality_style)
+
     if task in _STRUCTURED_ENGINES:
         return await _route_structured(task, params)
 
@@ -873,6 +918,114 @@ async def _route_static_image(expression: str, params: dict, content: str) -> tu
     return blocks, "static_images", expr
 
 
+_HEADING_RE = re.compile(r"^(#{1,3})\s+(.*)$")
+_DOC_BULLET_RE = re.compile(r"^(?:[-*•]|\d+\.)\s+(.*)$")
+
+
+def _doc_text_to_material(text: str) -> tuple[str, list[str]]:
+    """Turns the LLM's plain-text study guide (see _route_write_doc's
+    prompt for the exact format it's asked for) into
+    document_generation/generate_docs' `material: list[str]` input shape,
+    plus a separate title. The first "# " (H1) line becomes the title, not
+    a chunk — every other heading line (further H1s, any H2/H3) becomes a
+    chunk prefixed "## " so _build_compiled_document can tell a section
+    heading apart from an ordinary bullet and render it as one (see that
+    function's own doc comment). Bullet markers (-, *, •, "1.") are
+    stripped since generate_docs already bullets every plain chunk itself;
+    any other non-empty line is kept as-is (verbatim prose, not a bullet
+    or heading). "**" is stripped everywhere — the LLM sometimes bolds
+    text Markdown-style even when explicitly told not to, and reportlab's
+    Paragraph would otherwise try to parse "**" as literal characters, not
+    markup, and print them."""
+    title = ""
+    title_taken = False
+    material: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip().replace("**", "")
+        if not line:
+            continue
+        heading_match = _HEADING_RE.match(line)
+        if heading_match:
+            hashes, heading_text = heading_match.groups()
+            heading_text = heading_text.strip()
+            if not title_taken and hashes == "#":
+                title = heading_text
+                title_taken = True
+            else:
+                material.append(f"## {heading_text}")
+            continue
+        bullet_match = _DOC_BULLET_RE.match(line)
+        if bullet_match:
+            material.append(bullet_match.group(1).strip())
+            continue
+        material.append(line)
+    return title, material
+
+
+async def _route_write_doc(
+    content: str,
+    model_config: dict,
+    personality_style: str | None = None,
+) -> tuple[list[dict], str, str]:
+    """A free-text "write me a study guide/summary/notes ... as a pdf"
+    request — distinct from _route_static_image's "graph/plot ... as a
+    pdf" (see _infer_task's routing comment for how the two are told
+    apart). Unlike generate_doc's own _STRUCTURED_ENGINES entry (which
+    needs the caller to already supply structured `material`), this asks
+    the LLM to author the document's content first, then compiles it the
+    same way generate_docs always has.
+
+    max_tokens=1800 (vs. general-conversation's 220 and math's 120) — a
+    5-8 section study guide genuinely needs the room; personality_style
+    (tone/verbosity) still applies, but personality_max_tokens does not
+    override this — a document isn't a chat reply, and letting a chat-
+    length cap truncate it defeats the purpose."""
+    topic = _PDF_MODIFIER_RE.sub(" ", content).strip()
+    prompt = (
+        "Write a university-level study guide on the following topic, in exactly this plain-text "
+        "format: a '# Title' line, then 5-8 '## Section' headings each followed by 3-6 '- point' "
+        "bullet lines, ending with a '## Key formulas' section and a '## Common mistakes' section. "
+        "No tables, no bold text, no preamble or commentary — output only the document itself.\n\n"
+        f"Topic: {topic}{personality_style or ''}"
+    )
+    backend = model_config.get("backend", "local")
+    try:
+        llm_result = await _model_router.run(prompt=prompt, max_tokens=1800, **model_config)
+    except Exception as exc:
+        if backend == "local":
+            raise ModelUnavailable(
+                "The free local AI model is currently unavailable.",
+                attempted_backend="local",
+            ) from exc
+        # Same reasoning as _route_research_or_clarify's BYOK failure
+        # handling — surface the real SDK error, no suggested alternative
+        # (recommending the backend that just failed would be nonsensical).
+        raise ModelUnavailable(
+            f"Your {backend} backend didn't respond: {exc}",
+            attempted_backend=backend,
+        ) from exc
+
+    title, material = _doc_text_to_material(llm_result["text"])
+    if not material:
+        raise NeedsClarification(
+            "I couldn't turn that into a document — could you rephrase what you'd like the guide to cover?",
+            {"input_type": "text", "content": content},
+        )
+    title = title or "Study Guide"
+
+    fs_path, url_path = _generated_file("pdf")
+    try:
+        await _generate_docs.run(material=material, doc_type="study_guide", title=title, output_path=fs_path)
+    except Exception as exc:
+        return [{"type": "error", "engine": "generate_docs", "message": str(exc)}], "generate_docs", topic
+
+    blocks = [
+        {"type": "text", "content": f"Here's your PDF: {title}.", "source": "moderator"},
+        {"type": "pdf", "content": url_path, "doc_type": "study_guide", "source": "generate_docs"},
+    ]
+    return blocks, "generate_docs", topic
+
+
 # task -> file extension, for tasks whose result is a file the client needs
 # a fetchable URL for (see _GENERATED_DIR's doc comment)
 _FILE_PRODUCING_TASKS = {"generate_doc": "pdf", "animation": "gif", "interactive_3d": "glb"}
@@ -944,13 +1097,31 @@ def _infer_task(content: str, detected: list[str]) -> str | None:
     # as a pdf" needs to land on static_image (which _route_static_image
     # then renders as an actual PDF, not just an image) rather than the
     # data-only interactive_2d/graph routes silently swallowing "pdf".
-    # Deliberately not requiring _GRAPH_RE/_STATIC_IMAGE_RE too — "generate
-    # a pdf of sin(x)" (no "graph"/"image"/"draw" word at all) is a real,
-    # natural phrasing that would otherwise fall through to the general-
-    # conversation LLM fallback, which can only honestly admit it can't
-    # produce a file (found via live testing, not theoretical).
+    #
+    # But "pdf" alone doesn't mean "render a math expression" — a real bug
+    # found via live testing: "give me an overview of thermodynamics as a
+    # guide, submit it in pdf form" has no math expression in it at all,
+    # and used to be routed to static_image regardless (this branch used
+    # to unconditionally `return "static_image"`), handing the entire
+    # sentence to sympy as an "expression" and crashing with a syntax
+    # error. Disambiguated: an actual graph/image word wins outright (the
+    # request is unambiguous either way); otherwise a document-request
+    # word (_DOC_REQUEST_RE — "guide," "notes," "summary," ...) means this
+    # is prose to be *written*, not math to be *plotted*, so it goes to
+    # write_doc; otherwise fall back to detected "math" content (e.g.
+    # "generate a pdf of sin(x)" has no graph/document word at all, but
+    # text_input's classifier already flagged it as math) — still
+    # static_image; anything left over defaults to write_doc, since a bare
+    # "pdf" request with no math signal at all is far more likely to be a
+    # document request than an un-graphable expression.
     if _PDF_EXPORT_RE.search(content):
-        return "static_image"
+        if _GRAPH_RE.search(content) or _STATIC_IMAGE_RE.search(content):
+            return "static_image"
+        if _DOC_REQUEST_RE.search(content):
+            return "write_doc"
+        if "math" in detected:
+            return "static_image"
+        return "write_doc"
     if _INTERACTIVE_RE.search(content) and _GRAPH_RE.search(content):
         return "interactive_2d"
     if _GRAPH_RE.search(content):

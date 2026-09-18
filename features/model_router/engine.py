@@ -134,7 +134,16 @@ class OpenAIBackend:
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content.strip()
+        # message.content is None (not "") for some models/backends when
+        # nothing came back within max_tokens — e.g. DeepSeek's reasoner
+        # variant spends its whole budget on hidden reasoning tokens
+        # before writing anything visible at this app's 120-220 token
+        # caps (see moderator/engine.py's suggested_model comment). Calling
+        # .strip() straight on that raised AttributeError instead of
+        # cleanly producing an empty reply the caller already knows how to
+        # handle (moderator/engine.py's _author_general_reply/_route_write_doc
+        # both treat empty text as "no answer," not a crash).
+        return (response.choices[0].message.content or "").strip()
 
 
 _local_backends: dict[str, Backend] = {}  # lazy singletons per tier — loading a model is expensive

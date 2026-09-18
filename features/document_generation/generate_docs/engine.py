@@ -41,6 +41,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape
 
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
@@ -79,9 +80,35 @@ async def run(**kwargs: Any) -> dict:
 
 
 def _build_compiled_document(title: str, material: list[str]) -> list:
-    story = [Paragraph(title, _STYLES["Title"]), Spacer(1, 12)]
-    items = [ListItem(Paragraph(chunk, _STYLES["Normal"])) for chunk in material]
-    story.append(ListFlowable(items, bulletType="bullet"))
+    """A chunk starting with "## " (see moderator/engine.py's
+    _doc_text_to_material, the only caller that produces these so far) is
+    rendered as a Heading2 section break instead of a bullet, splitting
+    the bullets around it into separate sections — everything else stays
+    a plain bulleted chunk, so a `material` list with no headings at all
+    (every other caller, e.g. the plain Studio "Generate" flow) renders
+    exactly as before: one bulleted list under the title, unchanged.
+
+    All text is XML-escaped (title included) — reportlab's Paragraph
+    parses its input as markup, not literal text, so an unescaped "<",
+    ">", or "&" (e.g. "T < 0", "A & B", genuinely common in real study
+    material) breaks doc.build() outright rather than just rendering
+    oddly."""
+    story = [Paragraph(escape(title), _STYLES["Title"]), Spacer(1, 12)]
+    pending_bullets: list[ListItem] = []
+
+    def _flush_bullets() -> None:
+        if pending_bullets:
+            story.append(ListFlowable(list(pending_bullets), bulletType="bullet"))
+            pending_bullets.clear()
+
+    for chunk in material:
+        if chunk.startswith("## "):
+            _flush_bullets()
+            story.append(Spacer(1, 8))
+            story.append(Paragraph(escape(chunk[3:].strip()), _STYLES["Heading2"]))
+        else:
+            pending_bullets.append(ListItem(Paragraph(escape(chunk), _STYLES["Normal"])))
+    _flush_bullets()
     return story
 
 
