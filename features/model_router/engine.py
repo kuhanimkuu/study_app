@@ -115,6 +115,13 @@ class AnthropicBackend:
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        # Same defensive reasoning as OpenAIBackend's None-content guard —
+        # an empty `content` list (e.g. stop_reason="max_tokens" before any
+        # visible text was written) would otherwise raise IndexError here
+        # instead of cleanly producing an empty reply, which every caller
+        # already knows how to handle.
+        if not response.content:
+            return ""
         return response.content[0].text.strip()
 
 

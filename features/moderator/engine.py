@@ -364,6 +364,21 @@ async def run(**kwargs: Any) -> dict:
             # budgets. "deepseek-chat" answers directly instead.
             block["suggested_model"] = "deepseek-chat"
         return {"blocks": [block], "session_id": session_id}
+    except Exception as exc:
+        # Last-resort safety net, added after fixing three real crashes
+        # in one session that all shared the same shape: a bug ANYWHERE in
+        # the routing tree — not a specific sibling engine's own failure,
+        # which every _route_* function already catches and turns into a
+        # clean {"type": "error", ...} block — propagated all the way up
+        # through routers/ask.py as an unhandled exception (FastAPI's
+        # default 500), instead of the {"blocks": [...]} shape every
+        # caller (the Flutter app, this file's own __main__ demo) expects.
+        # Deliberately still a real error message, not a swallowed one —
+        # same honesty as every other error block in this file.
+        return {
+            "blocks": [{"type": "error", "engine": "moderator", "message": str(exc)}],
+            "session_id": session_id,
+        }
 
     # NOT persisted here — this project moved to a local-first model where
     # the DEVICE stores its own activity log (see README.md's "Architecture
