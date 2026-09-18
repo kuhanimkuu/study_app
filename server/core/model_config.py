@@ -14,7 +14,7 @@ from .. import crypto
 
 
 class ModelConfig(BaseModel):
-    backend: str = "local"  # "local" | "anthropic" | "openai"
+    backend: str = "local"  # "local" | "anthropic" | "openai" | "deepseek"
     model_name: str | None = None
     # AES-256-GCM ciphertext (see crypto.py), encrypted client-side with
     # this user's own key before it ever left the device — required when

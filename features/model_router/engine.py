@@ -11,8 +11,8 @@ INPUT (the run() kwargs):
 {
     "prompt": "...",           // already-formatted prompt (chat template applied by the caller)
     "tier": "tiny",            // local backend only: "tiny" (~0.3-0.6B) | "main" (~1-2B)
-    "backend": "local",        // "local" | "anthropic" | "openai"
-    "api_key": null,           // required for "anthropic"/"openai" — the USER'S OWN key (BYOK)
+    "backend": "local",        // "local" | "anthropic" | "openai" | "deepseek"
+    "api_key": null,           // required for "anthropic"/"openai"/"deepseek" — the USER'S OWN key (BYOK)
     "model_name": null,        // optional override; sensible default per backend if omitted
     "max_tokens": 200          // optional
 }
@@ -54,7 +54,12 @@ TIER_MODELS = {
 DEFAULT_MODEL_NAMES = {
     "anthropic": "claude-sonnet-5",
     "openai": "gpt-4o-mini",
+    "deepseek": "deepseek-chat",
 }
+# DeepSeek's API is Chat-Completions-compatible with OpenAI's — same
+# OpenAIBackend, just pointed at a different base_url instead of a whole
+# separate backend class.
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 
 class Backend(Protocol):
@@ -114,12 +119,13 @@ class AnthropicBackend:
 
 
 class OpenAIBackend:
-    """BYOK — the caller's own OpenAI (or OpenAI-compatible) API key."""
+    """BYOK — the caller's own OpenAI (or OpenAI-compatible, e.g.
+    DeepSeek — see DEEPSEEK_BASE_URL) API key."""
 
-    def __init__(self, api_key: str, model: str):
+    def __init__(self, api_key: str, model: str, base_url: str | None = None):
         import openai
 
-        self._client = openai.OpenAI(api_key=api_key)
+        self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self._model = model
 
     def generate(self, prompt: str, max_tokens: int) -> str:
@@ -142,13 +148,16 @@ def _get_backend(backend_name: str, tier: str, api_key: str | None, model_name: 
             _local_backends[tier] = TransformersBackend(TIER_MODELS[tier])
         return _local_backends[tier]
 
-    if backend_name in ("anthropic", "openai"):
+    if backend_name in ("anthropic", "openai", "deepseek"):
         if not api_key:
             raise ValueError(f"backend={backend_name!r} requires an api_key (BYOK — the user's own key)")
         model = model_name or DEFAULT_MODEL_NAMES[backend_name]
-        return AnthropicBackend(api_key, model) if backend_name == "anthropic" else OpenAIBackend(api_key, model)
+        if backend_name == "anthropic":
+            return AnthropicBackend(api_key, model)
+        base_url = DEEPSEEK_BASE_URL if backend_name == "deepseek" else None
+        return OpenAIBackend(api_key, model, base_url=base_url)
 
-    raise ValueError(f"unknown backend: {backend_name!r} (expected 'local', 'anthropic', or 'openai')")
+    raise ValueError(f"unknown backend: {backend_name!r} (expected 'local', 'anthropic', 'openai', or 'deepseek')")
 
 
 async def run(**kwargs: Any) -> dict:

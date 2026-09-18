@@ -335,6 +335,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 RadioListTile<String>(value: 'local', title: Text('Local model (free, on the server)')),
                 RadioListTile<String>(value: 'anthropic', title: Text('Anthropic (Claude) — bring your own key')),
                 RadioListTile<String>(value: 'openai', title: Text('OpenAI — bring your own key')),
+                RadioListTile<String>(value: 'deepseek', title: Text('DeepSeek — bring your own key')),
               ],
             ),
           ),
