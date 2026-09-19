@@ -41,10 +41,35 @@ routing/extraction" range. No local "main" tier model (~1-2B, per
 features.md) is downloaded by default — the interface supports it (pass
 tier="main"), but fetching a second, larger model wasn't done automatically
 to keep initial setup light.
+
+Resource notes (2026-09-19, investigated after a user question about real
+RAM/CPU usage under load — see STUDY_OS_PROGRESS.md's matching entry):
+- RAM: `TransformersBackend` used to load with no `torch_dtype` override,
+  which defaults to fp32 — 500M params x 4 bytes ~= 2GB of weights alone.
+  The checkpoint's own `config.json` declares `"torch_dtype": "bfloat16"`
+  (confirmed by reading the cached file directly, not assumed), so that
+  fp32 load was an unintentional 2x upcast from the model's actual native
+  precision, not a deliberate accuracy choice. Now loaded in bf16
+  (`dtype=torch.bfloat16` — `from_pretrained`'s newer parameter name;
+  `torch_dtype` still works in this transformers version but is
+  deprecated) — halves the weight footprint to ~1GB — plus
+  `low_cpu_mem_usage=True`, which avoids materializing a full second
+  copy of the state dict in RAM during loading (a real, free reduction in
+  *peak* memory specifically, independent of the steady-state weight size).
+- CPU: PyTorch's default intra-op thread pool tries to use every available
+  core for a single `generate()` call — concurrent local-model requests
+  don't scale across cores, they contend for the same ones. `run()` below
+  now serializes local-model generation through `_LOCAL_GENERATION_SEMAPHORE`
+  (default 1 concurrent, configurable via `LOCAL_MODEL_MAX_CONCURRENCY`) —
+  this bounds CPU contention/thrashing under concurrent traffic, not RAM;
+  it does NOT apply to hosted BYOK backends, which are network I/O, not
+  CPU-bound, and shouldn't be serialized against local-tier traffic they
+  have nothing to do with.
 """
 from __future__ import annotations
 
 import asyncio
+import os
 from typing import Any, Protocol
 
 TIER_MODELS = {
@@ -70,10 +95,18 @@ class TransformersBackend:
     """Runs a local Hugging Face model via `transformers`, CPU inference."""
 
     def __init__(self, model_id: str):
+        import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         self._tokenizer = AutoTokenizer.from_pretrained(model_id)
-        self._model = AutoModelForCausalLM.from_pretrained(model_id)
+        # dtype=torch.bfloat16: load in the checkpoint's own native
+        # precision (see this module's docstring) instead of silently
+        # upcasting to fp32 — halves the weight footprint in RAM for free.
+        # low_cpu_mem_usage=True: avoids transformers materializing a full
+        # second copy of the state dict during loading, which otherwise
+        # briefly doubles peak RAM right when it's most likely to matter
+        # (a memory-constrained host's very first request).
+        self._model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16, low_cpu_mem_usage=True)
 
     def generate(self, prompt: str, max_tokens: int) -> str:
         import torch
@@ -155,6 +188,15 @@ class OpenAIBackend:
 
 _local_backends: dict[str, Backend] = {}  # lazy singletons per tier — loading a model is expensive
 
+# Caps how many local-model generate() calls run at once — see this
+# module's docstring for why (PyTorch's default thread pool already tries
+# to use every core for a single call, so concurrent calls contend rather
+# than scale). Read once at import time, not per-call, since changing
+# concurrency mid-process would need coordinating with in-flight requests
+# anyway; restart the process to pick up a new value.
+_LOCAL_MODEL_MAX_CONCURRENCY = max(1, int(os.environ.get("LOCAL_MODEL_MAX_CONCURRENCY", "1")))
+_LOCAL_GENERATION_SEMAPHORE = asyncio.Semaphore(_LOCAL_MODEL_MAX_CONCURRENCY)
+
 
 def _get_backend(backend_name: str, tier: str, api_key: str | None, model_name: str | None) -> Backend:
     if backend_name == "local":
@@ -195,7 +237,16 @@ async def run(**kwargs: Any) -> dict:
     # generate() is a blocking call (local: CPU-bound model inference;
     # hosted: a synchronous SDK network call) — run it off the event loop
     # so this coroutine doesn't block the whole async moderator/scheduler
-    text = await loop.run_in_executor(None, backend.generate, prompt, max_tokens)
+    if backend_name == "local":
+        # Serializes (by default) concurrent local-model generation so
+        # requests queue instead of contending for the same CPU cores —
+        # see _LOCAL_GENERATION_SEMAPHORE's doc comment. Scoped to the
+        # local backend only: hosted BYOK calls are network I/O, not
+        # CPU-bound, and have no reason to wait behind local-tier traffic.
+        async with _LOCAL_GENERATION_SEMAPHORE:
+            text = await loop.run_in_executor(None, backend.generate, prompt, max_tokens)
+    else:
+        text = await loop.run_in_executor(None, backend.generate, prompt, max_tokens)
 
     return {"text": text, "tier": tier, "backend": backend_name}
 

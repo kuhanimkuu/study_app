@@ -19,7 +19,7 @@ For the full original vision, see [`study_os_overview-v2.pdf`](study_os_overview
 
 ## Running it
 
-Two pieces: a Python/FastAPI server (does the actual work) and a Flutter client (renders the results). Local-first and self-hosted — there is no cloud backend anywhere in this.
+Two pieces: a Python/FastAPI server (does the actual work) and a Flutter client (renders the results). Server-side PostgreSQL is the source of truth (see STUDY_OS_PROGRESS.md's 2026-09-14 hosting decision) — there's also a real, currently-deployed hosted backend (Render, temporary before HelioHost/another host), not just local dev.
 
 ### 1. Server
 
@@ -28,9 +28,15 @@ pip install -r requirements.txt
 python -m uvicorn server.main:app --host 0.0.0.0 --port 8000
 ```
 
+That's enough for BYOK backends (Anthropic/OpenAI/DeepSeek). For the free local LLM (`Qwen2.5-0.5B-Instruct`) too, also install `requirements-local-model.txt` — it's deliberately not part of the main install, see that file's own header (short version: torch/transformers are the two biggest, slowest dependencies in this project, and hosted deploys like Render can't run this backend within their free-tier RAM anyway, so they skip it):
+
+```
+pip install -r requirements.txt -r requirements-local-model.txt
+```
+
 `--host 0.0.0.0` matters if you're testing from a real phone (see below) — it's what lets `adb reverse` reach it. Verify it's up: `curl http://127.0.0.1:8000/api/health` should return `{"status":"ok"}`.
 
-The local LLM (`Qwen2.5-0.5B-Instruct`) downloads automatically on first real use, via `huggingface_hub` — needs internet the first time, cached under `~/.cache/huggingface` after that, nothing to set up manually. See `requirements.txt`'s own note if `torch` doesn't resolve to a CPU build.
+With `requirements-local-model.txt` installed, the local LLM downloads automatically on first real use, via `huggingface_hub` — needs internet the first time, cached under `~/.cache/huggingface` after that, nothing to set up manually. See that file's own note if `torch` doesn't resolve to a CPU build.
 
 ### 2. Flutter client
 

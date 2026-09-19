@@ -5,6 +5,11 @@ services:
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: alembic upgrade head && uvicorn server.main:app --host 0.0.0.0 --port $PORT
+    # Lets Render's health checks (and zero-downtime deploy gating) use
+    # the real liveness endpoint instead of just "did the process start" —
+    # 2026-09-19, part of the same optimization pass as dropping
+    # torch/transformers from this build (see requirements-local-model.txt).
+    healthCheckPath: /api/health
     envVars:
       - key: DATABASE_URL
         fromDatabase:
