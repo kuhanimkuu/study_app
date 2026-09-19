@@ -11,12 +11,23 @@ import '../../../../practice/quizzes/presentation/screens/quiz_runner_screen.dar
 
 /// One concept: description, mastery, an on-demand explanation (reuses the
 /// chat feature's BlockView rather than a new renderer — see the approved
-/// plan), and its practice questions.
+/// plan), its practice questions, and its Knowledge Graph relationships
+/// to other concepts in the same space (blueprint Section 15) — a real
+/// backend capability (`ConceptRelationship`) that had zero frontend
+/// exposure until this pass, found via an audit prompted by a user report
+/// (2026-09-19).
 class ConceptDetailScreen extends StatefulWidget {
-  const ConceptDetailScreen({super.key, required this.apiClient, required this.concept});
+  const ConceptDetailScreen({super.key, required this.apiClient, required this.concept, this.knowledgeSpaceSlug});
 
   final ApiClient apiClient;
   final Map<String, dynamic> concept;
+
+  /// Needed to offer "other concepts in this space" as relationship
+  /// targets — not present on every caller's `concept` map (e.g. the
+  /// account-wide Learn hub passes it separately, see that screen).
+  /// Adding a relationship is simply unavailable (not silently broken)
+  /// when this is null.
+  final String? knowledgeSpaceSlug;
 
   @override
   State<ConceptDetailScreen> createState() => _ConceptDetailScreenState();
@@ -25,6 +36,8 @@ class ConceptDetailScreen extends StatefulWidget {
 class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
   double? _mastery;
   List<dynamic>? _questions;
+  List<Map<String, dynamic>>? _relationships;
+  List<Map<String, dynamic>>? _spaceConcepts; // for the "add relationship" target picker
   bool _isLoading = false;
   String? _error;
 
@@ -46,11 +59,22 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
       _error = null;
     });
     try {
-      final mastery = await widget.apiClient.getConceptMastery(_conceptId);
-      final questions = await widget.apiClient.listQuestions(_conceptId);
+      final results = await Future.wait([
+        widget.apiClient.getConceptMastery(_conceptId),
+        widget.apiClient.listQuestions(_conceptId),
+        widget.apiClient.listConceptRelationships(_conceptId),
+      ]);
+      List<Map<String, dynamic>>? spaceConcepts;
+      final slug = widget.knowledgeSpaceSlug;
+      if (slug != null) {
+        final spaceResult = await widget.apiClient.listConcepts(slug);
+        spaceConcepts = (spaceResult['concepts'] as List<dynamic>).cast<Map<String, dynamic>>();
+      }
       setState(() {
-        _mastery = (mastery['mastery'] as num).toDouble();
-        _questions = questions['questions'] as List<dynamic>;
+        _mastery = (results[0]['mastery'] as num).toDouble();
+        _questions = results[1]['questions'] as List<dynamic>;
+        _relationships = (results[2]['relationships'] as List<dynamic>).cast<Map<String, dynamic>>();
+        _spaceConcepts = spaceConcepts;
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -58,6 +82,86 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  static const _relationshipLabels = {
+    'requires': 'requires',
+    'depends_on': 'depends on',
+    'related_to': 'is related to',
+    'part_of': 'is part of',
+    'contrasts_with': 'contrasts with',
+    'applied_to': 'is applied to',
+    'tested_by': 'is tested by',
+  };
+
+  Future<void> _addRelationship() async {
+    final candidates = (_spaceConcepts ?? []).where((c) => c['id'] != _conceptId).toList();
+    if (candidates.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No other concepts in this space yet to relate this one to.')),
+      );
+      return;
+    }
+
+    int? targetId;
+    String relationshipType = _relationshipLabels.keys.first;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Relate to another concept'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                initialValue: relationshipType,
+                decoration: const InputDecoration(labelText: 'Relationship'),
+                items: [
+                  for (final entry in _relationshipLabels.entries)
+                    DropdownMenuItem(value: entry.key, child: Text('${widget.concept['name']} ${entry.value}...')),
+                ],
+                onChanged: (value) => setDialogState(() => relationshipType = value ?? relationshipType),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                initialValue: targetId,
+                decoration: const InputDecoration(labelText: 'Other concept'),
+                items: [
+                  for (final c in candidates) DropdownMenuItem(value: c['id'] as int, child: Text(c['name'] as String)),
+                ],
+                onChanged: (value) => setDialogState(() => targetId = value),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+            FilledButton(onPressed: targetId == null ? null : () => Navigator.of(context).pop(true), child: const Text('Add')),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || targetId == null) return;
+
+    try {
+      await widget.apiClient.createConceptRelationship(
+        conceptId: _conceptId,
+        toConceptId: targetId!,
+        relationshipType: relationshipType,
+      );
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _deleteRelationship(int relationshipId) async {
+    try {
+      await widget.apiClient.deleteConceptRelationship(conceptId: _conceptId, relationshipId: relationshipId);
+      _load();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
@@ -140,7 +244,7 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                   Builder(builder: (context) {
                     final theme = Theme.of(context);
                     final mastery = _mastery ?? 0;
-                    final masteryColor = Color.lerp(theme.colorScheme.primary, StudyOsColors.accent, mastery)!;
+                    final masteryColor = Color.lerp(theme.colorScheme.primary, StudyOsColors.amber, mastery)!;
                     return Row(
                       children: [
                         Expanded(
@@ -265,6 +369,43 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                                 const Icon(Icons.chevron_right),
                               ],
                             ),
+                          ),
+                        ),
+                      ),
+                  const SizedBox(height: 24),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Related concepts', style: Theme.of(context).textTheme.titleMedium),
+                      TextButton.icon(
+                        onPressed: widget.knowledgeSpaceSlug == null ? null : _addRelationship,
+                        icon: const Icon(Icons.add, size: 16),
+                        label: const Text('Relate'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if ((_relationships ?? []).isEmpty)
+                    const EmptyState(
+                      icon: Icons.hub_outlined,
+                      message: 'No relationships yet — link this to a prerequisite or related concept.',
+                    )
+                  else
+                    for (final r in _relationships!)
+                      Card(
+                        child: ListTile(
+                          leading: Icon(
+                            r['direction'] == 'outgoing' ? Icons.arrow_forward_rounded : Icons.arrow_back_rounded,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          title: Text(
+                            r['direction'] == 'outgoing'
+                                ? '${_relationshipLabels[r['relationship_type']] ?? r['relationship_type']} ${r['related_concept_name'] ?? 'concept #${r['related_concept_id']}'}'
+                                : '${r['related_concept_name'] ?? 'Concept #${r['related_concept_id']}'} ${_relationshipLabels[r['relationship_type']] ?? r['relationship_type']} this',
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () => _deleteRelationship(r['id'] as int),
                           ),
                         ),
                       ),

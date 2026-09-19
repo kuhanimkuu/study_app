@@ -28,6 +28,21 @@ class ApiClient {
   /// just a fast JSON round-trip.
   static const _requestTimeout = Duration(seconds: 60);
 
+  /// Longer than [_requestTimeout], used only for signup/login/Google
+  /// sign-in. Found via direct measurement (2026-09-19): this app's
+  /// default hosted backend (a Render free-tier deploy, see
+  /// `default_base_url.dart`) fully spins its container down after ~15
+  /// minutes idle, and a genuinely cold request can take well over 60
+  /// seconds to respond (measured 120s+ with zero response after a ~2-day
+  /// idle period) before becoming sub-second once warm. Auth is the call
+  /// most likely to be the very first request of a session — a shorter
+  /// timeout there would turn a legitimately-slow-but-working cold start
+  /// into an outright, avoidable login failure. This doesn't fully solve
+  /// an unusually long cold start, just avoids the most common case of
+  /// it; see `login_screen.dart`/`signup_screen.dart` for the matching
+  /// "waking up the server" UX.
+  static const _authRequestTimeout = Duration(seconds: 100);
+
   Never _timeoutError() => throw ApiException(0, 'Request timed out — check the server is reachable.');
 
   /// Mutable (not final) — the settings screen edits this in place on the
@@ -40,7 +55,25 @@ class ApiClient {
   /// /api/auth/* and /api/health don't.
   String? token;
 
+  /// A real, browser-like `User-Agent` on every request — without this,
+  /// Dart's `http` package sends its own default (`Dart/<version> (dart:io)`),
+  /// which Render's Cloudflare edge (confirmed via the `Server: cloudflare`/
+  /// `CF-RAY` response headers every `.onrender.com` request already
+  /// carries) can flag as bot traffic under its default "Bot Fight Mode"
+  /// heuristics — serving an HTML JS-challenge page ("Just a moment...")
+  /// instead of proxying to the real app. A real device can never solve
+  /// that challenge (no JavaScript execution), so every request silently
+  /// fails from the app's point of view. Found 2026-09-19 from a real
+  /// device report; reproducible only on whatever network/IP Cloudflare's
+  /// heuristics flagged, not from every network, which is why it wasn't
+  /// caught by earlier `curl` testing from this environment's own IP.
+  static const _userAgent = 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) '
+      'Chrome/120.0.0.0 Mobile Safari/537.36 StudyOS/1.0';
+
+  Map<String, String> get _baseHeaders => {'User-Agent': _userAgent};
+
   Map<String, String> get _authHeaders => {
+        ..._baseHeaders,
         if (token != null) 'Authorization': 'Bearer $token',
       };
 
@@ -50,7 +83,9 @@ class ApiClient {
       };
 
   Future<Map<String, dynamic>> health() async {
-    final res = await http.get(Uri.parse('$baseUrl/api/health')).timeout(_requestTimeout, onTimeout: _timeoutError);
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/health'), headers: _baseHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -64,14 +99,14 @@ class ApiClient {
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/auth/signup'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {'Content-Type': 'application/json', ..._baseHeaders},
           body: jsonEncode({
             'email': email,
             'password': password,
             if (displayName != null) 'display_name': displayName,
           }),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_authRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -79,10 +114,10 @@ class ApiClient {
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/auth/login'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {'Content-Type': 'application/json', ..._baseHeaders},
           body: jsonEncode({'email': email, 'password': password}),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_authRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -93,10 +128,10 @@ class ApiClient {
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/auth/google'),
-          headers: {'Content-Type': 'application/json'},
+          headers: {'Content-Type': 'application/json', ..._baseHeaders},
           body: jsonEncode({'id_token': idToken}),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_authRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -424,6 +459,44 @@ class ApiClient {
         .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/mastery'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
+  }
+
+  // --- concept relationships (Knowledge Graph, blueprint Section 15,
+  // scoped to concept-to-concept edges) — a real backend capability
+  // (server/domains/learning/models.py's ConceptRelationship) that had no
+  // frontend caller at all until this pass, found via an audit prompted
+  // by a user report that some backend features weren't exposed.
+
+  Future<Map<String, dynamic>> listConceptRelationships(int conceptId) async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/relationships'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> createConceptRelationship({
+    required int conceptId,
+    required int toConceptId,
+    required String relationshipType,
+  }) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/concepts/$conceptId/relationships'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'to_concept_id': toConceptId, 'relationship_type': relationshipType}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<void> deleteConceptRelationship({required int conceptId, required int relationshipId}) async {
+    final res = await http
+        .delete(
+          Uri.parse('$baseUrl/api/v1/concepts/$conceptId/relationships/$relationshipId'),
+          headers: _authHeaders,
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    _decode(res);
   }
 
   // --- search ---
@@ -798,7 +871,17 @@ class ApiClient {
         final decoded = jsonDecode(res.body);
         if (decoded is Map && decoded['detail'] != null) detail = decoded['detail'].toString();
       } catch (_) {
-        // body wasn't JSON — fall back to the raw text already assigned above
+        // Body wasn't JSON — most likely an intermediary (a proxy, a CDN's
+        // bot/JS challenge page, a misconfigured base URL hitting a plain
+        // web server) returned HTML instead of the server's own error
+        // shape. Never surface raw markup to the UI — every caller renders
+        // `ApiException.message` directly as user-facing text (found
+        // 2026-09-19: a Cloudflare "Just a moment..." challenge page,
+        // triggered on some networks by Dart's default User-Agent — see
+        // `_userAgent` above — showed up verbatim on several screens).
+        detail = res.body.trim().startsWith('<')
+            ? 'The server returned an unexpected response (not the app\'s API) — try again in a moment.'
+            : detail;
       }
       throw ApiException(res.statusCode, detail);
     }

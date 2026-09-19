@@ -24,7 +24,8 @@ void main() {
     // Skipping the tour lands on the login screen.
     await tester.tap(find.text('Skip'));
     await tester.pumpAndSettle();
-    expect(find.text('Log in'), findsWidgets);
+    expect(find.text('Welcome back'), findsOneWidget);
+    expect(find.text('Sign in'), findsWidgets);
   });
 
   testWidgets('App boots with no saved session but a seen intro and shows the login screen', (WidgetTester tester) async {
@@ -32,7 +33,7 @@ void main() {
     await tester.pumpWidget(StudyOsApp(apiClient: ApiClient(baseUrl: 'http://127.0.0.1:8000')));
     await tester.pumpAndSettle();
 
-    expect(find.text('Log in'), findsWidgets);
+    expect(find.text('Welcome back'), findsOneWidget);
     expect(find.text('Email'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
   });

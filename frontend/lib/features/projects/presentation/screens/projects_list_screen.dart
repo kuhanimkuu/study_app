@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../../core/auth/auth_service.dart';
 import '../../../../core/widgets/list_item_card.dart';
+import '../../../../core/widgets/profile_icon_button.dart';
+import '../../../../core/widgets/project_accent.dart';
 import 'project_workspace_screen.dart';
 
 /// Home screen for "notebooks" — see server/db.py's module docstring for
@@ -10,9 +13,14 @@ import 'project_workspace_screen.dart';
 /// + Chat tabs; a Studio tab for generated artifacts is deliberately not
 /// built yet — see that screen's doc comment).
 class ProjectsListScreen extends StatefulWidget {
-  const ProjectsListScreen({super.key, required this.apiClient});
+  const ProjectsListScreen({super.key, required this.apiClient, this.authService});
 
   final ApiClient apiClient;
+
+  /// Only used to render the top-right `ProfileIconButton` — optional
+  /// since not every push site has it handy; the icon simply doesn't
+  /// render without it rather than crashing.
+  final AuthService? authService;
 
   @override
   State<ProjectsListScreen> createState() => _ProjectsListScreenState();
@@ -107,8 +115,20 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Projects')),
-      floatingActionButton: FloatingActionButton(onPressed: _createProject, child: const Icon(Icons.add)),
+      appBar: AppBar(
+        title: const Text('Study spaces'),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton.icon(
+              onPressed: _createProject,
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('New'),
+            ),
+          ),
+          if (widget.authService != null) ProfileIconButton(authService: widget.authService!),
+        ],
+      ),
       body: RefreshIndicator(
         onRefresh: _load,
         child: Builder(
@@ -162,7 +182,8 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
                 final displayName = project['display_name'] as String;
                 final chunkCount = project['chunk_count'] as int? ?? 0;
                 return ListItemCard(
-                  icon: Icons.folder_outlined,
+                  icon: Icons.folder_rounded,
+                  iconColor: projectAccentColor(displayName),
                   title: displayName,
                   subtitle: chunkCount == 0 ? 'No material yet' : '$chunkCount stored chunk(s)',
                   trailing: IconButton(

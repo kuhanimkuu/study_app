@@ -174,14 +174,18 @@ class _ConceptsListScreenState extends State<ConceptsListScreen> {
                 // state-driven card (ElectricFlashCard) its own anatomy.
                 final masteryColor = mastery == null
                     ? Theme.of(context).colorScheme.primary
-                    : Color.lerp(Theme.of(context).colorScheme.primary, StudyOsColors.accent, mastery)!;
+                    : Color.lerp(Theme.of(context).colorScheme.primary, StudyOsColors.amber, mastery)!;
                 return Card(
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
                     onTap: () async {
                       await Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (context) => ConceptDetailScreen(apiClient: widget.apiClient, concept: concept),
+                          builder: (context) => ConceptDetailScreen(
+                            apiClient: widget.apiClient,
+                            concept: concept,
+                            knowledgeSpaceSlug: widget.slug,
+                          ),
                         ),
                       );
                       _load(); // mastery may have changed while the detail screen was open

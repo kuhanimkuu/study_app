@@ -9,6 +9,7 @@ import '../../../../core/auth/auth_service.dart';
 import '../../../../core/crypto/user_crypto.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../../core/widgets/brand_wordmark.dart';
+import '../../../../core/widgets/profile_icon_button.dart';
 import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 import '../../models/chat_message.dart';
@@ -485,6 +486,7 @@ class _ChatScreenState extends State<ChatScreen> {
             onPressed: _messages.isEmpty ? null : _convertToProject,
           ),
           IconButton(icon: const Icon(Icons.settings_outlined), onPressed: _openSettings, tooltip: _api.baseUrl),
+          ProfileIconButton(authService: widget.authService),
         ],
       ),
       drawer: ChatSessionsDrawer(

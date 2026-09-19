@@ -27,32 +27,36 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
 
   static const _pages = [
     _IntroPage(
+      tag: 'Ask anything',
       icon: Icons.psychology_alt_rounded,
       title: 'Concepts that stick',
       description:
           'Study OS tracks your mastery of every concept and schedules reviews with spaced repetition (FSRS) — so you revisit things right before you\'d forget them.',
-      gradient: LinearGradient(colors: [StudyOsColors.primary, StudyOsColors.primaryLight], begin: Alignment.topLeft, end: Alignment.bottomRight),
+      gradient: StudyOsColors.brandGradient,
     ),
     _IntroPage(
+      tag: 'Practice your way',
       icon: Icons.style_rounded,
-      title: 'Practice your way',
+      title: 'Flashcards, quizzes,\nand 10 question types',
       description:
-          'Flashcards, notes, and 10 question types — from multiple choice to open response. Run a quiz, or switch on exam mode to test yourself for real.',
-      gradient: LinearGradient(colors: [StudyOsColors.accent, StudyOsColors.accentLight], begin: Alignment.topLeft, end: Alignment.bottomRight),
+          'From multiple choice to open response. Run a quiz, or switch on exam mode to test yourself for real.',
+      gradient: LinearGradient(colors: [StudyOsColors.amber, StudyOsColors.primary], begin: Alignment.topLeft, end: Alignment.bottomRight),
     ),
     _IntroPage(
+      tag: 'An AI study moderator',
       icon: Icons.forum_rounded,
-      title: 'An AI study moderator',
+      title: 'Ask in plain language,\nget deep answers',
       description:
           'Ask questions in plain language, or start a guided session that explains a concept and checks your understanding as you go.',
       gradient: LinearGradient(colors: [StudyOsColors.primaryDark, StudyOsColors.primary], begin: Alignment.topLeft, end: Alignment.bottomRight),
     ),
     _IntroPage(
+      tag: 'Plan it, track it',
       icon: Icons.insights_rounded,
-      title: 'Plan it, track it',
+      title: 'See your progress,\nnot just your grades',
       description:
           'Set goals, schedule study sessions on a calendar, and watch your streak and accuracy grow on the Progress screen.',
-      gradient: LinearGradient(colors: [StudyOsColors.accentDark, StudyOsColors.accent], begin: Alignment.topLeft, end: Alignment.bottomRight),
+      gradient: LinearGradient(colors: [StudyOsColors.amber, StudyOsColors.primaryDark], begin: Alignment.topLeft, end: Alignment.bottomRight),
     ),
   ];
 
@@ -135,31 +139,63 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
   Widget _buildPage(BuildContext context, _IntroPage page) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Container(
-            width: 160,
-            height: 160,
-            decoration: BoxDecoration(
-              gradient: page.gradient,
-              shape: BoxShape.circle,
-              boxShadow: [BoxShadow(color: StudyOsColors.primary.withValues(alpha: 0.25), blurRadius: 28, offset: const Offset(0, 12))],
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(bottom: 32),
+              padding: const EdgeInsets.all(24),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Center(
+                child: Container(
+                  width: 120,
+                  height: 120,
+                  decoration: BoxDecoration(
+                    gradient: page.gradient,
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(color: StudyOsColors.primary.withValues(alpha: 0.25), blurRadius: 28, offset: const Offset(0, 12))],
+                  ),
+                  child: Icon(page.icon, size: 54, color: Colors.white),
+                ),
+              ),
             ),
-            child: Icon(page.icon, size: 72, color: Colors.white),
           ),
-          const SizedBox(height: 40),
-          Text(
-            page.title,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.displaySmall?.copyWith(fontWeight: FontWeight.w800),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                page.tag,
+                style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, letterSpacing: 0.2),
+              ),
+            ),
           ),
-          const SizedBox(height: 16),
-          Text(
-            page.description,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.6),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              page.title,
+              textAlign: TextAlign.left,
+              style: theme.textTheme.displaySmall,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              page.description,
+              textAlign: TextAlign.left,
+              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.6),
+            ),
           ),
         ],
       ),
@@ -170,21 +206,28 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
     final active = index == _currentPage;
     final theme = Theme.of(context);
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 300),
-      margin: const EdgeInsets.symmetric(horizontal: 4),
-      width: active ? 28 : 8,
-      height: 8,
+      duration: const Duration(milliseconds: 250),
+      margin: const EdgeInsets.symmetric(horizontal: 3),
+      width: active ? 20 : 6,
+      height: 6,
       decoration: BoxDecoration(
-        color: active ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.3),
-        borderRadius: BorderRadius.circular(4),
+        color: active ? theme.colorScheme.primary : theme.colorScheme.outline,
+        borderRadius: BorderRadius.circular(3),
       ),
     );
   }
 }
 
 class _IntroPage {
-  const _IntroPage({required this.icon, required this.title, required this.description, required this.gradient});
+  const _IntroPage({
+    required this.tag,
+    required this.icon,
+    required this.title,
+    required this.description,
+    required this.gradient,
+  });
 
+  final String tag;
   final IconData icon;
   final String title;
   final String description;

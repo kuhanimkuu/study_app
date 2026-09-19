@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../app/theme.dart';
+import '../../../../core/analytics/streak.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../planner/schedule/presentation/screens/study_session_screen.dart';
@@ -114,8 +115,13 @@ class _ProgressScreenState extends State<ProgressScreen> {
               const SizedBox(height: 8),
               if ((_mastery ?? []).isEmpty)
                 const EmptyState(icon: Icons.school_outlined, message: 'No concepts attempted yet.')
-              else
+              else ...[
+                if (_mastery!.length > 1) ...[
+                  _StrongestWeakestRow(weakest: _mastery!.first, strongest: _mastery!.last),
+                  const SizedBox(height: 12),
+                ],
                 for (final m in _mastery!) _MasteryRow(item: m),
+              ],
               if ((_misconceptions ?? []).isNotEmpty) ...[
                 const SizedBox(height: 16),
                 Text('Needs attention', style: Theme.of(context).textTheme.labelLarge),
@@ -163,7 +169,7 @@ class _MasteryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mastery = (item['mastery'] as num).toDouble();
-    final masteryColor = Color.lerp(theme.colorScheme.primary, StudyOsColors.accent, mastery)!;
+    final masteryColor = Color.lerp(theme.colorScheme.primary, StudyOsColors.amber, mastery)!;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
@@ -260,19 +266,7 @@ class _InsightsSection extends StatelessWidget {
 
   DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  Set<DateTime> get _activeDays =>
-      activity.map((a) => _dateOnly(DateTime.parse(a['_timestamp'] as String).toLocal())).toSet();
-
-  int get _streak {
-    var streak = 0;
-    var day = _dateOnly(DateTime.now());
-    final active = _activeDays;
-    while (active.contains(day)) {
-      streak++;
-      day = day.subtract(const Duration(days: 1));
-    }
-    return streak;
-  }
+  int get _streak => computeStudyStreak(activity);
 
   List<Map<String, dynamic>> get _attemptsThisWeek {
     final cutoff = DateTime.now().subtract(const Duration(days: 7));
@@ -374,14 +368,63 @@ class _StatTile extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(icon, size: 14, color: StudyOsColors.accent),
+            Icon(icon, size: 14, color: StudyOsColors.amber),
             const SizedBox(width: 4),
             Text(label, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
           ],
         ),
         const SizedBox(height: 2),
-        Text(value, style: theme.textTheme.titleMedium),
+        Text(value, style: monoTextStyle(context, fontSize: 15, fontWeight: FontWeight.w700)),
       ],
+    );
+  }
+}
+
+/// A real strongest/weakest pair — the two ends of the already-sorted
+/// (weakest-first) mastery list, not a separate computation, so they can
+/// never disagree with the list rendered right below them.
+class _StrongestWeakestRow extends StatelessWidget {
+  const _StrongestWeakestRow({required this.weakest, required this.strongest});
+
+  final Map<String, dynamic> weakest;
+  final Map<String, dynamic> strongest;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(child: _Tile(label: 'STRONGEST', item: strongest, color: StudyOsColors.greenOnLight)),
+        const SizedBox(width: 10),
+        Expanded(child: _Tile(label: 'NEEDS WORK', item: weakest, color: Theme.of(context).colorScheme.error)),
+      ],
+    );
+  }
+}
+
+class _Tile extends StatelessWidget {
+  const _Tile({required this.label, required this.item, required this.color});
+
+  final String label;
+  final Map<String, dynamic> item;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mastery = (item['mastery'] as num).toDouble();
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(14)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: theme.textTheme.labelSmall?.copyWith(color: color)),
+          const SizedBox(height: 4),
+          Text(item['concept_name'] as String, style: theme.textTheme.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+          const SizedBox(height: 4),
+          Text('${(mastery * 100).round()}%', style: monoTextStyle(context, fontSize: 18, fontWeight: FontWeight.w700, color: color)),
+        ],
+      ),
     );
   }
 }

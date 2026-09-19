@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
 import '../../../../../core/widgets/list_item_card.dart';
 
@@ -216,9 +217,22 @@ class _GoalsListScreenState extends State<GoalsListScreen> {
                   if (targetDate != null) 'Due ${DateTime.parse(targetDate).toLocal().toString().split(' ')[0]}',
                   if (projectName != null) projectName,
                 ];
+                // Urgency color from the real target date only — this app
+                // tracks no per-goal completion percentage server-side, so
+                // (unlike the visual reference's goal cards) there's no
+                // real progress bar to draw here without fabricating one.
+                Color? urgencyColor;
+                if (targetDate != null) {
+                  final daysLeft = DateTime.parse(targetDate).toLocal().difference(DateTime.now()).inDays;
+                  if (daysLeft < 0) {
+                    urgencyColor = Theme.of(context).colorScheme.error;
+                  } else if (daysLeft <= 3) {
+                    urgencyColor = StudyOsColors.amber;
+                  }
+                }
                 return ListItemCard(
-                  icon: Icons.flag_outlined,
-                  iconColor: Theme.of(context).colorScheme.secondary,
+                  icon: Icons.flag_rounded,
+                  iconColor: urgencyColor ?? Theme.of(context).colorScheme.secondary,
                   title: title,
                   subtitle: subtitleParts.isEmpty ? null : subtitleParts.join(' · '),
                   trailing: IconButton(

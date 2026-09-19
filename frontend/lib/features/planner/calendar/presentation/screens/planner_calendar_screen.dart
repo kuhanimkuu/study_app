@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
 import '../../../../../core/widgets/empty_state.dart';
 import '../../../../../core/widgets/list_item_card.dart';
@@ -96,9 +97,9 @@ class _PlannerCalendarScreenState extends State<PlannerCalendarScreen> {
   Color _dotColor(String type, BuildContext context) {
     switch (type) {
       case 'goal':
-        return Colors.orange;
+        return StudyOsColors.amber;
       case 'flashcard':
-        return Colors.blue;
+        return const Color(0xFF0EA5E9);
       default:
         return Theme.of(context).colorScheme.primary;
     }
@@ -146,16 +147,23 @@ class _PlannerCalendarScreenState extends State<PlannerCalendarScreen> {
               return InkWell(
                 onTap: events.isEmpty ? null : () => setState(() => _selectedDay = day),
                 child: Container(
-                  margin: const EdgeInsets.all(2),
+                  margin: const EdgeInsets.all(3),
                   decoration: BoxDecoration(
-                    border: isToday ? Border.all(color: Theme.of(context).colorScheme.primary) : null,
-                    color: isSelected ? Theme.of(context).colorScheme.primaryContainer : null,
-                    borderRadius: BorderRadius.circular(6),
+                    color: isSelected
+                        ? Theme.of(context).colorScheme.primary
+                        : (isToday ? Theme.of(context).colorScheme.primaryContainer : null),
+                    shape: BoxShape.circle,
                   ),
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text('${day.day}'),
+                      Text(
+                        '${day.day}',
+                        style: TextStyle(
+                          fontWeight: isToday || isSelected ? FontWeight.w700 : FontWeight.w400,
+                          color: isSelected ? Colors.white : (isToday ? Theme.of(context).colorScheme.primary : null),
+                        ),
+                      ),
                       if (events.isNotEmpty)
                         Wrap(
                           spacing: 2,

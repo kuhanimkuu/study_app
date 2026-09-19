@@ -65,8 +65,8 @@ class ModelUnavailableBlockView extends StatelessWidget {
               Container(
                 width: 36,
                 height: 36,
-                decoration: BoxDecoration(color: StudyOsColors.warning.withValues(alpha: 0.15), shape: BoxShape.circle),
-                child: Icon(Icons.cloud_off_rounded, size: 18, color: StudyOsColors.warning),
+                decoration: BoxDecoration(color: StudyOsColors.amber.withValues(alpha: 0.15), shape: BoxShape.circle),
+                child: Icon(Icons.cloud_off_rounded, size: 18, color: StudyOsColors.amber),
               ),
               const SizedBox(width: 10),
               Expanded(

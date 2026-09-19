@@ -85,11 +85,13 @@ class _NotesListScreenState extends State<NotesListScreen> {
         emptyIcon: Icons.note_alt_outlined,
         itemBuilder: (context, note) {
           final body = note['body'] as String;
+          final wordCount = body.trim().isEmpty ? 0 : body.trim().split(RegExp(r'\s+')).length;
           return ListItemCard(
             icon: Icons.notes_outlined,
             iconColor: Theme.of(context).colorScheme.secondary,
             title: note['title'] as String,
-            subtitle: body.isEmpty ? null : body,
+            subtitle: body.isEmpty ? 'Empty note' : '$body\n$wordCount word${wordCount == 1 ? '' : 's'}',
+            subtitleMaxLines: 3,
             trailing: IconButton(
               icon: const Icon(Icons.delete_outline),
               onPressed: () => _deleteNote(note['id'] as int),

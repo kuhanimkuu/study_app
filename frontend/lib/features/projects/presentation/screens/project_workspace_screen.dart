@@ -1,6 +1,7 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../../core/widgets/empty_state.dart';
@@ -395,21 +396,41 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         // navigation bar. Found via real device testing.
         SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Expanded(
-                  child: TextField(
-                    controller: _chatController,
-                    decoration: InputDecoration(
-                      hintText: 'Ask about this project...',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24), borderSide: BorderSide.none),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 44),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: Theme.of(context).colorScheme.outline),
                     ),
-                    onSubmitted: (_) => _sendQuery(),
+                    child: TextField(
+                      controller: _chatController,
+                      decoration: const InputDecoration(
+                        hintText: 'Ask about this project...',
+                        border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        filled: false,
+                        contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onSubmitted: (_) => _sendQuery(),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                IconButton.filled(icon: const Icon(Icons.arrow_upward_rounded), onPressed: _sendQuery),
+                Container(
+                  decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+                  child: IconButton(
+                    icon: const Icon(Icons.arrow_upward_rounded, color: Colors.white),
+                    onPressed: _sendQuery,
+                  ),
+                ),
               ],
             ),
           ),

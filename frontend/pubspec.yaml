@@ -47,7 +47,6 @@ dependencies:
   cryptography: ^2.7.0
   url_launcher: ^6.3.1
   google_sign_in: ^7.2.0
-  google_fonts: ^8.1.0
   shared_preferences: ^2.5.5
 
 dev_dependencies:
@@ -71,6 +70,20 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # Bundled locally (not fetched via the google_fonts package at runtime —
+  # see app/theme.dart's doc comment: a cold Google Fonts CDN fetch on
+  # first launch was a real, measured contributor to "the app feels slow"
+  # independent of which backend it's pointed at). Both are single-file
+  # variable fonts (weight axis) straight from Google's own font repo, so
+  # one file per family covers every weight this app's TextTheme uses.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter.ttf
+    - family: JetBrains Mono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

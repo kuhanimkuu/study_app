@@ -26,7 +26,7 @@ class ListItemCard extends StatelessWidget {
   final VoidCallback? onTap;
 
   /// Defaults to the theme's primary — pass a different color (e.g.
-  /// `StudyOsColors.accent`) to distinguish one row type from another.
+  /// `StudyOsColors.amber`) to distinguish one row type from another.
   final Color? iconColor;
   final int subtitleMaxLines;
 
