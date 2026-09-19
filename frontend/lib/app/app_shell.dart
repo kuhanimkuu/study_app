@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../core/auth/auth_service.dart';
+import '../features/chat/chat_quick_action.dart';
 import '../features/chat/presentation/screens/chat_screen.dart';
 import '../features/home/presentation/screens/home_screen.dart';
 import '../features/learning/concepts/presentation/screens/learn_hub_screen.dart';
@@ -43,7 +44,24 @@ enum _Tab { home, projects, learn, chat, planner }
 class _AppShellState extends State<AppShell> {
   _Tab _tab = _Tab.home;
 
+  /// One-shot signal from Home's quick-actions row to the (already
+  /// mounted, persistent-in-the-IndexedStack) Chat tab — see
+  /// `ChatQuickAction`'s doc comment for why a `ValueNotifier` rather than
+  /// a constructor param.
+  final _chatQuickAction = ValueNotifier<ChatQuickAction?>(null);
+
   void _select(_Tab tab) => setState(() => _tab = tab);
+
+  void _runChatQuickAction(ChatQuickAction action) {
+    _chatQuickAction.value = action;
+    _select(_Tab.chat);
+  }
+
+  @override
+  void dispose() {
+    _chatQuickAction.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -53,10 +71,11 @@ class _AppShellState extends State<AppShell> {
         authService: widget.authService,
         onOpenPlanner: () => _select(_Tab.planner),
         onOpenProjects: () => _select(_Tab.projects),
+        onQuickAction: _runChatQuickAction,
       ),
       _Tab.projects: ProjectsListScreen(apiClient: widget.authService.apiClient, authService: widget.authService),
       _Tab.learn: LearnHubScreen(apiClient: widget.authService.apiClient, authService: widget.authService),
-      _Tab.chat: ChatScreen(authService: widget.authService),
+      _Tab.chat: ChatScreen(authService: widget.authService, pendingAction: _chatQuickAction),
       _Tab.planner: PlannerScreen(apiClient: widget.authService.apiClient, authService: widget.authService),
     };
 

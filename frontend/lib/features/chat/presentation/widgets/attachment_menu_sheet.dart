@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
 /// The "+" button's bottom sheet — one entry per non-text input mode
-/// (Image / PDF / Audio file / Web page). Each callback fires after the
-/// sheet closes; ChatScreen owns what actually happens on tap (picking a
-/// file, calling the API) — this widget only presents the menu.
+/// (Camera / Photo library / PDF / Audio file / Web page). Each callback
+/// fires after the sheet closes; ChatScreen owns what actually happens on
+/// tap (picking a file, calling the API) — this widget only presents the
+/// menu. Camera and Photo library are separate entries (not one "Image"
+/// entry that opens a second picker) so the common case — snap a photo of
+/// a textbook page — is one tap, not two.
 Future<void> showAttachmentMenu(
   BuildContext context, {
+  required VoidCallback onCamera,
   required VoidCallback onImage,
   required VoidCallback onPdf,
   required VoidCallback onAudio,
@@ -26,7 +30,8 @@ Future<void> showAttachmentMenu(
               margin: const EdgeInsets.only(bottom: 12),
               decoration: BoxDecoration(color: Theme.of(context).colorScheme.outline, borderRadius: BorderRadius.circular(2)),
             ),
-            _AttachmentTile(icon: Icons.image_outlined, label: 'Image', onTap: onImage),
+            _AttachmentTile(icon: Icons.camera_alt_outlined, label: 'Take photo', onTap: onCamera),
+            _AttachmentTile(icon: Icons.image_outlined, label: 'Photo library', onTap: onImage),
             _AttachmentTile(icon: Icons.picture_as_pdf_outlined, label: 'PDF', onTap: onPdf),
             _AttachmentTile(icon: Icons.mic_outlined, label: 'Audio file', onTap: onAudio),
             _AttachmentTile(icon: Icons.link, label: 'Web page', onTap: onWeb),

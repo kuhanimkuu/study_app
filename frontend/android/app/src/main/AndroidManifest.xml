@@ -8,6 +8,20 @@
          permitted, errno = 1", easy to misread as a cleartext-traffic or
          adb-reverse problem instead of a missing permission. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Required by image_picker's ImageSource.camera (see chat_screen.dart's
+         _pickAndSendImage) — without this declared, camera capture is
+         unreliable across Android versions/OEMs even though the actual
+         capture happens in a separate Camera app process; image_picker's
+         own docs call this out explicitly. android:required="false" on the
+         camera feature keeps the app installable on camera-less devices
+         (e.g. some tablets), since this is one input option among several
+         (PDF/audio/web/text), not the app's core function. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- Required by speech_to_text (see core/voice/voice_input_sheet.dart) —
+         the 2026-09-14 decision that voice stays client-native, actually
+         implemented in the UI for the first time 2026-09-19. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <application
         android:label="study_os_frontend"
         android:name="${applicationName}"
@@ -50,6 +64,13 @@
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- speech_to_text needs this to find the device's speech
+             recognition service under Android 11+'s package-visibility
+             rules — without it, recognition silently reports
+             unavailable even with RECORD_AUDIO granted. -->
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
         </intent>
     </queries>
 </manifest>

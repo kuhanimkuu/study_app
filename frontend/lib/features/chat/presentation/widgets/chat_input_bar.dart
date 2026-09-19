@@ -12,11 +12,23 @@ class ChatInputBar extends StatefulWidget {
     required this.controller,
     required this.onSend,
     required this.onAttachmentTap,
+    this.focusNode,
+    this.onMicTap,
   });
 
   final TextEditingController controller;
   final VoidCallback onSend;
   final VoidCallback onAttachmentTap;
+
+  /// Lets a caller (e.g. Home's "Ask" quick action) request focus on this
+  /// field programmatically. Optional — the field manages its own focus
+  /// fine without one.
+  final FocusNode? focusNode;
+
+  /// Shows a mic button next to Send when provided — omitted entirely
+  /// (not just disabled) if voice input isn't wired up by the caller,
+  /// rather than showing a button that does nothing.
+  final VoidCallback? onMicTap;
 
   @override
   State<ChatInputBar> createState() => _ChatInputBarState();
@@ -54,6 +66,7 @@ class _ChatInputBarState extends State<ChatInputBar> {
             Expanded(
               child: TextField(
                 controller: widget.controller,
+                focusNode: widget.focusNode,
                 minLines: 1,
                 maxLines: 5,
                 textCapitalization: TextCapitalization.sentences,
@@ -69,6 +82,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
                 onSubmitted: (_) => widget.onSend(),
               ),
             ),
+            if (widget.onMicTap != null)
+              IconButton(
+                icon: Icon(Icons.mic_none_rounded, color: theme.colorScheme.onSurfaceVariant),
+                onPressed: widget.onMicTap,
+                tooltip: 'Voice input',
+              ),
             const SizedBox(width: 8),
             Container(
               decoration: BoxDecoration(

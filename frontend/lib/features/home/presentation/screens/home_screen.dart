@@ -7,6 +7,7 @@ import '../../../../core/auth/auth_service.dart';
 import '../../../../core/widgets/gradient_button.dart';
 import '../../../../core/widgets/profile_icon_button.dart';
 import '../../../../core/widgets/project_accent.dart';
+import '../../../chat/chat_quick_action.dart';
 import '../../../practice/flashcards/presentation/screens/flashcard_review_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 
@@ -26,12 +27,17 @@ class HomeScreen extends StatefulWidget {
     required this.authService,
     required this.onOpenPlanner,
     required this.onOpenProjects,
+    required this.onQuickAction,
   });
 
   final ApiClient apiClient;
   final AuthService authService;
   final VoidCallback onOpenPlanner;
   final VoidCallback onOpenProjects;
+
+  /// Ask/PDF/Scan/Voice all switch to the Chat tab and immediately run the
+  /// matching action there — see `chat_quick_action.dart`.
+  final void Function(ChatQuickAction) onQuickAction;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -204,9 +210,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-                    child: _QuickActionsRow(),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    child: _QuickActionsRow(onAction: widget.onQuickAction),
                   ),
                   const SizedBox(height: 24),
                   if (phases.isNotEmpty) ...[
@@ -324,18 +330,21 @@ class _StreakBadge extends StatelessWidget {
   }
 }
 
-/// All four actions open Chat — every one of "ask/PDF/scan/voice" is
-/// already a real attachment option inside the chat input bar's own
-/// attachment menu, so this row is a set of real, honest entry points
-/// into one real destination rather than four separate flows.
+/// All four actions switch to the Chat tab and immediately run the
+/// matching action there (see `ChatQuickAction`/`AppShell`) — real,
+/// distinct entry points, not four buttons that all just open a blank
+/// chat (found and fixed 2026-09-19: they were previously a no-op with a
+/// comment deferring the cross-tab navigation plumbing this now provides).
 class _QuickActionsRow extends StatelessWidget {
-  const _QuickActionsRow();
+  const _QuickActionsRow({required this.onAction});
+
+  final void Function(ChatQuickAction) onAction;
 
   static const _actions = [
-    (icon: Icons.chat_bubble_outline_rounded, label: 'Ask', color: StudyOsColors.primary),
-    (icon: Icons.picture_as_pdf_outlined, label: 'PDF', color: Color(0xFF7C3AED)),
-    (icon: Icons.camera_alt_outlined, label: 'Scan', color: Color(0xFF059669)),
-    (icon: Icons.mic_none_rounded, label: 'Voice', color: Color(0xFFDC2626)),
+    (action: ChatQuickAction.ask, icon: Icons.chat_bubble_outline_rounded, label: 'Ask', color: StudyOsColors.primary),
+    (action: ChatQuickAction.pdf, icon: Icons.picture_as_pdf_outlined, label: 'PDF', color: Color(0xFF7C3AED)),
+    (action: ChatQuickAction.scan, icon: Icons.camera_alt_outlined, label: 'Scan', color: Color(0xFF059669)),
+    (action: ChatQuickAction.voice, icon: Icons.mic_none_rounded, label: 'Voice', color: Color(0xFFDC2626)),
   ];
 
   @override
@@ -347,14 +356,7 @@ class _QuickActionsRow extends StatelessWidget {
           Expanded(
             child: InkWell(
               borderRadius: BorderRadius.circular(14),
-              onTap: () {
-                // Chat is reachable via the nav bar's raised center
-                // button — there's no cross-tab navigation hook wired
-                // into this screen yet, so these buttons surface the
-                // real destination visually without duplicating that
-                // navigation plumbing this slice (deliberately deferred,
-                // see STUDY_OS_PROGRESS.md).
-              },
+              onTap: () => onAction(action.action),
               child: Container(
                 height: 68,
                 decoration: BoxDecoration(

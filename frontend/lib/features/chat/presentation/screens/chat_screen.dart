@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:file_picker/file_picker.dart';
 import 'package:image_picker/image_picker.dart';
 
@@ -8,10 +9,12 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/crypto/user_crypto.dart';
 import '../../../../core/storage/local_db.dart';
+import '../../../../core/voice/voice_input_sheet.dart';
 import '../../../../core/widgets/brand_wordmark.dart';
 import '../../../../core/widgets/profile_icon_button.dart';
 import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
+import '../../chat_quick_action.dart';
 import '../../models/chat_message.dart';
 import '../widgets/attachment_menu_sheet.dart';
 import '../widgets/chat_input_bar.dart';
@@ -43,9 +46,16 @@ import '../widgets/web_url_dialog.dart';
 /// is encrypted with this user's own key right before the one request
 /// that needs it, never persisted anywhere but the OS keystore.
 class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key, required this.authService});
+  const ChatScreen({super.key, required this.authService, required this.pendingAction});
 
   final AuthService authService;
+
+  /// Set by Home's quick-actions row (Ask/PDF/Scan/Voice) via `AppShell`
+  /// right before switching to this tab — see `ChatQuickAction`'s doc
+  /// comment for why a notifier rather than a constructor param (this
+  /// screen is a persistent `IndexedStack` child, not rebuilt on tab
+  /// switch).
+  final ValueNotifier<ChatQuickAction?> pendingAction;
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -55,6 +65,7 @@ class _ChatScreenState extends State<ChatScreen> {
   final List<ChatMessage> _messages = [];
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _textFocusNode = FocusNode();
   String _sessionId = _randomSessionId();
   ApiClient get _api => widget.authService.apiClient;
   bool _isLoading = false;
@@ -76,6 +87,37 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _resumeMostRecentSession();
+    widget.pendingAction.addListener(_onPendingAction);
+    // A quick action set moments before this tab first mounts (Home ->
+    // AppShell._runChatQuickAction sets the value THEN switches tabs,
+    // same frame) would otherwise fire before the listener above was
+    // attached to catch it.
+    if (widget.pendingAction.value != null) _onPendingAction();
+  }
+
+  @override
+  void dispose() {
+    widget.pendingAction.removeListener(_onPendingAction);
+    _textFocusNode.dispose();
+    _textController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onPendingAction() {
+    final action = widget.pendingAction.value;
+    if (action == null) return;
+    widget.pendingAction.value = null; // consume once
+    switch (action) {
+      case ChatQuickAction.ask:
+        WidgetsBinding.instance.addPostFrameCallback((_) => _textFocusNode.requestFocus());
+      case ChatQuickAction.pdf:
+        _pickAndSendPdf();
+      case ChatQuickAction.scan:
+        _pickAndSendImage(ImageSource.camera);
+      case ChatQuickAction.voice:
+        _startVoiceInput();
+    }
   }
 
   static String _randomSessionId() {
@@ -264,13 +306,34 @@ class _ChatScreenState extends State<ChatScreen> {
         ));
   }
 
-  Future<void> _pickAndSendImage() async {
+  /// [source] is [ImageSource.camera] for "Take photo" and
+  /// [ImageSource.gallery] for "Photo library" — same downstream handling
+  /// either way, since `/api/ask/image` doesn't care where the bytes came
+  /// from. Camera capture specifically can fail in ways gallery picking
+  /// usually doesn't (permission denied, no camera hardware), so this is
+  /// wrapped in try/catch — every other picker in this file follows the
+  /// same "never leave a real device-integration call unguarded" rule as
+  /// the moderator's own routing tree (see server/domains/../moderator
+  /// robustness notes) — a denied permission should show a clear message,
+  /// not an unhandled PlatformException.
+  Future<void> _pickAndSendImage(ImageSource source) async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: ImageSource.gallery);
+    XFile? picked;
+    try {
+      picked = await picker.pickImage(source: source);
+    } on PlatformException catch (e) {
+      if (mounted) {
+        final message = source == ImageSource.camera
+            ? 'Couldn\'t open the camera${e.message != null ? ': ${e.message}' : ''}. Check camera permission in Settings.'
+            : 'Couldn\'t open the photo library${e.message != null ? ': ${e.message}' : ''}.';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+      return;
+    }
     if (picked == null) return;
     final bytes = await picked.readAsBytes();
     await _addUserMessage('[image: ${picked.name}]');
-    await _handleResult(() => _api.askImage(bytes: bytes, filename: picked.name, sessionId: _sessionId));
+    await _handleResult(() => _api.askImage(bytes: bytes, filename: picked!.name, sessionId: _sessionId));
   }
 
   Future<void> _pickAndSendPdf() async {
@@ -304,10 +367,25 @@ class _ChatScreenState extends State<ChatScreen> {
     await _handleResult(() => _api.askWeb(url: url, sessionId: _sessionId));
   }
 
+  /// Inserts the transcript into the text field rather than sending it —
+  /// speech recognition can mishear a technical term or a formula, and
+  /// this is a study question, worth a glance before it goes to the
+  /// moderator. Appends to (rather than replaces) whatever was already
+  /// typed, so voice can finish a partially-typed question too.
+  Future<void> _startVoiceInput() async {
+    final transcript = await showVoiceInputSheet(context);
+    if (transcript == null || transcript.isEmpty) return;
+    final existing = _textController.text;
+    _textController.text = existing.isEmpty ? transcript : '$existing $transcript';
+    _textController.selection = TextSelection.collapsed(offset: _textController.text.length);
+    if (mounted) _textFocusNode.requestFocus();
+  }
+
   void _openAttachmentMenu() {
     showAttachmentMenu(
       context,
-      onImage: _pickAndSendImage,
+      onCamera: () => _pickAndSendImage(ImageSource.camera),
+      onImage: () => _pickAndSendImage(ImageSource.gallery),
       onPdf: _pickAndSendPdf,
       onAudio: _pickAndSendAudio,
       onWeb: _promptForUrl,
@@ -522,7 +600,13 @@ class _ChatScreenState extends State<ChatScreen> {
               filename: _pendingPdfName!,
               onDismiss: () => setState(() => _pendingPdfName = null),
             ),
-          ChatInputBar(controller: _textController, onSend: _sendText, onAttachmentTap: _openAttachmentMenu),
+          ChatInputBar(
+            controller: _textController,
+            focusNode: _textFocusNode,
+            onSend: _sendText,
+            onAttachmentTap: _openAttachmentMenu,
+            onMicTap: _startVoiceInput,
+          ),
         ],
       ),
     );
