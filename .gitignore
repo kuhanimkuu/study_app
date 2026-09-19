@@ -22,3 +22,8 @@ server/.encryption_key
 
 # model_router's model weights are cached by huggingface_hub outside this
 # repo (~/.cache/huggingface), nothing to ignore here
+
+# Working notes on ideas involving real payments/third-party API
+# credentials, not yet designed — deliberately kept local, not published
+# to the public repo while still just an idea.
+BYOK_AUTOPROVISION_NOTES.md
