@@ -176,6 +176,10 @@ async def list_relationships(
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """`related_concept_name` is resolved here, not left for the client to
+    figure out which end of `from_concept_id`/`to_concept_id` is "the
+    other one" — same "resolve ids to names at the source" discipline as
+    `list_my_mastery`/`planner.py`'s own `concepts` field."""
     await get_concept_or_404(db, current_user["id"], concept_id)
     rows = (
         await db.scalars(
@@ -184,9 +188,21 @@ async def list_relationships(
             )
         )
     ).all()
+    other_ids = {r.to_concept_id if r.from_concept_id == concept_id else r.from_concept_id for r in rows}
+    names: dict[int, str] = {}
+    if other_ids:
+        name_rows = (await db.execute(select(Concept.id, Concept.name).where(Concept.id.in_(other_ids)))).all()
+        names = {cid: name for cid, name in name_rows}
     return {
         "relationships": [
-            {**r.public(), "direction": "outgoing" if r.from_concept_id == concept_id else "incoming"}
+            {
+                **r.public(),
+                "direction": "outgoing" if r.from_concept_id == concept_id else "incoming",
+                "related_concept_id": r.to_concept_id if r.from_concept_id == concept_id else r.from_concept_id,
+                "related_concept_name": names.get(
+                    r.to_concept_id if r.from_concept_id == concept_id else r.from_concept_id
+                ),
+            }
             for r in rows
         ]
     }

@@ -58,12 +58,21 @@ async def test_relationship_crud(client, student):
     assert created.json()["from_concept_id"] == derivatives
     assert created.json()["to_concept_id"] == limits
 
-    # visible from both ends, correctly labeled by direction
+    # visible from both ends, correctly labeled by direction, and each
+    # side's related_concept_name resolves to the OTHER concept's real
+    # name (not its own) — this is what the frontend renders directly,
+    # so a wrong name here would be a silent UI bug, not just a missing field.
     from_dependent = await client.get(f"/api/v1/concepts/{derivatives}/relationships", headers=headers)
-    assert any(r["id"] == rel_id and r["direction"] == "outgoing" for r in from_dependent.json()["relationships"])
+    rel_from_dependent = next(r for r in from_dependent.json()["relationships"] if r["id"] == rel_id)
+    assert rel_from_dependent["direction"] == "outgoing"
+    assert rel_from_dependent["related_concept_id"] == limits
+    assert rel_from_dependent["related_concept_name"] == "Limits"
 
     from_prerequisite = await client.get(f"/api/v1/concepts/{limits}/relationships", headers=headers)
-    assert any(r["id"] == rel_id and r["direction"] == "incoming" for r in from_prerequisite.json()["relationships"])
+    rel_from_prerequisite = next(r for r in from_prerequisite.json()["relationships"] if r["id"] == rel_id)
+    assert rel_from_prerequisite["direction"] == "incoming"
+    assert rel_from_prerequisite["related_concept_id"] == derivatives
+    assert rel_from_prerequisite["related_concept_name"] == "Derivatives"
 
     deleted = await client.delete(f"/api/v1/concepts/{derivatives}/relationships/{rel_id}", headers=headers)
     assert deleted.status_code == 200
