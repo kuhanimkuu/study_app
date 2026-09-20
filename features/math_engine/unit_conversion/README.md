@@ -6,7 +6,11 @@
 - **Output:** converted value
 
 ## JSON shape
-<!-- fill in during the json.md mapping exercise -->
+
+Input: `{ "value": 100, "from_unit": "km", "to_unit": "miles" }`
+Output: `{ "value": 62.137, "from_unit": "km", "to_unit": "miles" }`
 
 ## Notes
-- Could use pint.
+
+- Built on `pint`. Uses `pint.Quantity(value, unit)` rather than `value * ureg(unit)` — the latter raises `OffsetUnitCalculusError` on affine units like `degF`/`degC` (temperature conversion needs an offset, not just a multiplicative factor).
+- Tested: `100 km -> 62.14 miles`, `32 degF -> 0 degC`, `1 hour -> 3600 seconds`, `5 kg -> 11.02 lb` — all correct.

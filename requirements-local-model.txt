@@ -1,0 +1,25 @@
+# Study OS — the free local model's dependencies (Qwen2.5-0.5B-Instruct
+# via transformers/torch), split out of requirements.txt on 2026-09-19
+# while optimizing the Render deploy.
+#
+# Why split: torch + transformers are by far the largest, slowest-to-
+# install dependencies in this project (CPU-wheel torch alone is a
+# couple hundred MB), and the local model already cannot run within
+# Render's free-tier 512MB RAM limit even after halving its footprint to
+# ~942MB via bf16 loading (see model_router/engine.py's docstring and
+# STUDY_OS_PROGRESS.md's 2026-09-18/19 entries) — Render's own deploy has
+# never been able to use this backend. Declaring these here instead of
+# in requirements.txt means Render's build no longer installs ~2 large
+# packages it can never actually use: faster build, smaller deployed
+# image, same real functionality (BYOK already works there, unaffected).
+#
+# Install alongside the main requirements for full local dev:
+#   pip install -r requirements.txt -r requirements-local-model.txt
+#
+# torch note: this project deliberately uses CPU-only PyTorch — if
+# `pip install` pulls a CUDA build or fails to resolve, install from the
+# CPU wheel index instead:
+#   pip install torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+
+torch==2.14.0
+transformers==5.16.1

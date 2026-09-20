@@ -6,7 +6,11 @@
 - **Output:** websites, YouTube, papers, images, interactive resources
 
 ## JSON shape
-<!-- fill in during the json.md mapping exercise -->
+
+Input: `{ "url": "https://example.com" }`
+Output: `{ "type": "website" }` (`type` is one of `website | youtube | paper | image | interactive`)
 
 ## Notes
-<!-- optional -->
+
+- Rule-based domain/extension matching — real, cheap, reliable for the common cases. Falls back to `"website"` for anything unrecognized rather than guessing further.
+- Tested against 5 URLs (YouTube, arXiv, an image extension, Desmos, a plain article): all classified correctly.

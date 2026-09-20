@@ -1,0 +1,84 @@
+# Study OS — server dependencies.
+#
+# Scoped to what this project's code actually imports (verified via a
+# grep across every features/*/engine.py and server/*.py), not a raw
+# Versions are pinned to what's actually been running and tested on this
+# machine throughout this build.
+#
+# Install with: pip install -r requirements.txt
+#
+# torch/transformers (the free local Qwen model) are declared separately
+# in requirements-local-model.txt, NOT here — see that file's own header
+# for why. Full local dev (able to actually run the local backend):
+#   pip install -r requirements.txt -r requirements-local-model.txt
+# Anywhere BYOK-only is fine (this project's hosted deploys — see
+# render.yaml, and STUDY_OS_PROGRESS.md's 2026-09-18 entry confirming the
+# local backend already can't run within Render's free-tier RAM anyway):
+#   pip install -r requirements.txt
+# Both `model_router/engine.py`'s torch/transformers imports are already
+# lazy (inside __init__/generate(), not at module top) and every call
+# site that reaches the local backend is already wrapped so any failure —
+# including "not installed" — degrades to a clean model_unavailable
+# response pointing at BYOK, not a crash (see
+# server/tests/test_moderator_model_unavailable.py, proven with a real
+# test before this split was made, not assumed).
+
+# --- server (server/) ---
+fastapi==0.141.1
+uvicorn==0.52.4
+python-multipart==0.0.32
+pydantic==2.12.5
+bcrypt==5.0.0
+PyJWT==2.10.1
+cryptography==46.0.3
+
+# --- server/domains/identity (Google Sign-In ID token verification,
+# blueprint Section 4) — was already present transitively (pulled in by
+# another dependency) but never declared; verifying real user credentials
+# against an undeclared dependency isn't something to leave implicit ---
+google-auth==2.48.0rc0
+
+# --- server/db, server/core (PostgreSQL — see STUDY_OS_PROGRESS.md's
+# 2026-09-14 hosting/DB decision: Postgres from day one, no SQLite) ---
+sqlalchemy[asyncio]==2.0.52
+asyncpg==0.31.0
+alembic==1.20.0
+pydantic-settings==2.15.0
+email-validator==2.3.0
+
+# --- server/domains/learning (spaced repetition) — the official
+# open-spaced-repetition reference implementation, not a hand-rolled
+# version of the FSRS algorithm's formulas ---
+fsrs==6.3.2
+
+# --- math_engine ---
+sympy==1.14.0
+numpy==2.5.3
+scipy==1.18.1
+Pint==0.25.3
+
+# --- visual_explanation / document_generation ---
+matplotlib==3.11.1
+reportlab==4.4.9
+pygltflib==1.16.5
+
+# --- ocr / image_processing ---
+opencv-python-headless==5.0.0.93
+pillow==12.1.0
+pytesseract==0.3.13
+
+# --- document_engine (PDF processing) ---
+pymupdf==1.28.0
+
+# --- input_pipeline (audio/web) ---
+faster-whisper==1.2.1
+requests==2.32.5
+beautifulsoup4==4.15.0
+
+# --- rag (embeddings for project search) ---
+fastembed==0.8.0
+
+# --- model_router (BYOK backends only — the free local model's own
+# torch/transformers deps live in requirements-local-model.txt) ---
+anthropic==1.4.0
+openai==3.8.0
