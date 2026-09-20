@@ -18,7 +18,10 @@ INPUT (the run() kwargs):
 }
 
 OUTPUT:
-{ "text": "...", "tier": "tiny", "backend": "local" }
+{ "text": "...", "tier": "tiny", "backend": "local", "usage": null }
+# "usage" is {"input_tokens": int, "output_tokens": int} for a hosted
+# backend call, None for "local" — see server/domains/billing/service.py's
+# charge_for_usage, the hosted tier's (blueprint Section 42.1) consumer.
 
 Status: later phase (this is the Phase 5 "real brain" piece)
 
@@ -134,13 +137,22 @@ class TransformersBackend:
 
 
 class AnthropicBackend:
-    """BYOK — the caller's own Anthropic API key, never this project's."""
+    """BYOK (or the hosted tier's pooled key — see server/domains/billing/)
+    — either way, never this project's own key hardcoded here."""
 
     def __init__(self, api_key: str, model: str):
         import anthropic
 
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
+        # Set by generate() after each call — read by run() below to
+        # support the hosted tier's usage-based billing (server/domains/
+        # billing/service.py's charge_for_usage). None until a call
+        # completes. Safe as a plain instance attribute specifically
+        # because hosted/BYOK backends are never cached/reused across
+        # requests (see this module's docstring) — a cached singleton
+        # would leak one request's usage into another's.
+        self.last_usage: dict | None = None
 
     def generate(self, prompt: str, max_tokens: int) -> str:
         response = self._client.messages.create(
@@ -148,6 +160,11 @@ class AnthropicBackend:
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        if response.usage is not None:
+            self.last_usage = {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+            }
         # Same defensive reasoning as OpenAIBackend's None-content guard —
         # an empty `content` list (e.g. stop_reason="max_tokens" before any
         # visible text was written) would otherwise raise IndexError here
@@ -159,14 +176,18 @@ class AnthropicBackend:
 
 
 class OpenAIBackend:
-    """BYOK — the caller's own OpenAI (or OpenAI-compatible, e.g.
-    DeepSeek — see DEEPSEEK_BASE_URL) API key."""
+    """BYOK (or the hosted tier's pooled key — see server/domains/billing/)
+    — the caller's own OpenAI (or OpenAI-compatible, e.g. DeepSeek — see
+    DEEPSEEK_BASE_URL) API key."""
 
     def __init__(self, api_key: str, model: str, base_url: str | None = None):
         import openai
 
         self._client = openai.OpenAI(api_key=api_key, base_url=base_url)
         self._model = model
+        # See AnthropicBackend.last_usage's doc comment — same mechanism,
+        # same "never cached across requests" safety argument.
+        self.last_usage: dict | None = None
 
     def generate(self, prompt: str, max_tokens: int) -> str:
         response = self._client.chat.completions.create(
@@ -174,6 +195,11 @@ class OpenAIBackend:
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        if response.usage is not None:
+            self.last_usage = {
+                "input_tokens": response.usage.prompt_tokens,
+                "output_tokens": response.usage.completion_tokens,
+            }
         # message.content is None (not "") for some models/backends when
         # nothing came back within max_tokens — e.g. DeepSeek's reasoner
         # variant spends its whole budget on hidden reasoning tokens
@@ -248,7 +274,12 @@ async def run(**kwargs: Any) -> dict:
     else:
         text = await loop.run_in_executor(None, backend.generate, prompt, max_tokens)
 
-    return {"text": text, "tier": tier, "backend": backend_name}
+    # None for the local backend (no concept of billable usage) and for
+    # any backend instance that hasn't set last_usage — see AnthropicBackend/
+    # OpenAIBackend's doc comments. Callers that bill usage (server/domains/
+    # billing/service.py's charge_for_usage) treat None as "nothing to charge."
+    usage = getattr(backend, "last_usage", None)
+    return {"text": text, "tier": tier, "backend": backend_name, "usage": usage}
 
 
 if __name__ == "__main__":

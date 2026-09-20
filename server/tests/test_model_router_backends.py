@@ -45,9 +45,19 @@ class _FakeOpenAIChoice:
         self.message = _FakeOpenAIMessage(content)
 
 
+class _FakeOpenAIUsage:
+    def __init__(self, prompt_tokens: int = 10, completion_tokens: int = 5) -> None:
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+
+
 class _FakeOpenAIResponse:
     def __init__(self, content: str | None) -> None:
         self.choices = [_FakeOpenAIChoice(content)]
+        # Real SDK responses always include usage — see
+        # STUDY_OS_PROGRESS.md's 2026-09-20 hosted-tier billing entry,
+        # which added OpenAIBackend.generate()'s response.usage read.
+        self.usage = _FakeOpenAIUsage()
 
 
 class _FakeOpenAICompletions:
@@ -83,11 +93,24 @@ def test_openai_backend_handles_none_content_without_crashing():
 def test_openai_backend_still_returns_real_text_normally():
     backend = _openai_backend("  a real reply  ")
     assert backend.generate("hi", 50) == "a real reply"
+    # 2026-09-20: last_usage feeds the hosted tier's billing (server/
+    # domains/billing/service.py's charge_for_usage) via run()'s "usage"
+    # key — confirm it's actually captured, not just non-crashing.
+    assert backend.last_usage == {"input_tokens": 10, "output_tokens": 5}
+
+
+class _FakeAnthropicUsage:
+    def __init__(self, input_tokens: int = 10, output_tokens: int = 5) -> None:
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 class _FakeAnthropicResponse:
     def __init__(self, content_blocks: list) -> None:
         self.content = content_blocks
+        # Real SDK responses always include usage — see this module's
+        # matching comment on _FakeOpenAIResponse.
+        self.usage = _FakeAnthropicUsage()
 
 
 class _FakeAnthropicMessages:
@@ -123,6 +146,8 @@ def test_anthropic_backend_handles_empty_content_list_without_crashing():
 def test_anthropic_backend_still_returns_real_text_normally():
     backend = _anthropic_backend([_FakeAnthropicTextBlock("  a real reply  ")])
     assert backend.generate("hi", 50) == "a real reply"
+    # See test_openai_backend_still_returns_real_text_normally's matching comment.
+    assert backend.last_usage == {"input_tokens": 10, "output_tokens": 5}
 
 
 class _SlowFakeLocalBackend:

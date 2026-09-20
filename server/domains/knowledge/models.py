@@ -70,6 +70,10 @@ class Material(Base):
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="indexed")
+    # The source URL this material was fetched from, when added via a link
+    # (router.py's add_material `url` field) — null for pasted text or an
+    # uploaded file, which have no URL of their own.
+    source_url: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
@@ -82,6 +86,7 @@ class Material(Base):
             "filename": self.filename,
             "mime_type": self.mime_type,
             "status": self.status,
+            "source_url": self.source_url,
             "created_at": self.created_at.isoformat(),
         }
 

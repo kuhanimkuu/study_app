@@ -83,6 +83,15 @@ async def generate_explanation(
     max_tokens = verbosity_max_tokens(state.personality)
     try:
         result = await engines.model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
+        # Written back onto the SAME model_config dict object this
+        # function received (never copied) so the hosted tier's billing
+        # (server/domains/billing/) can read it back after this call
+        # returns — see moderator/engine.py's matching write-back, and
+        # ai/moderator/router.py's explain_concept. Set as soon as the
+        # call succeeds, not gated on `if text` below — a real provider
+        # call was made and billed by the provider regardless of whether
+        # the returned text is empty.
+        model_config["_billed_usage"] = result.get("usage")
         text = result["text"].strip()
         if text:
             return text, reasoning

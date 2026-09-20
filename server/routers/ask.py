@@ -48,8 +48,9 @@ from ..ai.moderator.style import build_adaptive_style_note, verbosity_max_tokens
 from ..ai.personality.router import get_or_create_personality
 from ..ai.schemas import ModeratorResponse
 from ..core import security
-from ..core.model_config import ModelConfig, resolve_model_config
+from ..core.model_config import ModelConfig, resolve_model_config_async
 from ..db.session import get_db
+from ..domains.billing import service as billing_service
 
 router = APIRouter()
 
@@ -167,7 +168,8 @@ async def ask_text(
     )
     personality_max_tokens = verbosity_max_tokens(personality)
 
-    return await engines.moderator.run(
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    result = await engines.moderator.run(
         input_type=classified["input_type"],
         content=classified["content"],
         detected=classified.get("detected", []),
@@ -176,11 +178,25 @@ async def ask_text(
         params=payload.params or {},
         session_id=payload.session_id,
         user_id=current_user["id"],
-        model_config=resolve_model_config(payload.model_config_, current_user),
+        model_config=model_config,
         local_events=(payload.local_events or []) + server_events,
         personality_style=personality_style,
         personality_max_tokens=personality_max_tokens,
     )
+
+    # "_usage" is moderator/engine.py's internal signal (not part of the
+    # public ModeratorResponse schema) for whether this request actually
+    # made a real provider call — see that module's run() doc comment.
+    # Only the hosted tier (model_config carries "hosted_provider") gets
+    # billed for it; a BYOK/local call never does.
+    usage = result.pop("_usage", None)
+    hosted_provider = model_config.get("hosted_provider")
+    if hosted_provider:
+        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
+        await billing_service.charge_for_usage(db, current_user["id"], hosted_provider, model_name, usage)
+        await db.commit()
+
+    return result
 
 
 @router.post("/api/ask/image", response_model=ModeratorResponse)

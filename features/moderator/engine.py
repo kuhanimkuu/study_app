@@ -395,7 +395,18 @@ async def run(**kwargs: Any) -> dict:
         "engine": engine_used,
         "labels": [input_type] + ([task] if task else []) + list(detected),
     }
-    return {"blocks": blocks, "session_id": session_id, "activity": activity}
+    # "_usage": present only when one of _author_general_reply/
+    # _route_write_doc/_author_text made a real model_router call this
+    # request and wrote it back onto model_config (see those functions'
+    # matching comments) — None for every route that never touched the
+    # LLM (deterministic math/graph/etc.) or that only used the free local
+    # backend. routers/ask.py reads this to bill the hosted tier
+    # (server/domains/billing/) and strips it before the response is
+    # serialized — it isn't part of the public ModeratorResponse schema.
+    return {
+        "blocks": blocks, "session_id": session_id, "activity": activity,
+        "_usage": model_config.get("_billed_usage"),
+    }
 
 
 # --- private helpers: decide_format() / pick_engines() / author_explanation() / assemble_blocks(), combined per route ---
@@ -831,6 +842,11 @@ async def _author_general_reply(
     )
     max_tokens = personality_max_tokens or 220
     llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
+    # Written back onto the SAME model_config dict object run() received
+    # (never copied anywhere in this file) so the hosted tier's billing
+    # (server/domains/billing/) can read it back at the top of run() below
+    # — see this module's run()'s final return statement.
+    model_config["_billed_usage"] = llm_result.get("usage")
     text = llm_result["text"].strip()
     return text or None
 
@@ -1020,6 +1036,9 @@ async def _route_write_doc(
             attempted_backend=backend,
         ) from exc
 
+    # See _author_general_reply's matching comment — same write-back
+    # mechanism for hosted-tier billing.
+    model_config["_billed_usage"] = llm_result.get("usage")
     title, material = _doc_text_to_material(llm_result["text"])
     if not material:
         raise NeedsClarification(
@@ -1228,6 +1247,12 @@ async def _author_text(
     max_tokens = personality_max_tokens or 120
     try:
         llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
+        # See _author_general_reply's matching comment — same write-back
+        # mechanism for hosted-tier billing. Set as soon as the call
+        # succeeds (a real provider call was made and billed by the
+        # provider regardless of whether the returned text is empty) —
+        # not gated on `if text`, unlike the return value below it.
+        model_config["_billed_usage"] = llm_result.get("usage")
         text = llm_result["text"].strip()
         if text:
             return text

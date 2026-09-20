@@ -204,6 +204,12 @@ async def _grade_via_llm(prompt: str, model_config: dict, *, max_tokens: int) ->
     or comes back unparseable."""
     try:
         result = await engines.model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
+        # Written back onto the SAME model_config dict object the router
+        # passed in (never copied) so the hosted tier's billing
+        # (server/domains/billing/) can read it back after grade() returns
+        # — see server/domains/assessment/router.py's submit_attempt, and
+        # moderator/engine.py's matching write-back for the same pattern.
+        model_config["_billed_usage"] = result.get("usage")
         text = result["text"].strip()
     except Exception as exc:
         raise GradingUnavailable(f"AI grading unavailable: {exc}") from exc

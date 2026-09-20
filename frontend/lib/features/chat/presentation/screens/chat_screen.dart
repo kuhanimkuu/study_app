@@ -182,13 +182,25 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// Builds the per-request BYOK config, encrypting the stored API key
-  /// with this user's own encryption_key right before sending — see
-  /// UserCrypto and routers/ask.py's ModelConfig. Returns null for the
-  /// local backend (the server's default, no config needed).
+  /// Builds the per-request BYOK/hosted config — see UserCrypto and
+  /// routers/ask.py's ModelConfig. Returns null for the local backend
+  /// (the server's default, no config needed).
   Future<Map<String, dynamic>?> _modelConfigForRequest() async {
     final settings = widget.authService.modelSettings;
-    if (settings.backend == 'local' || !settings.hasApiKey) return null;
+    if (settings.backend == 'local') return null;
+
+    // Hosted tier (blueprint Section 42.1) — Study OS's own pooled
+    // provider key, billed via server/domains/billing/. No key of any
+    // kind is stored or sent from the client for this backend; a 402
+    // (insufficient balance) or 503 (provider not configured on this
+    // server) surfaces as a normal ApiException the caller already
+    // handles, same as any other model call failure.
+    if (settings.backend == 'hosted') {
+      if (settings.hostedProvider == null) return null;
+      return {'backend': 'hosted', 'hosted_provider': settings.hostedProvider};
+    }
+
+    if (!settings.hasApiKey) return null;
     final key = widget.authService.encryptionKey;
     if (key == null) return null;
     final encryptedKey = await UserCrypto.encryptForUser(key, settings.apiKey!);

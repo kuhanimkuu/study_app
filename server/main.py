@@ -36,6 +36,9 @@ up domains/ + routers/ — no endpoint logic lives here directly.
   - domains/learning/router.py   — Concepts + Mastery (FSRS-based)
   - domains/assessment/router.py — Question authoring/practice + grading +
                                     misconceptions
+  - domains/billing/router.py    — hosted pay-as-you-go AI tier: wallet
+                                    balance, top-ups, usage ledger
+                                    (blueprint Section 42.1)
   - routers/ask.py               — the actual study-question endpoints
                                     (not migrated to a domain yet)
 
@@ -60,6 +63,7 @@ from .ai.moderator.router import router as moderator_router
 from .ai.personality.router import router as personality_router
 from .core.config import get_settings
 from .domains.assessment.router import router as assessment_router
+from .domains.billing.router import router as billing_router
 from .domains.identity.router import router as identity_router
 from .domains.knowledge.notes_router import router as notes_router
 from .domains.knowledge.router import router as knowledge_router
@@ -104,3 +108,4 @@ app.include_router(planning_router)
 app.include_router(moderator_router)
 app.include_router(memory_router)
 app.include_router(personality_router)
+app.include_router(billing_router)

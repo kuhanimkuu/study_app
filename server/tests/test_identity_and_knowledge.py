@@ -218,6 +218,54 @@ async def test_add_material_indexes_and_tracks_metadata(client, signed_up_user):
     await client.delete("/api/projects/thermo", headers=headers)
 
 
+async def test_add_material_via_url_fetches_and_records_source_url(client, signed_up_user, monkeypatch):
+    """No real network call — mocks the same web_input engine chat's link
+    attachment already uses (server/domains/knowledge/router.py's
+    _extract_material 'url' branch, added for the Sources-tab link field)."""
+    from server import engines
+
+    async def _fake_web_input_run(**kwargs):
+        return {"input_type": "web", "content": "Fake fetched page content about entropy.", "source_url": kwargs["content"]}
+
+    monkeypatch.setattr(engines.web_input, "run", _fake_web_input_run)
+
+    headers = signed_up_user["headers"]
+    await client.post("/api/projects", json={"display_name": "Physics"}, headers=headers)
+
+    added = await client.post(
+        "/api/projects/physics/material",
+        data={"url": "https://example.com/entropy"},
+        headers=headers,
+    )
+    assert added.status_code == 200, added.text
+
+    materials = await client.get("/api/projects/physics/materials", headers=headers)
+    assert materials.status_code == 200, materials.text
+    entries = materials.json()["materials"]
+    assert len(entries) == 1
+    assert entries[0]["filename"] == "https://example.com/entropy"
+    assert entries[0]["mime_type"] == "text/html"
+    assert entries[0]["source_url"] == "https://example.com/entropy"
+
+    await client.delete("/api/projects/physics", headers=headers)
+
+
+async def test_add_material_via_text_has_no_source_url(client, signed_up_user):
+    """Regression check on the new field: a pasted-text material (the
+    pre-existing path) must still report source_url as null, not
+    accidentally populated."""
+    headers = signed_up_user["headers"]
+    await client.post("/api/projects", json={"display_name": "Chem"}, headers=headers)
+    await client.post(
+        "/api/projects/chem/material",
+        data={"text": "Some pasted material."},
+        headers=headers,
+    )
+    materials = await client.get("/api/projects/chem/materials", headers=headers)
+    assert materials.json()["materials"][0]["source_url"] is None
+    await client.delete("/api/projects/chem", headers=headers)
+
+
 async def test_list_materials_requires_existing_space(client, signed_up_user):
     resp = await client.get("/api/projects/does-not-exist/materials", headers=signed_up_user["headers"])
     assert resp.status_code == 404

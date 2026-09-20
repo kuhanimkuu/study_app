@@ -63,6 +63,15 @@ class _AccountScreenState extends State<AccountScreen> {
   double? _avgMastery;
   int _sessionsThisWeek = 0;
 
+  // Hosted pay-as-you-go tier (blueprint Section 42.1) — see
+  // server/domains/billing/. _hostedProvider defaults to 'anthropic' the
+  // first time a user selects this option; a saved setting overrides that.
+  late String _hostedProvider = _settings.hostedProvider ?? 'anthropic';
+  int? _balanceCents;
+  bool _billingLoading = false;
+  List<Map<String, dynamic>> _recentUsage = [];
+  bool _toppingUp = false;
+
   @override
   void initState() {
     super.initState();
@@ -75,6 +84,40 @@ class _AccountScreenState extends State<AccountScreen> {
     _dailyStudyTargetController.text = (user?['daily_study_target_minutes'] as int?)?.toString() ?? '';
     if (_settings.hasApiKey) _apiKeyController.text = _settings.apiKey!;
     _loadStats();
+    if (_backend == 'hosted') _loadBillingInfo();
+  }
+
+  Future<void> _loadBillingInfo() async {
+    setState(() => _billingLoading = true);
+    try {
+      final results = await Future.wait([_apiClient.getBillingBalance(), _apiClient.listBillingUsage()]);
+      final usage = (results[1]['entries'] as List<dynamic>).cast<Map<String, dynamic>>();
+      if (!mounted) return;
+      setState(() {
+        _balanceCents = results[0]['balance_cents'] as int;
+        _recentUsage = usage.take(5).toList();
+      });
+    } catch (_) {
+      // Same tolerance as _loadStats() — a failed fetch here shouldn't
+      // block the rest of the screen from rendering.
+    } finally {
+      if (mounted) setState(() => _billingLoading = false);
+    }
+  }
+
+  Future<void> _topUp(int amountCents) async {
+    setState(() {
+      _toppingUp = true;
+      _error = null;
+    });
+    try {
+      await _apiClient.createTopup(amountCents);
+      await _loadBillingInfo();
+    } on ApiException catch (e) {
+      setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _toppingUp = false);
+    }
   }
 
   Future<void> _loadStats() async {
@@ -120,6 +163,7 @@ class _AccountScreenState extends State<AccountScreen> {
         backend: _backend,
         modelName: _modelNameController.text.trim().isEmpty ? null : _modelNameController.text.trim(),
         apiKey: _apiKeyController.text.isEmpty ? null : _apiKeyController.text,
+        hostedProvider: _backend == 'hosted' ? _hostedProvider : null,
       );
       setState(() => _savedMessage = 'Saved on this device.');
     } catch (e) {
@@ -269,6 +313,11 @@ class _AccountScreenState extends State<AccountScreen> {
     final email = user?['email'] as String? ?? '';
     final course = user?['course'] as String?;
     final institution = user?['institution'] as String?;
+    // This screen is always reached via ProfileIconButton's Navigator.push
+    // (Profile was dropped from the bottom nav 2026-09-19) — never a tab
+    // root — but guarded with canPop rather than assumed, so a stray back
+    // button never renders with nothing to pop back to.
+    final canPop = Navigator.of(context).canPop();
 
     return Scaffold(
       body: ListView(
@@ -281,6 +330,19 @@ class _AccountScreenState extends State<AccountScreen> {
             decoration: BoxDecoration(gradient: StudyOsColors.heroPanel(theme.brightness)),
             child: Column(
               children: [
+                if (canPop) ...[
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: IconButton(
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      tooltip: 'Back',
+                      onPressed: () => Navigator.of(context).pop(),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 Row(
                   children: [
                     Container(
@@ -338,7 +400,20 @@ class _AccountScreenState extends State<AccountScreen> {
                 _ProfileRow(
                   icon: Icons.insights_rounded,
                   label: 'View progress & analytics',
-                  onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (context) => ProgressScreen(apiClient: _apiClient))),
+                  // ProgressScreen has no AppBar of its own by design — it's
+                  // also embedded directly as a Planner tab body, where a
+                  // second AppBar would be wrong. Wrapped in one here
+                  // instead, only for this standalone-push entry point, so
+                  // it gets a real back button without affecting the tab
+                  // usage.
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => Scaffold(
+                        appBar: AppBar(title: const Text('Progress')),
+                        body: ProgressScreen(apiClient: _apiClient),
+                      ),
+                    ),
+                  ),
                 ),
                 if (widget.onOpenProjects != null)
                   _ProfileRow(icon: Icons.folder_outlined, label: 'Study spaces', onTap: widget.onOpenProjects),
@@ -349,6 +424,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   children: [
                     for (final option in const [
                       (id: 'local', name: 'Local model', sub: 'Free, on the server — no key needed'),
+                      (id: 'hosted', name: 'Study OS Hosted', sub: 'Pay-as-you-go — no key needed'),
                       (id: 'anthropic', name: 'Anthropic Claude', sub: 'Bring your own key'),
                       (id: 'openai', name: 'OpenAI GPT', sub: 'Bring your own key'),
                       (id: 'deepseek', name: 'DeepSeek', sub: 'Bring your own key'),
@@ -357,11 +433,82 @@ class _AccountScreenState extends State<AccountScreen> {
                         name: option.name,
                         subtitle: option.sub,
                         selected: _backend == option.id,
-                        onTap: () => setState(() => _backend = option.id),
+                        onTap: () {
+                          setState(() => _backend = option.id);
+                          if (option.id == 'hosted' && _balanceCents == null && !_billingLoading) {
+                            _loadBillingInfo();
+                          }
+                        },
                       ),
                   ],
                 ),
-                if (_backend != 'local') ...[
+                if (_backend == 'hosted') ...[
+                  const SizedBox(height: 10),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      for (final provider in const [
+                        (id: 'anthropic', label: 'Anthropic'),
+                        (id: 'openai', label: 'OpenAI'),
+                        (id: 'deepseek', label: 'DeepSeek'),
+                      ])
+                        ChoiceChip(
+                          label: Text(provider.label),
+                          selected: _hostedProvider == provider.id,
+                          onSelected: (_) => setState(() => _hostedProvider = provider.id),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(14),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text('Balance', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                              if (_billingLoading)
+                                const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                            ],
+                          ),
+                          Text(
+                            _balanceCents == null ? '—' : '\$${(_balanceCents! / 100).toStringAsFixed(2)}',
+                            style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              for (final amount in const [(cents: 100, label: '+\$1'), (cents: 500, label: '+\$5'), (cents: 1000, label: '+\$10')]) ...[
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: _toppingUp ? null : () => _topUp(amount.cents),
+                                    child: Text(amount.label),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Test top-up — no real payment is collected yet.',
+                            style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                          if (_recentUsage.isNotEmpty) ...[
+                            const SizedBox(height: 14),
+                            Text('Recent usage', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                            const SizedBox(height: 6),
+                            for (final entry in _recentUsage) _UsageRow(entry: entry),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                if (_backend != 'local' && _backend != 'hosted') ...[
                   const SizedBox(height: 10),
                   TextField(
                     controller: _apiKeyController,
@@ -654,6 +801,46 @@ class _ModelOptionCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// One row of the hosted tier's "Recent usage" list — a LedgerEntry.public()
+/// dict (see server/domains/billing/models.py), kind == "usage" only.
+class _UsageRow extends StatelessWidget {
+  const _UsageRow({required this.entry});
+
+  final Map<String, dynamic> entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final provider = entry['provider'] as String? ?? '?';
+    final totalCents = -(entry['amount_cents'] as int? ?? 0);
+    final createdAt = DateTime.tryParse(entry['created_at'] as String? ?? '')?.toLocal();
+    final inputTokens = entry['input_tokens'] as int? ?? 0;
+    final outputTokens = entry['output_tokens'] as int? ?? 0;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(provider, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+                Text(
+                  '$inputTokens in / $outputTokens out'
+                  '${createdAt == null ? '' : ' · ${createdAt.month}/${createdAt.day} ${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}'}',
+                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
+          ),
+          Text('-\$${(totalCents / 100).toStringAsFixed(2)}', style: theme.textTheme.bodySmall),
+        ],
       ),
     );
   }

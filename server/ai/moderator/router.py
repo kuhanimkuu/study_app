@@ -17,9 +17,11 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ... import engines
 from ...core import security
-from ...core.model_config import ModelConfig, resolve_model_config
+from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
+from ...domains.billing import service as billing_service
 from ...domains.learning.router import get_concept_or_404
 from ..schemas import Block, TextBlock
 from .explain import decide_depth, generate_explanation
@@ -57,7 +59,16 @@ async def explain_concept(
     await db.commit()
     depth = decide_depth(state)
 
-    model_config = resolve_model_config(payload.model_config_ if payload else None, current_user)
+    model_config = await resolve_model_config_async(payload.model_config_ if payload else None, current_user, db)
     text, reasoning = await generate_explanation(concept, state, depth, model_config)
+
+    # See explain.py's generate_explanation doc comment — "_billed_usage"
+    # is its internal write-back, not part of this endpoint's response.
+    hosted_provider = model_config.get("hosted_provider")
+    if hosted_provider:
+        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
+        usage = model_config.get("_billed_usage")
+        await billing_service.charge_for_usage(db, current_user["id"], hosted_provider, model_name, usage)
+        await db.commit()
 
     return ExplainResponse(blocks=[TextBlock(content=text, source="moderator")], depth=depth, reasoning=reasoning)

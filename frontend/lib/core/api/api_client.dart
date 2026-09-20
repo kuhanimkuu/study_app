@@ -234,10 +234,12 @@ class ApiClient {
     String? text,
     List<int>? fileBytes,
     String? filename,
+    String? url,
   }) async {
     final request = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/projects/$slug/material'));
     request.headers.addAll(_authHeaders);
     if (text != null) request.fields['text'] = text;
+    if (url != null) request.fields['url'] = url;
     if (fileBytes != null && filename != null) {
       request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: filename));
     }
@@ -860,6 +862,39 @@ class ApiClient {
     };
     final res = await http
         .patch(Uri.parse('$baseUrl/api/v1/personality'), headers: _jsonHeaders, body: jsonEncode(body))
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- billing: the hosted pay-as-you-go AI tier (blueprint Section
+  // 42.1). See server/domains/billing/ — Study OS's own pooled provider
+  // key, never a per-user provisioned one; `amount_cents`/`balance_cents`
+  // are integer cents throughout, matching the server's ledger model. ---
+
+  Future<Map<String, dynamic>> getBillingBalance() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/billing/balance'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// The only payment provider wired up server-side right now is a mock
+  /// that confirms instantly — see payment_provider.py. No real money
+  /// changes hands yet.
+  Future<Map<String, dynamic>> createTopup(int amountCents) async {
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl/api/v1/billing/topups'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'amount_cents': amountCents}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> listBillingUsage() async {
+    final res = await http
+        .get(Uri.parse('$baseUrl/api/v1/billing/usage'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }

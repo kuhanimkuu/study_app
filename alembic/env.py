@@ -22,6 +22,7 @@ from server.domains.knowledge import models as knowledge_models  # noqa: E402,F4
 from server.domains.learning import models as learning_models  # noqa: E402,F401
 from server.domains.assessment import models as assessment_models  # noqa: E402,F401
 from server.domains.planning import models as planning_models  # noqa: E402,F401
+from server.domains.billing import models as billing_models  # noqa: E402,F401
 from server.ai.memory import models as memory_models  # noqa: E402,F401
 from server.ai.personality import models as personality_models  # noqa: E402,F401
 from server.core.config import get_settings  # noqa: E402

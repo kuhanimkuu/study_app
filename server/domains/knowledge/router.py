@@ -164,36 +164,47 @@ async def add_material(
     slug: str,
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
+    url: str | None = Form(None),
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Extracts text from whichever of `file` (.pdf or .txt) or `text`
-    (pasted text) was sent, indexes it into this space via rag/projects
-    (JSON file, unchanged), and records a Material metadata row in
-    Postgres — new: the old version tracked zero metadata per upload."""
+    """Extracts text from whichever of `file` (.pdf or .txt), `text`
+    (pasted text), or `url` (a web page, fetched via the same web_input
+    engine chat's "add a link" attachment already uses) was sent, indexes
+    it into this space via rag/projects (JSON file, unchanged), and
+    records a Material metadata row in Postgres — new: the old version
+    tracked zero metadata per upload."""
     space = await get_space_or_404(db, current_user["id"], slug)
 
-    filename, mime_type, material_text = await _extract_material(file, text, current_user["id"], slug)
+    filename, mime_type, material_text, source_url = await _extract_material(file, text, url, current_user["id"], slug)
     if not material_text.strip():
         raise HTTPException(status_code=400, detail="no text content found in the upload")
 
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
     result = await engines.rag_projects.run(project=slug, material=[material_text], projects_dir=projects_dir)
 
-    db.add(Material(knowledge_space_id=space.id, filename=filename, mime_type=mime_type))
+    db.add(Material(knowledge_space_id=space.id, filename=filename, mime_type=mime_type, source_url=source_url))
     await db.commit()
 
     return result
 
 
 async def _extract_material(
-    file: UploadFile | None, text: str | None, user_id: int, slug: str
-) -> tuple[str, str, str]:
-    """Returns (filename, mime_type, extracted_text)."""
+    file: UploadFile | None, text: str | None, url: str | None, user_id: int, slug: str
+) -> tuple[str, str, str, str | None]:
+    """Returns (filename, mime_type, extracted_text, source_url)."""
     if text is not None and text.strip():
-        return "pasted_text.txt", "text/plain", text
+        return "pasted_text.txt", "text/plain", text, None
+
+    if url is not None and url.strip():
+        try:
+            fetched = await engines.web_input.run(content=url.strip())
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"could not fetch URL: {exc}") from exc
+        return url.strip(), "text/html", fetched["content"], fetched["source_url"]
+
     if file is None:
-        raise HTTPException(status_code=400, detail="either 'file' or 'text' is required")
+        raise HTTPException(status_code=400, detail="one of 'file', 'text', or 'url' is required")
 
     uploads_dir = Path(__file__).resolve().parent.parent.parent / "uploads" / "projects" / f"user_{user_id}"
     uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -207,10 +218,10 @@ async def _extract_material(
             extracted = await engines.pdf_input.run(content=str(dest))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"could not read PDF: {exc}") from exc
-        return filename, "application/pdf", extracted["content"]
+        return filename, "application/pdf", extracted["content"], None
 
     try:
-        return filename, "text/plain", dest.read_text(encoding="utf-8", errors="replace")
+        return filename, "text/plain", dest.read_text(encoding="utf-8", errors="replace"), None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read file as text: {exc}") from exc
 

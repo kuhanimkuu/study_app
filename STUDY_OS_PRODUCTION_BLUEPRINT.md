@@ -1555,6 +1555,34 @@ The project can revisit sustainability later if circumstances change.
 The current goal is product quality, learning utility, and real-world
 usage.
 
+## 42.1 Exception: hosted pay-as-you-go AI tier
+
+**Added 2026-09-20.** A single, explicit exception to the "no payment
+tiers" rule above: a metered, pay-as-you-go option for students who want
+a stronger hosted model but don't want to set up their own provider
+account. This is not a subscription tier, a credit system with expiring
+credits, or a feature paywall — it is one optional way to pay for usage
+of a specific capability (hosted AI), alongside the always-free local
+Qwen model and the always-free manual BYOK path (bring your own
+provider key, still fully supported, untouched by this addition).
+
+This exists because of a real constraint the original monetization-free
+stance didn't anticipate: most students don't know how to sign up for
+an Anthropic/OpenAI/DeepSeek developer account. Rather than provisioning
+and handing individual users a real provider API key on their behalf
+(originally proposed, found to conflict with Anthropic's and likely
+OpenAI's Terms of Service — see `STUDY_OS_PROGRESS.md`), Study OS holds
+its own pooled provider key(s) under its own agreement with each
+provider, and a user who chooses the hosted tier pays Study OS directly
+for metered usage. No raw provider key is ever provisioned for or shown
+to an individual user under this tier.
+
+Pricing is provider cost + a flat markup + a separately-tracked
+infrastructure surcharge (covering Study OS's own hosting costs) — see
+`server/domains/billing/pricing.py`. Everything else in this section
+still holds: no tier gates a core learning feature, and the free local
+model remains the default.
+
 ------------------------------------------------------------------------
 
 # 43. BYOK Philosophy

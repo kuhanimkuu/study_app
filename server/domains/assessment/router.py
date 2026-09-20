@@ -14,10 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ... import engines
 from ...ai.memory.service import create_episodic_memory
 from ...core import security
-from ...core.model_config import ModelConfig, resolve_model_config
+from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
+from ..billing import service as billing_service
 from ..learning.models import Concept
 from ..learning.router import get_concept_or_404, get_or_create_mastery
 from ..learning.scheduler import mastery_score, review_after_attempt, serialize_mastery
@@ -110,7 +112,7 @@ async def submit_attempt(
     # belong to another user's concept.
     concept = await get_concept_or_404(db, current_user["id"], question.concept_id)
 
-    model_config = resolve_model_config(payload.model_config_, current_user)
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
     try:
         is_correct, feedback, evaluated_by = await grade(question, payload.answer, model_config)
     except UnsupportedQuestionType as exc:
@@ -119,6 +121,16 @@ async def submit_attempt(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except GradingUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    # "_billed_usage" is grading.py's internal write-back (not part of this
+    # endpoint's response) for whether _grade_via_llm made a real provider
+    # call — see grading.py's _grade_via_llm doc comment. Only the hosted
+    # tier (model_config carries "hosted_provider") gets billed for it.
+    hosted_provider = model_config.get("hosted_provider")
+    if hosted_provider:
+        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
+        usage = model_config.get("_billed_usage")
+        await billing_service.charge_for_usage(db, current_user["id"], hosted_provider, model_name, usage)
 
     attempt = QuestionAttempt(
         user_id=current_user["id"],

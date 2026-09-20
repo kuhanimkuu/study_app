@@ -46,6 +46,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
 
   // --- Sources tab state ---
   final _materialController = TextEditingController();
+  final _linkController = TextEditingController();
   int? _chunkCount;
   bool _isAddingMaterial = false;
   String? _sourcesError;
@@ -151,6 +152,25 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
     try {
       final result = await widget.apiClient.addProjectMaterial(slug: widget.slug, text: text);
       _materialController.clear();
+      setState(() => _chunkCount = result['chunks'] as int?);
+      await _loadMaterials();
+    } on ApiException catch (e) {
+      setState(() => _sourcesError = e.message);
+    } finally {
+      if (mounted) setState(() => _isAddingMaterial = false);
+    }
+  }
+
+  Future<void> _addLink() async {
+    final url = _linkController.text.trim();
+    if (url.isEmpty) return;
+    setState(() {
+      _isAddingMaterial = true;
+      _sourcesError = null;
+    });
+    try {
+      final result = await widget.apiClient.addProjectMaterial(slug: widget.slug, url: url);
+      _linkController.clear();
       setState(() => _chunkCount = result['chunks'] as int?);
       await _loadMaterials();
     } on ApiException catch (e) {
@@ -326,6 +346,23 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
           label: const Text('Add text'),
         ),
         const Divider(height: 32),
+        TextField(
+          controller: _linkController,
+          keyboardType: TextInputType.url,
+          decoration: const InputDecoration(
+            labelText: 'Add a link',
+            hintText: 'https://...',
+            prefixIcon: Icon(Icons.link_outlined),
+          ),
+          onSubmitted: (_) => _isAddingMaterial ? null : _addLink(),
+        ),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: _isAddingMaterial ? null : _addLink,
+          icon: const Icon(Icons.add_link_outlined, size: 18),
+          label: const Text('Add link'),
+        ),
+        const Divider(height: 32),
         OutlinedButton.icon(
           onPressed: _isAddingMaterial ? null : _uploadFile,
           icon: const Icon(Icons.upload_file_outlined),
@@ -358,12 +395,19 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         else
           ..._materials!.map((raw) {
             final material = raw as Map<String, dynamic>;
+            final sourceUrl = material['source_url'] as String?;
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: ListItemCard(
-                icon: Icons.description_outlined,
+                icon: sourceUrl != null ? Icons.link_outlined : Icons.description_outlined,
+                // A link source's filename IS the URL (see router.py's
+                // _extract_material) — showing it again in the subtitle
+                // would just repeat the title, so this branch drops
+                // mime_type (always "text/html", not informative here).
                 title: material['filename'] as String,
-                subtitle: '${material['mime_type']} · ${material['created_at']}',
+                subtitle: sourceUrl != null
+                    ? material['created_at'] as String
+                    : '${material['mime_type']} · ${material['created_at']}',
               ),
             );
           }),
