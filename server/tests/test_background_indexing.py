@@ -130,3 +130,31 @@ async def test_startup_marks_interrupted_indexing_as_failed(client, user):
         m = await db.scalar(select(Material).where(Material.knowledge_space_id == space_id, Material.filename == "cut-off.pdf"))
         assert m.status == "failed"
         assert "upload it again" in m.error
+
+
+async def test_upload_after_a_disk_wipe_keeps_earlier_material(client, user):
+    """Upload A, lose the disk (Render restart), upload B: both must stay
+    searchable. Before the fix, B's job started a fresh on-disk index
+    and saved it over the durable copy, silently dropping A."""
+    import shutil
+
+    from server.domains.identity.router import _RAG_PROJECTS_ROOT
+
+    h, slug = user["headers"], user["slug"]
+    await client.post(f"/api/projects/{slug}/material", data={"text": "Osmosis moves water across membranes. " * 40}, headers=h)
+    await _wait_for(client, user, "pasted_text.txt")
+
+    user_id = (await client.get("/api/auth/me", headers=h)).json()["id"]
+    shutil.rmtree(_RAG_PROJECTS_ROOT / f"user_{user_id}")
+
+    await client.post(
+        f"/api/projects/{slug}/material",
+        files={"file": ("golgi.txt", b"The Golgi apparatus packages proteins. " * 40, "text/plain")},
+        headers=h,
+    )
+    await _wait_for(client, user, "golgi.txt")
+    shutil.rmtree(_RAG_PROJECTS_ROOT / f"user_{user_id}")  # and once more, so search must restore from Postgres
+
+    for q in ["osmosis", "Golgi"]:
+        results = (await client.get(f"/api/v1/knowledge-spaces/{slug}/search", params={"q": q}, headers=h)).json()["results"]
+        assert any(q.lower() in r["chunk"].lower() for r in results), f"lost {q!r} material"

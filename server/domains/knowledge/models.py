@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...db.base import Base
@@ -75,6 +75,15 @@ class Material(Base):
     # server and fail its health check. `error` says why a "failed" one did.
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="indexed")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The original upload, kept in Postgres so it can be opened from the
+    # app (a host's disk is wiped on restart). Null for a web link (opened
+    # via source_url) and for uploads from before 2026-10-07.
+    file_id: Mapped[int | None] = mapped_column(ForeignKey("stored_files.id", ondelete="SET NULL"), nullable=True)
+    # Which slice of the space's index this upload's chunks occupy, so
+    # deleting it removes exactly them (no re-embedding). Null for uploads
+    # from before 2026-10-07 — see router.py's delete_material.
+    chunk_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # The source URL this material was fetched from, when added via a link
     # (router.py's add_material `url` field) — null for pasted text or an
     # uploaded file, which have no URL of their own.
@@ -92,6 +101,7 @@ class Material(Base):
             "mime_type": self.mime_type,
             "status": self.status,
             "error": self.error,
+            "file_id": self.file_id,
             "source_url": self.source_url,
             "created_at": self.created_at.isoformat(),
         }
@@ -142,6 +152,9 @@ class GeneratedArtifact(Base):
     doc_type: Mapped[str] = mapped_column(String(50), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     url_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    # The PDF itself, in Postgres since 2026-10-07 — url_path points at
+    # the host's disk, which Render wipes on every restart.
+    file_id: Mapped[int | None] = mapped_column(ForeignKey("stored_files.id", ondelete="SET NULL"), nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
@@ -154,6 +167,7 @@ class GeneratedArtifact(Base):
             "doc_type": self.doc_type,
             "title": self.title,
             "url": self.url_path,
+            "file_id": self.file_id,
             "created_at": self.created_at.isoformat(),
         }
 
@@ -179,4 +193,23 @@ class ProjectIndex(Base):
     data: Mapped[str] = mapped_column(Text, nullable=False)
     updated_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class StoredFile(Base):
+    """Bytes of a file the student can open later — an uploaded original or
+    a Studio-generated PDF (2026-10-07). In Postgres rather than on disk
+    because the Render host's disk is wiped on every restart. Served by
+    files_router.py through a short-lived signed link."""
+
+    __tablename__ = "stored_files"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
     )

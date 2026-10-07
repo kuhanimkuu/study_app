@@ -66,6 +66,7 @@ from .core.config import get_settings
 from .domains.assessment.router import router as assessment_router
 from .domains.billing.router import router as billing_router
 from .domains.identity.router import router as identity_router
+from .domains.knowledge.files_router import router as files_router
 from .domains.knowledge.notes_router import router as notes_router
 from .domains.knowledge.router import mark_interrupted_indexing_failed
 from .domains.knowledge.router import router as knowledge_router
@@ -109,6 +110,7 @@ app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
 app.include_router(health.router)
 app.include_router(identity_router)
 app.include_router(knowledge_router)
+app.include_router(files_router)
 app.include_router(notes_router)
 app.include_router(search_router)
 app.include_router(ask.router)

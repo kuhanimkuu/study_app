@@ -279,6 +279,26 @@ class ApiClient {
     return _decode(res);
   }
 
+  /// Removes an upload and exactly the search content it added (see the
+  /// server's delete_material for the one case it refuses, with a reason).
+  Future<Map<String, dynamic>> deleteMaterial({required String slug, required int materialId}) async {
+    final res = await http
+        .delete(Uri.parse('$baseUrl/api/projects/$slug/materials/$materialId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- stored files (uploaded originals, Studio PDFs; 2026-10-07) ---
+
+  /// A short-lived absolute link the phone's browser / PDF viewer can open
+  /// without the app's auth header — see server files_router.py.
+  Future<Uri> fileLink(int fileId) async {
+    final res = await http
+        .post(Uri.parse('$baseUrl/api/files/$fileId/link'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return Uri.parse('$baseUrl${_decode(res)['url']}');
+  }
+
   // --- studio (generated documents over a project's material) ---
 
   Future<Map<String, dynamic>> generateStudioDoc({

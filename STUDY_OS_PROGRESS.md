@@ -826,3 +826,22 @@ After the memory fix deployed, the upload still failed; Render alerted `Get "htt
 **Verified:** `test_background_indexing.py` (4): upload returns `indexing` immediately and **`/api/health` answers in < 2 s while indexing is still running**, then becomes searchable; an unreadable PDF ends `failed` with a reason; two uploads both land; startup marks interrupted ones failed. pytest **160/160**, `flutter test` 29/29, `flutter analyze` 0.
 
 **Limits:** a job interrupted by a restart isn't retried automatically (the file is on ephemeral disk) — the student re-uploads. Scanned PDFs (no text layer) still fail at upload with a clear reason; OCR for uploads isn't wired.
+
+### 2026-10-07 (later) — DONE: open/download Studio PDFs and uploads, delete uploads, project chat answers, nav-bar overlap
+
+User, after a successful upload: generated study guide can't be downloaded; uploaded file can't be viewed or deleted; project chat "isn't fun like the general chat"; screens overlap the Android nav bar.
+
+**Findings:** Studio rows had no open action at all; uploaded originals were never kept (and both they and Studio PDFs lived on Render's wiped disk); there was no material delete (index chunks weren't tagged per upload); project chat returned only 3 raw search passages — no AI answer; Flutter's target SDK (Android 15) forces edge-to-edge and only a few screens had SafeAreas.
+
+**Also found and fixed a data-loss bug in today's background indexing:** the job didn't restore the index from Postgres before appending, so an upload after a Render restart would start a fresh index and overwrite the durable copy — silently dropping every earlier upload. Regression test fails without the fix ("lost 'osmosis' material"), passes with it.
+
+**Shipped:**
+- `stored_files` table (migration `c5f2a8e71d03`, 25 MB cap) holding upload originals (pasted text as .txt) and Studio PDFs; `materials.file_id/chunk_start/chunk_count`, `generated_artifacts.file_id`.
+- `files_router.py`: `POST /api/files/{id}/link` → 15-min signed link; `GET /api/files/{id}?token=` serves it inline. Tokens signed with a key derived from (not equal to) the login secret, scoped to one file — tested that a file link can't log in and a login token isn't a file link.
+- `DELETE /api/projects/{slug}/materials/{id}`: removes exactly the upload's chunk slice (no re-embedding), shifts later slices, deletes its stored file; uploads from before slice tracking can be removed only when they're the space's only indexed material (409 with a reason otherwise). Project delete and Studio delete also remove stored files.
+- Project chat: retrieves passages, then the user's model writes a grounded answer citing [Source n], passages listed below; without a model, the passages plus the set-up-a-key card.
+- Flutter: Studio rows tap/open; Sources rows tap to open (file or link), delete with confirmation; project chat reuses the main chat's ChatInputBar (attach = add material), WorkingIndicator, and a welcome state with suggestion chips; global `MaterialApp.builder` SafeArea (bottom) so no screen sits under the nav bar.
+
+**Verified:** pytest **170/170** (new `test_project_files.py` 7, project-chat answer/fallback 2, disk-wipe-then-upload 1); found and mocked an existing test that had started calling the real local model (suite went 70 s → 173 s; back to 75 s). `flutter analyze` 0, `flutter test` 29/29. No leaked index dirs.
+
+**Limits:** uploads/Studio PDFs from before this deploy have no stored copy (re-upload / regenerate to open them); stored files count against Render's free 1 GB Postgres; on-device verification of opening a PDF link via the phone's viewer is pending the user.

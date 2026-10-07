@@ -26,14 +26,15 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
 from ...core import security
 from ...db.session import async_session, get_db
 from . import index_store
-from .models import GeneratedArtifact, KnowledgeSpace, Material
+from .files_router import store_file
+from .models import GeneratedArtifact, KnowledgeSpace, Material, ProjectIndex, StoredFile
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -132,7 +133,16 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     space = await get_space_or_404(db, current_user["id"], slug)
+    # Stored files hang off the user, not the space (SET NULL on the
+    # material/artifact side), so they'd outlive the project otherwise.
+    file_ids = [
+        *(await db.scalars(select(Material.file_id).where(Material.knowledge_space_id == space.id))).all(),
+        *(await db.scalars(select(GeneratedArtifact.file_id).where(GeneratedArtifact.knowledge_space_id == space.id))).all(),
+    ]
     await db.delete(space)
+    file_ids = [f for f in file_ids if f is not None]
+    if file_ids:
+        await db.execute(delete(StoredFile).where(StoredFile.id.in_(file_ids)))
     await db.commit()
 
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
@@ -209,9 +219,17 @@ async def add_material(
         file, text, url, current_user["id"], slug
     )
 
+    # Keep the original so it can be opened from Sources later (a web link
+    # opens its source_url instead).
+    stored = None
+    if pdf_path is not None:
+        stored = await store_file(db, current_user["id"], filename, mime_type, pdf_path.read_bytes())
+    elif source_url is None and material_text is not None:
+        stored = await store_file(db, current_user["id"], filename, "text/plain; charset=utf-8", material_text.encode("utf-8"))
+
     material = Material(
         knowledge_space_id=space.id, filename=filename, mime_type=mime_type,
-        source_url=source_url, status="indexing",
+        source_url=source_url, status="indexing", file_id=stored.id if stored else None,
     )
     db.add(material)
     await db.commit()
@@ -294,7 +312,14 @@ async def _index_material(
                     "no text found in this file — if it's a scanned PDF (photos of pages), "
                     "uploads can't read it yet; try a text-based PDF or paste the text"
                 )
+            # rag/projects APPENDS to the on-disk index — if a restart wiped
+            # the file, it would start a fresh index holding only this
+            # upload, and save_index() below would then overwrite the
+            # durable copy with it, losing every earlier upload.
+            async with async_session() as restore_db:
+                await index_store.ensure_index_file(restore_db, user_id, slug)
             projects_dir = engines.moderator._user_projects_dir(user_id)
+            chunk_start = _chunk_count(projects_dir, slug)
             result = await engines.rag_projects.run(project=slug, material=[text], projects_dir=projects_dir)
             chunks = result["chunks"]
         except Exception as exc:
@@ -309,10 +334,75 @@ async def _index_material(
                     await index_store.save_index(db, space_id, user_id, slug)
                 material.status = "failed" if error else "indexed"
                 material.error = error
+                if error is None:
+                    material.chunk_start = chunk_start
+                    material.chunk_count = chunks - chunk_start
                 await db.commit()
         except Exception:
             logger.exception("could not record indexing result for material %s", material_id)
         return chunks
+
+
+@router.delete("/api/projects/{slug}/materials/{material_id}")
+async def delete_material(
+    slug: str,
+    material_id: int,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Removes an upload and exactly the index chunks it added (recorded as
+    chunk_start/chunk_count when it was indexed) — no re-embedding; later
+    uploads' slices shift down. Uploads from before that was recorded can
+    only be removed when they're the space's only indexed material (then
+    the whole index goes); otherwise their chunks can't be told apart from
+    the others', and saying so beats deleting the wrong content."""
+    space = await get_space_or_404(db, current_user["id"], slug)
+    material = await db.scalar(
+        select(Material).where(Material.id == material_id, Material.knowledge_space_id == space.id)
+    )
+    if material is None:
+        raise HTTPException(status_code=404, detail="no such material in this project")
+    if material.status == "indexing":
+        raise HTTPException(status_code=409, detail="this file is still being indexed — try again once it's ready")
+
+    async with _index_lock():
+        if material.status == "indexed":
+            await index_store.ensure_index_file(db, current_user["id"], slug)
+            projects_dir = engines.moderator._user_projects_dir(current_user["id"])
+            index_path = projects_dir / f"{slug}.json"
+            others = (
+                await db.scalars(
+                    select(Material).where(
+                        Material.knowledge_space_id == space.id, Material.status == "indexed", Material.id != material.id
+                    )
+                )
+            ).all()
+            if material.chunk_start is None:
+                if others:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="this file was uploaded before individual files could be removed, so its content "
+                        "can't be separated from the others' — delete and recreate the project to remove it",
+                    )
+                index_path.unlink(missing_ok=True)
+                await db.execute(delete(ProjectIndex).where(ProjectIndex.knowledge_space_id == space.id))
+            elif index_path.exists():
+                index = json.loads(index_path.read_text(encoding="utf-8"))
+                start, count = material.chunk_start, material.chunk_count or 0
+                index["chunks"] = index["chunks"][:start] + index["chunks"][start + count:]
+                index["vectors"] = index["vectors"][:start] + index["vectors"][start + count:]
+                index_path.write_text(json.dumps(index), encoding="utf-8")
+                for other in others:
+                    if other.chunk_start is not None and other.chunk_start > start:
+                        other.chunk_start -= count
+                await index_store.save_index(db, space.id, current_user["id"], slug)
+
+        file_id = material.file_id
+        await db.delete(material)
+        if file_id is not None:
+            await db.execute(delete(StoredFile).where(StoredFile.id == file_id))
+        await db.commit()
+    return {"deleted": material_id}
 
 
 async def mark_interrupted_indexing_failed() -> None:
@@ -378,7 +468,11 @@ async def generate_studio_doc(
         raise HTTPException(status_code=500, detail=f"could not generate document: {exc}") from exc
     url_path = f"/generated/user_{current_user['id']}/{filename}"
 
-    artifact = GeneratedArtifact(knowledge_space_id=space.id, doc_type=payload.doc_type, title=title, url_path=url_path)
+    stored = await store_file(db, current_user["id"], f"{title}.pdf", "application/pdf", dest.read_bytes())
+    artifact = GeneratedArtifact(
+        knowledge_space_id=space.id, doc_type=payload.doc_type, title=title, url_path=url_path,
+        file_id=stored.id if stored else None,
+    )
     db.add(artifact)
     await db.commit()
     await db.refresh(artifact)
@@ -419,7 +513,10 @@ async def delete_studio_doc(
         raise HTTPException(status_code=404, detail="artifact not found")
 
     fs_path = _user_generated_dir(current_user["id"]) / Path(artifact.url_path).name
+    file_id = artifact.file_id
     await db.delete(artifact)
+    if file_id is not None:
+        await db.execute(delete(StoredFile).where(StoredFile.id == file_id))
     await db.commit()
 
     fs_path.unlink(missing_ok=True)

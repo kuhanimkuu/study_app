@@ -246,6 +246,7 @@ async def test_material_survives_a_wiped_disk(client, space, monkeypatch):
     assert found["results"], "search lost the material after the disk wipe"
 
     await _wipe_index_dir(client, h)
+    _mock_model(monkeypatch, "Mitochondria make ATP [Source 1].")  # project chat now writes an answer
     chat = await client.post(
         "/api/ask/project", json={"project": slug, "query": "what makes ATP?", "session_id": "wipe"}, headers=h
     )
@@ -286,3 +287,37 @@ async def test_index_from_before_the_table_existed_is_backfilled(client, space):
     await _wipe_index_dir(client, h)
     found = (await client.get(f"/api/v1/knowledge-spaces/{slug}/search", params={"q": "ATP"}, headers=h)).json()
     assert found["results"]
+
+
+
+# --- project chat answers from the material (2026-10-07) ---
+
+
+async def test_project_chat_writes_a_grounded_answer_with_sources(client, space, monkeypatch):
+    captured: list = []
+    _mock_model(monkeypatch, "Mitochondria produce ATP through cellular respiration [Source 1].", captured)
+    r = await client.post(
+        "/api/ask/project",
+        json={"project": space["slug"], "query": "what makes ATP?", "session_id": "answer"},
+        headers=space["headers"],
+    )
+    blocks = r.json()["blocks"]
+    assert blocks[0] == {"type": "text", "content": "Mitochondria produce ATP through cellular respiration [Source 1].", "source": "moderator"}
+    assert [b["type"] for b in blocks[1:]] and all(b["type"] == "source" for b in blocks[1:])
+    # Grounded: the retrieved passage and the question are in the prompt.
+    assert "powerhouse of the cell" in captured[0]["prompt"] and "what makes ATP?" in captured[0]["prompt"]
+
+
+async def test_project_chat_without_a_model_still_shows_the_passages(client, space, monkeypatch):
+    async def fail(**kwargs):
+        raise ModuleNotFoundError("No module named 'torch'")
+
+    monkeypatch.setattr(engines.model_router, "run", fail)
+    r = await client.post(
+        "/api/ask/project",
+        json={"project": space["slug"], "query": "what makes ATP?", "session_id": "nomodel"},
+        headers=space["headers"],
+    )
+    assert r.status_code == 200, r.text
+    types = [b["type"] for b in r.json()["blocks"]]
+    assert "source" in types and types[-1] == "model_unavailable"

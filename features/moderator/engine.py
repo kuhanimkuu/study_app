@@ -498,7 +498,7 @@ async def _route(
     if input_type == "image":
         return await _route_image(content)
     if input_type == "project":
-        return await _route_project(content, project, query, user_id)
+        return await _route_project(content, project, query, user_id, model_config)
     if input_type == "text":
         return await _route_text(
             content, task, detected, requested_format, params, model_config, user_id, local_events,
@@ -580,7 +580,7 @@ def _user_projects_dir(user_id: int | None) -> Path:
 
 
 async def _route_project(
-    content: str, project: str | None, query: str | None, user_id: int | None
+    content: str, project: str | None, query: str | None, user_id: int | None, model_config: dict | None = None
 ) -> tuple[list[dict], str, str]:
     """Composes rag/projects' storage (read directly, same convention as
     input_pipeline/project_material) + rag/semantic_search — mirrors
@@ -635,10 +635,34 @@ async def _route_project(
             query,
         )
 
-    blocks = [{"type": "text", "content": f"Searched project '{project}' for '{query}'.", "source": "moderator"}]
-    for r in results:
-        blocks.append({"type": "source", "content": r["chunk"], "source": f"{project} (score {r['score']:.2f})"})
-    return blocks, "semantic_search", query
+    sources = [
+        {"type": "source", "content": r["chunk"], "source": f"Source {i} · match {r['score']:.0%}"}
+        for i, r in enumerate(results, start=1)
+    ]
+    # A written answer grounded in the retrieved passages (2026-10-07) —
+    # this route used to return only the raw passages, which read as a
+    # search engine rather than the tutor the main chat is. If no model is
+    # available the passages are still worth showing, followed by the
+    # usual set-up-a-key card instead of failing the whole reply.
+    context = "\n\n".join(f"[Source {i}] {r['chunk']}" for i, r in enumerate(results, start=1))
+    prompt = (
+        "You are a friendly study tutor. Answer the student's question using ONLY the sources below "
+        "from their own course material. Be clear and concise, use short paragraphs or bullet points, "
+        "and cite sources inline like [Source 1]. If the sources don't contain the answer, say so "
+        "honestly and suggest what to look up.\n\n"
+        f"SOURCES:\n{context}\n\nQUESTION: {query}"
+    )
+    try:
+        answer = (await _call_model_or_unavailable(prompt, 500, model_config or {"backend": "local", "tier": "tiny"})).strip()
+    except ModelUnavailable as exc:
+        unavailable = {"type": "model_unavailable", "message": exc.message, "attempted_backend": exc.attempted_backend}
+        if exc.attempted_backend == "local":
+            unavailable.update(suggested_backend="deepseek", suggested_model="deepseek-chat")
+        intro = {"type": "text", "content": f"Here's what your material says about **{query}**:", "source": "moderator"}
+        return [intro, *sources, unavailable], "semantic_search", query
+    if not answer or _REFUSAL_RE.match(answer):
+        answer = f"Here's what your material says about **{query}**:"
+    return [{"type": "text", "content": answer, "source": "moderator"}, *sources], "project_answer", query
 
 
 def _load_project_index(project: str, projects_dir: Path) -> dict | None:

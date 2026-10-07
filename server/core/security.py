@@ -102,3 +102,29 @@ async def get_current_user(
         "display_name": user.display_name,
         "encryption_key": user.encryption_key,
     }
+
+
+# --- signed file links (2026-10-07) ---
+# A phone's browser / PDF viewer can't send the app's Authorization header,
+# so opening an uploaded or generated file uses a short-lived link instead.
+# Signed with a key DERIVED from the login secret (not the secret itself),
+# so a file token can never be accepted as a login token, and scoped to one
+# file id.
+_FILE_TOKEN_SECRET = _SECRET + ":file-links"
+FILE_TOKEN_TTL_SECONDS = 15 * 60
+
+
+def create_file_token(file_id: int, user_id: int) -> str:
+    payload = {"file": file_id, "user": user_id, "exp": int(time.time()) + FILE_TOKEN_TTL_SECONDS}
+    return jwt.encode(payload, _FILE_TOKEN_SECRET, algorithm=_ALGORITHM)
+
+
+def decode_file_token(token: str, file_id: int) -> int:
+    """Returns the owning user id, or raises 401/403."""
+    try:
+        payload = jwt.decode(token, _FILE_TOKEN_SECRET, algorithms=[_ALGORITHM])
+    except jwt.PyJWTError as exc:
+        raise HTTPException(status_code=401, detail="this link has expired — open the file again from the app") from exc
+    if payload.get("file") != file_id:
+        raise HTTPException(status_code=403, detail="this link is for a different file")
+    return int(payload["user"])

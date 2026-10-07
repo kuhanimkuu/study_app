@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
@@ -9,7 +10,9 @@ import '../../../../core/storage/local_db.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/list_item_card.dart';
 import '../../../chat/models/chat_message.dart';
+import '../../../chat/presentation/widgets/chat_input_bar.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
+import '../../../chat/presentation/widgets/working_indicator.dart';
 import '../../../knowledge/notes/presentation/screens/notes_list_screen.dart';
 import '../../../knowledge/search/presentation/screens/knowledge_search_screen.dart';
 import '../../../learning/concepts/presentation/screens/concepts_list_screen.dart';
@@ -144,6 +147,57 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       setState(() => _studioError = e.message);
     } finally {
       if (mounted) setState(() => _isGenerating = false);
+    }
+  }
+
+  /// Opens a stored file (upload or Studio PDF) in the phone's own viewer
+  /// via a short-lived signed link — the viewer can't send our auth header.
+  Future<void> _openStoredFile(int fileId) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final uri = await widget.apiClient.fileLink(fileId);
+      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+        messenger.showSnackBar(const SnackBar(content: Text('No app on this phone can open this file.')));
+      }
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _openMaterial(Map<String, dynamic> material) async {
+    final fileId = material['file_id'] as int?;
+    final sourceUrl = material['source_url'] as String?;
+    if (fileId != null) return _openStoredFile(fileId);
+    if (sourceUrl != null) {
+      await launchUrl(Uri.parse(sourceUrl), mode: LaunchMode.externalApplication);
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('This file was uploaded before files were kept for viewing — it\'s still searchable, '
+          'but re-upload it to be able to open it.'),
+    ));
+  }
+
+  Future<void> _deleteMaterial(Map<String, dynamic> material) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove this file?'),
+        content: Text('"${material['filename']}" and everything learned from it will be removed from this project\'s '
+            'search, chat and generation.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Remove')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await widget.apiClient.deleteMaterial(slug: widget.slug, materialId: material['id'] as int);
+      await _loadMaterials();
+      await _loadChunkCount();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message), duration: const Duration(seconds: 6)));
     }
   }
 
@@ -445,10 +499,69 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                         ? material['created_at'] as String
                         : '${material['mime_type']} · ${material['created_at']}',
                 subtitleMaxLines: status == 'failed' ? 3 : 1,
-                trailing: _MaterialStatusBadge(status: status),
+                onTap: status == 'failed' ? null : () => _openMaterial(material),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _MaterialStatusBadge(status: status),
+                    if (status != 'indexing')
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline),
+                        tooltip: 'Remove',
+                        onPressed: () => _deleteMaterial(material),
+                      ),
+                  ],
+                ),
               ),
             );
           }),
+      ],
+    );
+  }
+
+  static const _projectChatSuggestions = [
+    'Summarise the main ideas',
+    'What key terms should I know?',
+    'Explain the hardest part simply',
+    'What might come up in an exam?',
+  ];
+
+  void _askSuggestion(String question) {
+    _chatController.text = question;
+    _sendQuery();
+  }
+
+  Widget _buildChatWelcome(BuildContext context) {
+    final theme = Theme.of(context);
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+      children: [
+        Center(
+          child: Container(
+            width: 72,
+            height: 72,
+            decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
+            child: const Icon(Icons.forum_rounded, color: Colors.white, size: 34),
+          ),
+        ),
+        const SizedBox(height: 16),
+        Text('Ask your material', textAlign: TextAlign.center, style: theme.textTheme.titleMedium),
+        const SizedBox(height: 6),
+        Text(
+          'Answers come from this project\'s sources, with the passages they\'re based on.',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 20),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (final q in _projectChatSuggestions)
+              ActionChip(label: Text(q), onPressed: _isAsking ? null : () => _askSuggestion(q)),
+          ],
+        ),
       ],
     );
   }
@@ -458,7 +571,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       children: [
         Expanded(
           child: _messages.isEmpty
-              ? const EmptyState(icon: Icons.chat_outlined, message: 'Ask a question about this project\'s material.')
+              ? _buildChatWelcome(context)
               : ListView.builder(
                   controller: _chatScrollController,
                   padding: const EdgeInsets.all(12),
@@ -470,52 +583,14 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                   ),
                 ),
         ),
-        if (_isAsking) const LinearProgressIndicator(minHeight: 2),
-        // SafeArea here (unlike the main ChatScreen, which gets this for
-        // free from the shared ChatInputBar widget — see that widget's
-        // own SafeArea) — without it this bar sits flush against the
-        // bottom of the screen and gets obscured by the Android
-        // navigation bar. Found via real device testing.
-        SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 44),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: Theme.of(context).colorScheme.outline),
-                    ),
-                    child: TextField(
-                      controller: _chatController,
-                      decoration: const InputDecoration(
-                        hintText: 'Ask about this project...',
-                        border: InputBorder.none,
-                        enabledBorder: InputBorder.none,
-                        focusedBorder: InputBorder.none,
-                        filled: false,
-                        contentPadding: EdgeInsets.symmetric(vertical: 12),
-                      ),
-                      onSubmitted: (_) => _sendQuery(),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Container(
-                  decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_upward_rounded, color: Colors.white),
-                    onPressed: _sendQuery,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        // Same pieces as the main ChatScreen (2026-10-07) — this tab used
+        // to have its own plainer input and a bare progress line.
+        if (_isAsking) const WorkingIndicator(),
+        ChatInputBar(
+          controller: _chatController,
+          onSend: _sendQuery,
+          // In a project, "attach" means adding material to it.
+          onAttachmentTap: _uploadFile,
         ),
       ],
     );
@@ -566,15 +641,29 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                     final artifact = _artifacts![index] as Map<String, dynamic>;
                     final docType = artifact['doc_type'] as String;
                     final url = artifact['url'] as String;
+                    final fileId = artifact['file_id'] as int?;
+                    // Older artifacts (before 2026-10-07) only exist on the
+                    // server's disk, which a restart wipes — try the old
+                    // URL for those.
+                    Future<void> open() => fileId != null
+                        ? _openStoredFile(fileId)
+                        : launchUrl(Uri.parse('${widget.apiClient.baseUrl}$url'), mode: LaunchMode.externalApplication);
                     return ListItemCard(
                       icon: Icons.picture_as_pdf_outlined,
                       iconColor: Theme.of(context).colorScheme.secondary,
                       title: artifact['title'] as String? ?? _docTypeLabels[docType] ?? docType,
-                      subtitle: '${widget.apiClient.baseUrl}$url · no inline viewer yet, file is real and downloadable',
-                      subtitleMaxLines: 2,
-                      trailing: IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        onPressed: () => _deleteArtifact(artifact['id'] as int),
+                      subtitle: 'PDF · tap to open or download',
+                      onTap: open,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(icon: const Icon(Icons.open_in_new), tooltip: 'Open', onPressed: open),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline),
+                            tooltip: 'Delete',
+                            onPressed: () => _deleteArtifact(artifact['id'] as int),
+                          ),
+                        ],
                       ),
                     );
                   },

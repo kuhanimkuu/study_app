@@ -30,6 +30,18 @@ class StudyOsApp extends StatelessWidget {
       title: 'Study OS',
       theme: studyOsLightTheme,
       darkTheme: studyOsDarkTheme,
+      // Android 15+ (this app's target SDK) forces edge-to-edge: every
+      // screen draws behind the system navigation bar, and only the few
+      // that wrapped themselves in a SafeArea kept their bottom content
+      // (buttons, list ends, input bars) clear of it — reported from the
+      // user's phone 2026-10-07. Insetting once here keeps every screen,
+      // including ones added later, above the nav bar; screens below see
+      // zero bottom padding, so their own SafeAreas don't double it. The
+      // strip behind the nav bar takes the scaffold colour.
+      builder: (context, child) => ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: SafeArea(top: false, left: false, right: false, child: child!),
+      ),
       home: AuthGate(authService: authService),
     );
   }
