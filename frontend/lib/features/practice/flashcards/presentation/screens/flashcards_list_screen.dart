@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../core/api/api_client.dart';
 import '../../../../../core/errors/error_presentation.dart';
+import '../../../../../core/widgets/ai_generate_button.dart';
 import '../../../../../core/widgets/async_list_view.dart';
 import '../../../../../core/widgets/list_item_card.dart';
 import 'flashcard_review_screen.dart';
@@ -118,14 +119,29 @@ class _FlashcardsListScreenState extends State<FlashcardsListScreen> {
         error: _error,
         items: _flashcards,
         onRefresh: _load,
-        emptyMessage: 'No flashcards yet. Tap + to add one.',
+        emptyMessage: 'No flashcards yet. Generate them from this project\'s sources, or tap + to add one.',
         emptyIcon: Icons.style_outlined,
         header: Padding(
           padding: const EdgeInsets.all(16),
-          child: OutlinedButton.icon(
-            onPressed: (_flashcards ?? []).isEmpty ? null : _review,
-            icon: const Icon(Icons.style_outlined),
-            label: const Text('Review due cards'),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              AiGenerateButton(
+                label: 'Generate from material',
+                onGenerate: () async => generatedSummary(
+                  await widget.apiClient.generateFlashcards(widget.slug),
+                  'flashcards',
+                  'flashcard',
+                ),
+                onDone: _load,
+              ),
+              OutlinedButton.icon(
+                onPressed: (_flashcards ?? []).isEmpty ? null : _review,
+                icon: const Icon(Icons.style_outlined),
+                label: const Text('Review due cards'),
+              ),
+            ],
           ),
         ),
         itemBuilder: (context, flashcard) => ListItemCard(

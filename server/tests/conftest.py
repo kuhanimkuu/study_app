@@ -28,3 +28,45 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _remove_rag_dirs_of_deleted_test_users():
+    """Most fixtures clean up with a raw `delete(User)` (cascades every
+    table) — but a user's RAG index lives on disk under
+    features/rag/projects/projects/user_<id>/, outside the cascade, so
+    every suite run used to leave ~4 orphaned directories behind (found
+    2026-10-07: 24 accumulated over two days). Only directories that
+    appear *during this run* and whose user no longer exists are removed —
+    anything present before the run is never touched."""
+    import asyncio
+    import re
+    import shutil
+
+    import asyncpg
+
+    from server.core.config import get_settings
+    from server.domains.identity.router import _RAG_PROJECTS_ROOT
+
+    def _user_dirs() -> set[str]:
+        if not _RAG_PROJECTS_ROOT.exists():
+            return set()
+        return {p.name for p in _RAG_PROJECTS_ROOT.iterdir() if p.is_dir() and re.fullmatch(r"user_\d+", p.name)}
+
+    before = _user_dirs()
+    yield
+    created = _user_dirs() - before
+    if not created:
+        return
+
+    async def _existing_ids() -> set[int]:
+        conn = await asyncpg.connect(re.sub(r"\+asyncpg", "", get_settings().database_url))
+        try:
+            return {r["id"] for r in await conn.fetch("select id from users")}
+        finally:
+            await conn.close()
+
+    alive = asyncio.run(_existing_ids())
+    for name in created:
+        if int(name[5:]) not in alive:
+            shutil.rmtree(_RAG_PROJECTS_ROOT / name, ignore_errors=True)

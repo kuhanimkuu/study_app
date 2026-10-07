@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'blocks/animation_block.dart';
 import 'blocks/clarification_block.dart';
+import 'blocks/diagram_block.dart';
 import 'blocks/equation_block.dart';
 import 'blocks/error_block.dart';
 import 'blocks/graph_block.dart';
@@ -27,12 +28,10 @@ import 'blocks/unknown_block.dart';
 ///
 /// Block types with a real renderer today: text, equation,
 /// interactive_graph, source, clarification, error, model_unavailable,
-/// table, static_image, animation. `3d`/`pdf` get an honest reference card (file is real and
-/// fetchable, just no inline 3D/PDF viewer package added yet). `diagram`
-/// and anything else in json.md's vocabulary still falls back to
-/// UnknownBlockView — a real engine exists behind `diagram`
-/// (visual_explanation/diagrams) but no widget renders its shape yet;
-/// documented, not silently papered over.
+/// table, static_image, animation, diagram (2026-10-06). `3d`/`pdf` get an
+/// honest reference card (file is real and fetchable, just no inline
+/// 3D/PDF viewer package added yet). Anything else in json.md's
+/// vocabulary still falls back to UnknownBlockView.
 class BlockView extends StatelessWidget {
   const BlockView({super.key, required this.block, required this.baseUrl, this.onSetUpByok});
 
@@ -58,6 +57,7 @@ class BlockView extends StatelessWidget {
     'animation': (b, url, __) => AnimationBlockView(block: b, baseUrl: url),
     '3d': (b, url, __) => Model3dBlockView(block: b, baseUrl: url),
     'pdf': (b, url, __) => PdfBlockView(block: b, baseUrl: url),
+    'diagram': (b, _, __) => DiagramBlockView(block: b),
   };
 
   @override

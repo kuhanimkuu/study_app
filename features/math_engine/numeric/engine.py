@@ -35,12 +35,16 @@ import scipy.optimize
 import scipy.stats
 import sympy
 from sympy.parsing.sympy_parser import (
+    convert_xor,
     implicit_multiplication_application,
     standard_transformations,
     parse_expr,
 )
 
-_TRANSFORMATIONS = standard_transformations + (implicit_multiplication_application,)
+# convert_xor: students write powers as "x^2" — without it sympy reads "^" as
+# bitwise XOR and fails ("unsupported operand type(s) for ^"), found live
+# 2026-10-06 on "draw y = x^2".
+_TRANSFORMATIONS = standard_transformations + (convert_xor, implicit_multiplication_application)
 
 
 async def run(**kwargs: Any) -> dict:

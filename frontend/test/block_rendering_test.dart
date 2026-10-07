@@ -139,10 +139,26 @@ void main() {
       },
       baseUrl: _testBaseUrl,
     )));
-    expect(find.byType(DataTable), findsOneWidget);
+    // ≤3 columns wrap in a Table (long flashcard answers used to be cut
+    // off on one line in the scrolling DataTable).
+    expect(find.byType(Table), findsOneWidget);
     expect(find.text('Name'), findsOneWidget);
     expect(find.text('y'), findsOneWidget);
     expect(find.text('3'), findsOneWidget);
+  });
+
+  testWidgets('wide table block still scrolls horizontally as a DataTable', (tester) async {
+    await tester.pumpWidget(_wrap(const BlockView(
+      block: {
+        'type': 'table',
+        'headers': ['a', 'b', 'c', 'd'],
+        'rows': [
+          ['1', '2', '3', '4'],
+        ],
+      },
+      baseUrl: _testBaseUrl,
+    )));
+    expect(find.byType(DataTable), findsOneWidget);
   });
 
   // Real shape from moderator/engine.py's _route_static_image: "content" is
@@ -198,5 +214,76 @@ void main() {
     )));
     expect(find.textContaining('"quiz"'), findsOneWidget);
     expect(find.textContaining("isn't rendered yet"), findsOneWidget);
+  });
+
+  // Real shape from the moderator's concept_diagram route (2026-10-06,
+  // "draw a diagram of the water cycle") — a cycle closes back to node 0.
+  // Before this date `diagram` had no widget and fell to the raw dump above.
+  testWidgets('diagram block renders a cycle as numbered steps with a loop marker', (tester) async {
+    await tester.pumpWidget(_wrap(const SingleChildScrollView(
+      child: BlockView(
+        block: {
+          'type': 'diagram',
+          'kind': 'cycle',
+          'elements': [
+            {'id': 0, 'label': 'Evaporation', 'x': 0.0, 'y': 0.0},
+            {'id': 1, 'label': 'Condensation', 'x': 150.0, 'y': 0.0},
+            {'id': 2, 'label': 'Precipitation', 'x': 300.0, 'y': 0.0},
+          ],
+          'relationships': [
+            [0, 1],
+            [1, 2],
+            [2, 0],
+          ],
+          'source': 'diagrams',
+        },
+        baseUrl: _testBaseUrl,
+      ),
+    )));
+    expect(find.text('Evaporation'), findsOneWidget);
+    expect(find.text('Precipitation'), findsOneWidget);
+    expect(find.textContaining('cycle repeats'), findsOneWidget);
+    expect(find.textContaining("isn't rendered yet"), findsNothing);
+  });
+
+  testWidgets('diagram block lists connections for a non-chain shape', (tester) async {
+    await tester.pumpWidget(_wrap(const SingleChildScrollView(
+      child: BlockView(
+        block: {
+          'type': 'diagram',
+          'kind': 'circuit',
+          'elements': [
+            {'id': 0, 'label': 'battery', 'x': 0.0, 'y': 0.0},
+            {'id': 1, 'label': 'resistor', 'x': 150.0, 'y': 0.0},
+            {'id': 2, 'label': 'bulb', 'x': 300.0, 'y': 0.0},
+          ],
+          'relationships': [
+            [0, 2],
+          ],
+          'source': 'diagrams',
+        },
+        baseUrl: _testBaseUrl,
+      ),
+    )));
+    expect(find.text('Connections'), findsOneWidget);
+    expect(find.textContaining('battery  →  bulb'), findsOneWidget);
+  });
+
+  // Real model output captured live 2026-10-06 — previously shown with the
+  // literal asterisks and \( \) delimiters.
+  testWidgets('text block renders Markdown bold, bullets and inline math', (tester) async {
+    await tester.pumpWidget(_wrap(const BlockView(
+      block: {
+        'type': 'text',
+        'content': '1. **Start with the equation**: We have \\(2x + 3 = 7\\).\n- next step',
+        'source': 'moderator',
+      },
+      baseUrl: _testBaseUrl,
+    )));
+    final rendered = tester.widgetList<RichText>(find.byType(RichText)).map((t) => t.text.toPlainText()).join('\n');
+    expect(rendered, contains('Start with the equation: We have 2x + 3 = 7.'));
+    expect(rendered, isNot(contains('**')));
+    expect(rendered, isNot(contains(r'\(')));
+    expect(find.text('•'), findsOneWidget);
   });
 }

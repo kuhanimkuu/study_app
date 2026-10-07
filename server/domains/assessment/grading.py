@@ -39,6 +39,7 @@ from typing import Any
 
 import sympy
 from sympy.parsing.sympy_parser import (
+    convert_xor,
     implicit_multiplication_application,
     parse_expr,
     standard_transformations,
@@ -47,7 +48,10 @@ from sympy.parsing.sympy_parser import (
 from ... import engines
 from .models import GRADABLE_TYPES, Question
 
-_TRANSFORMATIONS = standard_transformations + (implicit_multiplication_application,)
+# convert_xor: same fix as the four features/ math engines (2026-10-06) —
+# without it a student's "x^2" is parsed as bitwise XOR and an equation
+# answer written the way students actually write powers fails to grade.
+_TRANSFORMATIONS = standard_transformations + (convert_xor, implicit_multiplication_application)
 
 
 class UnsupportedQuestionType(Exception):

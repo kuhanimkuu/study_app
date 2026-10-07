@@ -113,37 +113,37 @@ def _build_compiled_document(title: str, material: list[str]) -> list:
 
 
 def _build_flashcards(title: str, material: list[str]) -> list:
-    story = [Paragraph(title, _STYLES["Title"]), Spacer(1, 12)]
+    story = [Paragraph(escape(title), _STYLES["Title"]), Spacer(1, 12)]
     for i, chunk in enumerate(material, start=1):
         front, back = _split_front_back(chunk)
         story.append(Paragraph(f"Card {i} — Front:", _STYLES["Heading3"]))
-        story.append(Paragraph(front, _STYLES["Normal"]))
+        story.append(Paragraph(escape(front), _STYLES["Normal"]))
         story.append(Paragraph(f"Card {i} — Back:", _STYLES["Heading3"]))
-        story.append(Paragraph(back, _STYLES["Normal"]))
+        story.append(Paragraph(escape(back), _STYLES["Normal"]))
         story.append(Spacer(1, 12))
     return story
 
 
 def _build_practice_exam(title: str, material: list[str]) -> list:
-    story = [Paragraph(title, _STYLES["Title"]), Spacer(1, 12)]
+    story = [Paragraph(escape(title), _STYLES["Title"]), Spacer(1, 12)]
     for i, chunk in enumerate(material, start=1):
         question, answer = _cloze_question(chunk)
-        story.append(Paragraph(f"Q{i}. {question}", _STYLES["Normal"]))
+        story.append(Paragraph(escape(f"Q{i}. {question}"), _STYLES["Normal"]))
         story.append(Spacer(1, 6))
     story.append(Paragraph("Answer key:", _STYLES["Heading3"]))
     for i, chunk in enumerate(material, start=1):
         _, answer = _cloze_question(chunk)
-        story.append(Paragraph(f"Q{i}: {answer}", _STYLES["Normal"]))
+        story.append(Paragraph(escape(f"Q{i}: {answer}"), _STYLES["Normal"]))
     return story
 
 
 def _build_lab_report(title: str, material: list[str]) -> list:
-    story = [Paragraph(title, _STYLES["Title"]), Spacer(1, 12)]
+    story = [Paragraph(escape(title), _STYLES["Title"]), Spacer(1, 12)]
     story.append(Paragraph("Objective", _STYLES["Heading2"]))
     story.append(Paragraph("(not auto-generated — fill in manually)", _STYLES["Normal"]))
     story.append(Spacer(1, 8))
     story.append(Paragraph("Notes", _STYLES["Heading2"]))
-    items = [ListItem(Paragraph(chunk, _STYLES["Normal"])) for chunk in material]
+    items = [ListItem(Paragraph(escape(chunk), _STYLES["Normal"])) for chunk in material]
     story.append(ListFlowable(items, bulletType="bullet"))
     story.append(Spacer(1, 8))
     story.append(Paragraph("Discussion", _STYLES["Heading2"]))
@@ -151,7 +151,17 @@ def _build_lab_report(title: str, material: list[str]) -> list:
     return story
 
 
+FRONT_BACK_SEP = " || "
+
+
 def _split_front_back(chunk: str) -> tuple[str, str]:
+    # An explicit separator wins — the moderator's chat flashcard route
+    # (2026-10-06) already knows each card's real front and back, and the
+    # sentence heuristic below would split a term-style front like
+    # "Mitochondria" wrongly.
+    if FRONT_BACK_SEP in chunk:
+        front, _, back = chunk.partition(FRONT_BACK_SEP)
+        return front.strip(), back.strip() or front.strip()
     for sep in [". ", "? ", "! "]:
         if sep in chunk:
             front, _, rest = chunk.partition(sep)

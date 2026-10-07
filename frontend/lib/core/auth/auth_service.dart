@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../api/api_client.dart';
+import '../crypto/user_crypto.dart';
 import '../settings/model_settings_service.dart';
 import '../storage/local_db.dart';
 
@@ -26,7 +27,45 @@ const String _googleServerClientId =
 /// ModelSettingsService (BYOK settings) are both scoped per user_id, per
 /// the local-first pivot (see server/main.py's architecture note).
 class AuthService extends ChangeNotifier {
-  AuthService({required this.apiClient, required this.modelSettings});
+  AuthService({required this.apiClient, required this.modelSettings}) {
+    // Every AI call that doesn't pass its own config (concept explain,
+    // answer grading, AI generation) picks up this user's model choice
+    // through the shared ApiClient — found 2026-10-07: those screens only
+    // receive an ApiClient, so they used to silently always hit the free
+    // local model even with a BYOK/hosted backend configured, which on the
+    // Render deploy (no local model) meant they always failed.
+    apiClient.modelConfigProvider = modelConfigForRequest;
+  }
+
+  /// Builds the per-request BYOK/hosted config — see UserCrypto and
+  /// routers/ask.py's ModelConfig. Returns null for the local backend
+  /// (the server's default, no config needed). Moved here from ChatScreen
+  /// (2026-10-07) so every screen shares one implementation.
+  Future<Map<String, dynamic>?> modelConfigForRequest() async {
+    final settings = modelSettings;
+    if (settings.backend == 'local') return null;
+
+    // Hosted tier (blueprint Section 42.1) — Study OS's own pooled
+    // provider key, billed via server/domains/billing/. No key of any
+    // kind is stored or sent from the client for this backend; a 402
+    // (insufficient balance) or 503 (provider not configured on this
+    // server) surfaces as a normal ApiException the caller already
+    // handles, same as any other model call failure.
+    if (settings.backend == 'hosted') {
+      if (settings.hostedProvider == null) return null;
+      return {'backend': 'hosted', 'hosted_provider': settings.hostedProvider};
+    }
+
+    if (!settings.hasApiKey) return null;
+    final key = _encryptionKey;
+    if (key == null) return null;
+    final encryptedKey = await UserCrypto.encryptForUser(key, settings.apiKey!);
+    return {
+      'backend': settings.backend,
+      if (settings.modelName != null) 'model_name': settings.modelName,
+      'encrypted_api_key': encryptedKey,
+    };
+  }
 
   final ApiClient apiClient;
   final ModelSettingsService modelSettings;

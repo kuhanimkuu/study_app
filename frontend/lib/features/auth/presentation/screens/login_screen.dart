@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -29,6 +30,9 @@ class _LoginScreenState extends State<LoginScreen> with ColdStartHintMixin {
   final _passwordController = TextEditingController();
   bool _isLoading = false;
   bool _isGoogleLoading = false;
+
+  bool get _googleSignInSupported =>
+      kIsWeb || (defaultTargetPlatform != TargetPlatform.windows && defaultTargetPlatform != TargetPlatform.linux);
   bool _obscurePassword = true;
   String? _error;
 
@@ -162,6 +166,9 @@ class _LoginScreenState extends State<LoginScreen> with ColdStartHintMixin {
                   buildColdStartHint(context),
                   const SizedBox(height: 20),
                   GradientButton(label: 'Sign in', isLoading: _isLoading, onPressed: _isLoading ? null : _login),
+                  // google_sign_in has no Windows/Linux implementation — on
+                  // the desktop build the button could only ever throw.
+                  if (_googleSignInSupported) ...[
                   const SizedBox(height: 20),
                   Row(
                     children: [
@@ -185,6 +192,7 @@ class _LoginScreenState extends State<LoginScreen> with ColdStartHintMixin {
                       style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                     ),
                   ),
+                  ],
                   const SizedBox(height: 16),
                   Center(
                     child: TextButton(

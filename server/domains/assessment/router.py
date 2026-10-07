@@ -20,11 +20,14 @@ from ...core import security
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ..billing import service as billing_service
+from ..knowledge.models import KnowledgeSpace
+from ..learning import generation
 from ..learning.models import Concept
+from ..learning.router import GenerateRequest
 from ..learning.router import get_concept_or_404, get_or_create_mastery
 from ..learning.scheduler import mastery_score, review_after_attempt, serialize_mastery
 from .grading import GradingInputError, GradingUnavailable, UnsupportedQuestionType, grade
-from .models import Misconception, Question, QuestionAttempt
+from .models import GRADABLE_TYPES, Misconception, Question, QuestionAttempt
 
 router = APIRouter(prefix="/api/v1")
 
@@ -65,6 +68,14 @@ async def create_question(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     await get_concept_or_404(db, current_user["id"], concept_id)
+    # Found 2026-10-06: a question of an ungradable type (e.g.
+    # "multiple_choice" instead of "mcq") used to be stored, then every
+    # attempt at it failed with 400 — reject it up front instead.
+    if payload.type not in GRADABLE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"question type must be one of {sorted(GRADABLE_TYPES)}, got {payload.type!r}",
+        )
 
     question = Question(
         concept_id=concept_id,
@@ -78,6 +89,51 @@ async def create_question(
     await db.commit()
     await db.refresh(question)
     return question.public(include_answer=True)
+
+
+@router.post("/concepts/{concept_id}/questions/generate")
+async def generate_questions(
+    concept_id: int,
+    payload: GenerateRequest,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Writes practice questions (mcq / true_false / short_answer) for one
+    concept, grounded in its most relevant passages of the space's
+    material, and saves them. Each is validated against grading.py's
+    answer shapes before saving — see generation.parse_questions."""
+    concept = await get_concept_or_404(db, current_user["id"], concept_id)
+    space = await db.get(KnowledgeSpace, concept.knowledge_space_id)
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    material = await generation.relevant_material(
+        current_user["id"], space.slug, f"{concept.name} {concept.description or ''}",
+        generation.material_budget(model_config),
+    )
+    text = await generation.call_model(
+        generation.questions_prompt(concept.name, material, payload.count), 150 + 110 * payload.count,
+        model_config, db, current_user["id"],
+    )
+    parsed = generation.parse_questions(text, payload.count)
+    if not parsed:
+        raise generation._nothing_usable("questions")
+
+    existing = {
+        p.lower() for p in (await db.scalars(select(Question.prompt).where(Question.concept_id == concept_id))).all()
+    }
+    created: list[Question] = []
+    for q in parsed:
+        if q["prompt"].lower() in existing:
+            continue
+        existing.add(q["prompt"].lower())
+        question = Question(concept_id=concept_id, **q)
+        db.add(question)
+        created.append(question)
+    await db.commit()
+    for q in created:
+        await db.refresh(q)
+    # include_answer=False: same as list_questions — generated questions
+    # are for practice, so the answers stay server-side.
+    return {"questions": [q.public() for q in created], "skipped_existing": len(parsed) - len(created)}
 
 
 @router.get("/concepts/{concept_id}/questions")

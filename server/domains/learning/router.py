@@ -10,15 +10,17 @@ from __future__ import annotations
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core import security
+from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ..knowledge.models import KnowledgeSpace
 from ..knowledge.router import get_space_or_404
+from . import generation
 from .flashcard_scheduler import RATINGS, review_flashcard
 from .models import Concept, ConceptRelationship, Flashcard, Mastery, RELATIONSHIP_TYPES
 from .scheduler import serialize_mastery
@@ -71,6 +73,58 @@ async def create_concept(
     await db.commit()
     await db.refresh(concept)
     return concept.public()
+
+
+class GenerateRequest(BaseModel):
+    """Body for every AI-generation endpoint (2026-10-07). `count` is a
+    target, not a guarantee — malformed model output is dropped, never
+    saved half-valid. Same pydantic-v2 reserved-name workaround as
+    routers/ask.py's TextAsk for `model_config`."""
+
+    count: int = Field(default=8, ge=1, le=20)
+    concept_id: int | None = None
+    model_config_: ModelConfig | None = Field(default=None, alias="model_config")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+@router.post("/knowledge-spaces/{slug}/concepts/generate")
+async def generate_concepts(
+    slug: str,
+    payload: GenerateRequest,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Extracts the key concepts from this space's uploaded material and
+    saves the new ones — names already present (case-insensitive) are
+    skipped, so running it again after adding material only adds what's
+    new rather than duplicating."""
+    space = await get_space_or_404(db, current_user["id"], slug)
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    chunks = generation.load_chunks(current_user["id"], slug)
+    existing = (await db.scalars(select(Concept.name).where(Concept.knowledge_space_id == space.id))).all()
+
+    material = generation.sample_material(chunks, generation.material_budget(model_config))
+    text = await generation.call_model(
+        generation.concepts_prompt(material, list(existing)), 700, model_config, db, current_user["id"]
+    )
+    parsed = generation.parse_concepts(text)
+    if not parsed:
+        raise generation._nothing_usable("concepts")
+
+    taken = {n.lower() for n in existing}
+    created: list[Concept] = []
+    for name, description in parsed:
+        if name.lower() in taken:
+            continue
+        taken.add(name.lower())
+        concept = Concept(knowledge_space_id=space.id, name=name, description=description or None)
+        db.add(concept)
+        created.append(concept)
+    await db.commit()
+    for c in created:
+        await db.refresh(c)
+    return {"concepts": [c.public() for c in created], "skipped_existing": len(parsed) - len(created)}
 
 
 @router.get("/knowledge-spaces/{slug}/concepts")
@@ -273,6 +327,56 @@ async def create_flashcard(
     await db.commit()
     await db.refresh(flashcard)
     return flashcard.public()
+
+
+@router.post("/knowledge-spaces/{slug}/flashcards/generate")
+async def generate_flashcards(
+    slug: str,
+    payload: GenerateRequest,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Writes flashcards from this space's material straight into its deck
+    (so they enter FSRS review like hand-made cards). With `concept_id`,
+    the cards are grounded in that concept's most relevant passages and
+    linked to it."""
+    space = await get_space_or_404(db, current_user["id"], slug)
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    budget = generation.material_budget(model_config)
+    focus = None
+    if payload.concept_id is not None:
+        concept = await get_concept_or_404(db, current_user["id"], payload.concept_id)
+        focus = concept.name
+        material = await generation.relevant_material(
+            current_user["id"], slug, f"{concept.name} {concept.description or ''}", budget
+        )
+    else:
+        material = generation.sample_material(generation.load_chunks(current_user["id"], slug), budget)
+
+    text = await generation.call_model(
+        generation.flashcards_prompt(material, payload.count, focus), 120 + 90 * payload.count,
+        model_config, db, current_user["id"],
+    )
+    cards = generation.parse_flashcards(text, payload.count)
+    if not cards:
+        raise generation._nothing_usable("flashcards")
+
+    existing_fronts = {
+        f.lower()
+        for f in (await db.scalars(select(Flashcard.front).where(Flashcard.knowledge_space_id == space.id))).all()
+    }
+    created: list[Flashcard] = []
+    for front, back in cards:
+        if front.lower() in existing_fronts:
+            continue
+        existing_fronts.add(front.lower())
+        card = Flashcard(knowledge_space_id=space.id, concept_id=payload.concept_id, front=front, back=back)
+        db.add(card)
+        created.append(card)
+    await db.commit()
+    for c in created:
+        await db.refresh(c)
+    return {"flashcards": [c.public() for c in created], "skipped_existing": len(cards) - len(created)}
 
 
 @router.get("/knowledge-spaces/{slug}/flashcards")

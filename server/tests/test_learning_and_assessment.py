@@ -143,12 +143,17 @@ async def test_unsupported_question_type_returns_clear_error_not_fake_grade(clie
     # "code" stays unsupported deliberately (needs a sandboxed execution
     # environment — its own dedicated pass, see grading.py's module
     # docstring) — unlike "essay", which this slice added real support for.
-    question = await _create_question(
-        client, headers, concept_id, type="code", prompt="write a function", correct_answer="anything"
+    # Since 2026-10-06 the clear error comes at creation, not on the first
+    # attempt — a stored-but-unanswerable question was the real bug (e.g.
+    # "multiple_choice" instead of "mcq"). grading.py's attempt-time
+    # UnsupportedQuestionType still guards any pre-existing rows.
+    resp = await client.post(
+        f"/api/v1/concepts/{concept_id}/questions",
+        json={"type": "code", "prompt": "write a function", "correct_answer": "anything"},
+        headers=headers,
     )
-    resp = await client.post(f"/api/v1/questions/{question['id']}/attempt", json={"answer": "def f(): pass"}, headers=headers)
     assert resp.status_code == 400
-    assert "not yet supported" in resp.json()["detail"]
+    assert "question type must be one of" in resp.json()["detail"]
 
 
 async def test_grading_input_error_on_malformed_answer(client, student):

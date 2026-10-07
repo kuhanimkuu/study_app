@@ -37,7 +37,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -140,6 +140,40 @@ class TextAsk(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+_LOCAL_CONFIG = {"backend": "local", "tier": "tiny"}
+
+
+async def _resolve_form_model_config(raw: str | None, current_user: dict, db: AsyncSession) -> dict:
+    """Multipart routes (image/pdf/audio) can't carry a nested JSON body
+    next to the upload, so their model_config arrives as a JSON-string
+    form field. Absent means the free local model, same as /api/ask/text.
+    Until 2026-10-07 these routes hard-coded the local model regardless of
+    the user's BYOK/hosted choice — so on a host with no local model (the
+    Render deploy) image/PDF/audio/project questions could never work."""
+    if not raw:
+        return dict(_LOCAL_CONFIG)
+    try:
+        parsed = ModelConfig.model_validate_json(raw)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=f"invalid model_config: {exc}") from exc
+    return await resolve_model_config_async(parsed, current_user, db)
+
+
+async def _charge_hosted_usage(result: dict, model_config: dict, db: AsyncSession, user_id: int) -> dict:
+    """"_usage" is moderator/engine.py's internal signal (not part of the
+    public ModeratorResponse schema) for whether this request actually
+    made a real provider call — see that module's run() doc comment.
+    Only the hosted tier (model_config carries "hosted_provider") gets
+    billed for it; a BYOK/local call never does."""
+    usage = result.pop("_usage", None)
+    hosted_provider = model_config.get("hosted_provider")
+    if hosted_provider:
+        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
+        await billing_service.charge_for_usage(db, user_id, hosted_provider, model_name, usage)
+        await db.commit()
+    return result
+
+
 @router.post("/api/ask/text", response_model=ModeratorResponse)
 async def ask_text(
     payload: TextAsk,
@@ -184,41 +218,33 @@ async def ask_text(
         personality_max_tokens=personality_max_tokens,
     )
 
-    # "_usage" is moderator/engine.py's internal signal (not part of the
-    # public ModeratorResponse schema) for whether this request actually
-    # made a real provider call — see that module's run() doc comment.
-    # Only the hosted tier (model_config carries "hosted_provider") gets
-    # billed for it; a BYOK/local call never does.
-    usage = result.pop("_usage", None)
-    hosted_provider = model_config.get("hosted_provider")
-    if hosted_provider:
-        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
-        await billing_service.charge_for_usage(db, current_user["id"], hosted_provider, model_name, usage)
-        await db.commit()
-
-    return result
+    return await _charge_hosted_usage(result, model_config, db, current_user["id"])
 
 
 @router.post("/api/ask/image", response_model=ModeratorResponse)
 async def ask_image(
     file: UploadFile = File(...),
     session_id: str = Form("default"),
+    model_config_json: str | None = Form(None, alias="model_config"),
     current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
+    resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
     path = _save_upload(file, session_id, kind="image")
     try:
         classified = await engines.image_input.run(content=str(path), source="upload")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read image: {exc}") from exc
 
-    return await engines.moderator.run(
+    result = await engines.moderator.run(
         input_type=classified["input_type"],
         content=classified["content"],
         detected=classified.get("detected", []),
         session_id=session_id,
         user_id=current_user["id"],
-        model_config={"backend": "local", "tier": "tiny"},
+        model_config=resolved_config,
     )
+    return await _charge_hosted_usage(result, resolved_config, db, current_user["id"])
 
 
 @router.post("/api/ask/pdf", response_model=ModeratorResponse)
@@ -226,39 +252,46 @@ async def ask_pdf(
     file: UploadFile | None = File(None),
     query: str | None = Form(None),
     session_id: str = Form("default"),
+    model_config_json: str | None = Form(None, alias="model_config"),
     current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """`file` is required on the first call in a session; a follow-up call
     (answering the moderator's "what would you like me to do with it?"
     clarification) only needs `query` — the moderator's own pending-context
     resume logic recovers the stored pdf_path, no need to re-upload."""
-    model_config = {"backend": "local", "tier": "tiny"}
+    resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
     if file is not None:
         path = _save_upload(file, session_id, kind="pdf")
         try:
             classified = await engines.pdf_input.run(content=str(path))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"could not read PDF: {exc}") from exc
-        return await engines.moderator.run(
+        result = await engines.moderator.run(
             input_type="pdf", content=classified["content"], query=query,
             pdf_path=str(path), session_id=session_id,
-            user_id=current_user["id"], model_config=model_config,
+            user_id=current_user["id"], model_config=resolved_config,
         )
+        return await _charge_hosted_usage(result, resolved_config, db, current_user["id"])
 
     if query is None:
         raise HTTPException(status_code=400, detail="either 'file' (first call) or 'query' (follow-up) is required")
-    return await engines.moderator.run(
+    result = await engines.moderator.run(
         input_type="pdf", content="", query=query, session_id=session_id,
-        user_id=current_user["id"], model_config=model_config,
+        user_id=current_user["id"], model_config=resolved_config,
     )
+    return await _charge_hosted_usage(result, resolved_config, db, current_user["id"])
 
 
 @router.post("/api/ask/audio", response_model=ModeratorResponse)
 async def ask_audio(
     file: UploadFile = File(...),
     session_id: str = Form("default"),
+    model_config_json: str | None = Form(None, alias="model_config"),
     current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
+    resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
     path = _save_upload(file, session_id, kind="audio")
     try:
         transcribed = await engines.audio_input.run(content=str(path))
@@ -266,14 +299,15 @@ async def ask_audio(
         raise HTTPException(status_code=400, detail=f"could not transcribe audio: {exc}") from exc
 
     classified = await engines.text_input.run(content=transcribed["content"])
-    return await engines.moderator.run(
+    result = await engines.moderator.run(
         input_type=classified["input_type"],
         content=classified["content"],
         detected=classified.get("detected", []),
         session_id=session_id,
         user_id=current_user["id"],
-        model_config={"backend": "local", "tier": "tiny"},
+        model_config=resolved_config,
     )
+    return await _charge_hosted_usage(result, resolved_config, db, current_user["id"])
 
 
 class WebAsk(BaseModel):
@@ -305,19 +339,29 @@ class ProjectAsk(BaseModel):
     project: str | None = None
     query: str | None = None
     session_id: str = "default"
+    # See TextAsk's matching field for the trailing-underscore alias.
+    model_config_: ModelConfig | None = Field(default=None, alias="model_config")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 @router.post("/api/ask/project", response_model=ModeratorResponse)
-async def ask_project(payload: ProjectAsk, current_user: dict = Depends(security.get_current_user)) -> dict:
+async def ask_project(
+    payload: ProjectAsk,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """Mirrors /api/ask/pdf's shape: first call names a project (no query
     yet) and gets back a clarification; the follow-up call sends `query`
     (same session_id) to actually search it."""
-    return await engines.moderator.run(
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    result = await engines.moderator.run(
         input_type="project",
         content=payload.content,
         project=payload.project,
         query=payload.query,
         session_id=payload.session_id,
         user_id=current_user["id"],
-        model_config={"backend": "local", "tier": "tiny"},
+        model_config=model_config,
     )
+    return await _charge_hosted_usage(result, model_config, db, current_user["id"])

@@ -177,6 +177,41 @@ _MEMORY_QUERY_RE = re.compile(
 )
 _INTERACTIVE_RE = re.compile(r"\binteractive\b", re.IGNORECASE)
 _STATIC_IMAGE_RE = re.compile(r"\b(image of|picture of|draw)\b", re.IGNORECASE)
+# A visual request about a *non-math* topic ("draw a diagram of the water
+# cycle", "flowchart of mitosis") — added 2026-10-06 after live testing
+# showed every such request used to hit _STATIC_IMAGE_RE/_GRAPH_RE, hand
+# the whole topic to sympy as an "expression" and fail with "Cannot
+# convert expression to float". Only consulted when text_input did NOT
+# flag the message as math (see _infer_task), so "draw y=x^2" still plots.
+_DIAGRAM_REQUEST_RE = re.compile(
+    r"\b(diagram|flow ?chart|mind ?map|draw|image of|picture of|illustrat\w*|visuali[sz]e|label(?:l?ed)?)\b",
+    re.IGNORECASE,
+)
+# "make flashcards on X" — used to fall through to general conversation,
+# where the model just *talked about* flashcards (found live 2026-10-06).
+_FLASHCARD_REQUEST_RE = re.compile(r"\bflash\s?cards?\b", re.IGNORECASE)
+# A practice-exam/quiz PDF — _route_write_doc switches to an exam prompt
+# for these instead of always writing a study guide (found live: "give me
+# a practice exam on cell biology as a pdf" came back as a study guide).
+_EXAM_REQUEST_RE = re.compile(
+    r"\b(practice|mock|sample)\s+(exam|test|paper|questions)\b|\bquiz\b|\b(exam|test)\s+questions\b",
+    re.IGNORECASE,
+)
+# A math expression inside the request (an "=", "^", a function call like
+# sin(, or digits joined by an operator) — text_input's classifier misses
+# some of these (found live: "draw y = x^2" came back labelled ["text"]
+# only), so _infer_task checks this too before treating a visual request
+# as a concept diagram.
+_MATH_EXPRESSION_RE = re.compile(
+    r"[=^]|\b(sin|cos|tan|log|ln|sqrt|exp)\s*\(|\d\s*[-+*/]\s*[\w(]|\b[a-z]\s*[-+*/]\s*\d|\d[a-z]\b",
+    re.IGNORECASE,
+)
+_DIAGRAM_TOPIC_STRIP_RE = re.compile(
+    r"^\s*(please\s+)?(can you\s+)?(draw|make|create|generate|give me|show me|sketch|visuali[sz]e|illustrate)?\s*"
+    r"(me\s+)?(an?\s+|the\s+)?(labell?ed\s+)?(diagram|flow ?chart|mind ?map|image|picture|illustration|visual)?\s*"
+    r"(of|for|showing|on|about)?\s*",
+    re.IGNORECASE,
+)
 _PDF_EXPORT_RE = re.compile(r"\bpdf\b", re.IGNORECASE)
 # Disambiguates a "pdf" request between the two very different things it
 # can mean here: a math expression rendered to an image/PDF
@@ -682,6 +717,10 @@ async def _route_text(
     # path that gets there by asking the LLM to author the material first.
     if task == "write_doc":
         return await _route_write_doc(content, model_config, personality_style)
+    if task == "concept_diagram":
+        return await _route_concept_diagram(content, model_config)
+    if task == "flashcards":
+        return await _route_flashcards(content, model_config)
 
     if task in _STRUCTURED_ENGINES:
         return await _route_structured(task, params)
@@ -993,6 +1032,31 @@ def _doc_text_to_material(text: str) -> tuple[str, list[str]]:
     return title, material
 
 
+async def _call_model_or_unavailable(prompt: str, max_tokens: int, model_config: dict) -> str:
+    """One model call for a route that has no non-LLM fallback (write_doc,
+    concept_diagram, flashcards): any failure becomes ModelUnavailable —
+    the free local model gets the actionable "try a key" suggestion, a
+    BYOK/hosted backend gets its real error and no suggested alternative
+    (recommending the backend that just failed would be nonsensical).
+    Also writes the call's usage back for hosted-tier billing, same as
+    _author_general_reply does."""
+    backend = model_config.get("backend", "local")
+    try:
+        llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
+    except Exception as exc:
+        if backend == "local":
+            raise ModelUnavailable(
+                "The free local AI model is currently unavailable.",
+                attempted_backend="local",
+            ) from exc
+        raise ModelUnavailable(
+            f"Your {backend} backend didn't respond: {exc}",
+            attempted_backend=backend,
+        ) from exc
+    model_config["_billed_usage"] = llm_result.get("usage")
+    return llm_result.get("text") or ""
+
+
 async def _route_write_doc(
     content: str,
     model_config: dict,
@@ -1012,52 +1076,221 @@ async def _route_write_doc(
     override this — a document isn't a chat reply, and letting a chat-
     length cap truncate it defeats the purpose."""
     topic = _PDF_MODIFIER_RE.sub(" ", content).strip()
-    prompt = (
-        "Write a university-level study guide on the following topic, in exactly this plain-text "
-        "format: a '# Title' line, then 5-8 '## Section' headings each followed by 3-6 '- point' "
-        "bullet lines, ending with a '## Key formulas' section and a '## Common mistakes' section. "
-        "No tables, no bold text, no preamble or commentary — output only the document itself.\n\n"
-        f"Topic: {topic}{personality_style or ''}"
-    )
-    backend = model_config.get("backend", "local")
-    try:
-        llm_result = await _model_router.run(prompt=prompt, max_tokens=1800, **model_config)
-    except Exception as exc:
-        if backend == "local":
-            raise ModelUnavailable(
-                "The free local AI model is currently unavailable.",
-                attempted_backend="local",
-            ) from exc
-        # Same reasoning as _route_research_or_clarify's BYOK failure
-        # handling — surface the real SDK error, no suggested alternative
-        # (recommending the backend that just failed would be nonsensical).
-        raise ModelUnavailable(
-            f"Your {backend} backend didn't respond: {exc}",
-            attempted_backend=backend,
-        ) from exc
-
-    # See _author_general_reply's matching comment — same write-back
-    # mechanism for hosted-tier billing.
-    model_config["_billed_usage"] = llm_result.get("usage")
-    title, material = _doc_text_to_material(llm_result["text"])
+    is_exam = bool(_EXAM_REQUEST_RE.search(topic))
+    if is_exam:
+        doc_type = "practice_exam"
+        prompt = (
+            "Write a practice exam on the following topic, in exactly this plain-text format: a "
+            "'# Title' line, then a '## Questions' heading followed by 8-12 lines each starting "
+            "'- Q1.', '- Q2.', ... (mix multiple-choice questions, with options A-D on the same line, "
+            "and short-answer questions), then a '## Answer key' heading followed by one '- Q1. answer' "
+            "line per question with a one-sentence explanation. No tables, no bold text, no preamble — "
+            "output only the exam itself.\n\n"
+            f"Topic: {topic}{personality_style or ''}"
+        )
+    else:
+        doc_type = "study_guide"
+        prompt = (
+            "Write a university-level study guide on the following topic, in exactly this plain-text "
+            "format: a '# Title' line, then 5-8 '## Section' headings each followed by 3-6 '- point' "
+            "bullet lines, ending with a '## Key formulas' section and a '## Common mistakes' section. "
+            "No tables, no bold text, no preamble or commentary — output only the document itself.\n\n"
+            f"Topic: {topic}{personality_style or ''}"
+        )
+    text = await _call_model_or_unavailable(prompt, 1800, model_config)
+    title, material = _doc_text_to_material(text)
     if not material:
         raise NeedsClarification(
             "I couldn't turn that into a document — could you rephrase what you'd like the guide to cover?",
             {"input_type": "text", "content": content},
         )
-    title = title or "Study Guide"
+    title = title or ("Practice Exam" if is_exam else "Study Guide")
 
     fs_path, url_path = _generated_file("pdf")
     try:
+        # Always the compiled-document layout (headings + bullets): the
+        # exam's questions and answer key are already written out by the
+        # model — generate_docs' own "practice_exam" builder is a cloze
+        # heuristic for raw material, not for finished questions.
         await _generate_docs.run(material=material, doc_type="study_guide", title=title, output_path=fs_path)
     except Exception as exc:
         return [{"type": "error", "engine": "generate_docs", "message": str(exc)}], "generate_docs", topic
 
     blocks = [
         {"type": "text", "content": f"Here's your PDF: {title}.", "source": "moderator"},
-        {"type": "pdf", "content": url_path, "doc_type": "study_guide", "source": "generate_docs"},
+        {"type": "pdf", "content": url_path, "doc_type": doc_type, "source": "generate_docs"},
     ]
     return blocks, "generate_docs", topic
+
+
+_DIAGRAM_LINE_RE = re.compile(r"^(?:[-*•]|\d+[.)])\s+(.*)$")
+_DIAGRAM_LABEL_SPLIT_RE = re.compile(r"\s+[—–-]\s+|:\s+")
+_DIAGRAM_MAX_LABEL = 40
+
+
+def _diagram_steps_from_text(text: str) -> list[tuple[str, str]]:
+    """(label, description) pairs from the LLM's bulleted/numbered list —
+    lenient on purpose (the free local model doesn't follow formats
+    reliably): any bullet or numbered line counts, the label is whatever
+    precedes the first " — " / " - " / ": ", and an over-long label with
+    no separator is cut at a word boundary rather than dropped. Unbulleted
+    lines (preamble, commentary) are ignored."""
+    steps: list[tuple[str, str]] = []
+    for raw in text.splitlines():
+        line = raw.strip().replace("**", "")
+        m = _DIAGRAM_LINE_RE.match(line)
+        if not m:
+            continue
+        parts = _DIAGRAM_LABEL_SPLIT_RE.split(m.group(1).strip(), maxsplit=1)
+        label = parts[0].strip().rstrip(".")
+        description = parts[1].strip() if len(parts) > 1 else ""
+        if len(label) > _DIAGRAM_MAX_LABEL:
+            description = description or label
+            label = label[:_DIAGRAM_MAX_LABEL].rsplit(" ", 1)[0] + "…"
+        # The free local model sometimes repeats a stage verbatim — a
+        # diagram with the same node twice is wrong, not just untidy.
+        if label and label.lower() not in {existing.lower() for existing, _ in steps}:
+            steps.append((label, description))
+    return steps[:8]
+
+
+async def _route_concept_diagram(content: str, model_config: dict) -> tuple[list[dict], str, str]:
+    """A visual request about a non-math topic (see _DIAGRAM_REQUEST_RE):
+    asks the LLM for the topic's stages/parts as a short list, then lays
+    them out with visual_explanation/diagrams. Relationships are a
+    sequential chain — closed back to the first step when the topic is a
+    cycle — which is the honest limit of what a list can express; the
+    descriptions go in a text block above the diagram so nothing the
+    model wrote is lost."""
+    topic = _DIAGRAM_TOPIC_STRIP_RE.sub("", content).strip(" ?.!") or content.strip()
+    is_cycle = bool(re.search(r"\bcycle\b", topic, re.IGNORECASE))
+    prompt = (
+        f"List the main {'stages' if is_cycle else 'stages or parts'} of: {topic}\n"
+        "Output 3 to 8 lines and nothing else, in order, each exactly like:\n"
+        "- Short label — one sentence explaining it"
+    )
+    steps = _diagram_steps_from_text(await _call_model_or_unavailable(prompt, 400, model_config))
+    if len(steps) < 2:
+        raise NeedsClarification(
+            "I couldn't break that into a diagram — which process or structure would you like drawn?",
+            {"input_type": "text", "content": content},
+        )
+    labels = [label for label, _ in steps]
+    relationships = [[i, i + 1] for i in range(len(labels) - 1)]
+    if is_cycle:
+        relationships.append([len(labels) - 1, 0])
+    kind = "cycle" if is_cycle else "process"
+    try:
+        result = await _diagrams.run(data={"kind": kind, "elements": labels, "relationships": relationships})
+    except Exception as exc:
+        return [{"type": "error", "engine": "diagrams", "message": str(exc)}], "diagrams", topic
+
+    explanation = "\n".join(
+        f"{i}. **{label}**" + (f" — {desc}" if desc else "") for i, (label, desc) in enumerate(steps, start=1)
+    )
+    d = result["diagram"]
+    blocks = [
+        {"type": "text", "content": f"Here's a diagram of {topic}:\n\n{explanation}", "source": "moderator"},
+        {
+            "type": "diagram",
+            "kind": d["kind"],
+            "elements": d["elements"],
+            "relationships": d["relationships"],
+            "source": "diagrams",
+        },
+    ]
+    return blocks, "diagrams", topic[:80]
+
+
+_FLASHCARD_TOPIC_STRIP_RE = re.compile(
+    r"^\s*(please\s+)?(can you\s+)?(make|create|generate|give me|write|build)?\s*(me\s+)?(some\s+|a\s+set\s+of\s+|\d+\s+)?"
+    r"flash\s?cards?\s*(for|on|about|of)?\s*",
+    re.IGNORECASE,
+)
+_CARD_Q_RE = re.compile(r"^(?:[-*•]|\d+[.)])?\s*(?:Q(?:uestion)?|Front)\s*\d*\s*[:.]\s*(.+)$", re.IGNORECASE)
+_CARD_A_RE = re.compile(r"^(?:[-*•])?\s*(?:A(?:nswer)?|Back)\s*\d*\s*[:.]\s*(.+)$", re.IGNORECASE)
+
+
+def _flashcards_from_text(text: str) -> list[tuple[str, str]]:
+    """(front, back) pairs from the LLM's reply. Accepts both shapes models
+    actually produce: one card per line as "Q: ... | A: ..." (what the
+    prompt asks for), or a "Q: ..." line followed by an "A: ..." line.
+    Duplicate fronts are dropped."""
+    cards: list[tuple[str, str]] = []
+    pending_front: str | None = None
+    for raw in text.splitlines():
+        line = raw.strip().replace("**", "")
+        if not line:
+            continue
+        if "|" in line:
+            left, _, right = line.partition("|")
+            q, a = _CARD_Q_RE.match(left.strip()), _CARD_A_RE.match(right.strip())
+            if q and a:
+                cards.append((q.group(1).strip(), a.group(1).strip()))
+                pending_front = None
+                continue
+        q = _CARD_Q_RE.match(line)
+        if q:
+            pending_front = q.group(1).strip()
+            continue
+        a = _CARD_A_RE.match(line)
+        if a and pending_front:
+            cards.append((pending_front, a.group(1).strip()))
+            pending_front = None
+    seen: set[str] = set()
+    unique = []
+    for front, back in cards:
+        if front and back and front.lower() not in seen:
+            seen.add(front.lower())
+            unique.append((front, back))
+    return unique[:15]
+
+
+async def _route_flashcards(content: str, model_config: dict) -> tuple[list[dict], str, str]:
+    """"Make flashcards on X" from chat: the LLM writes question/answer
+    pairs, shown in chat as a Front/Back table and compiled into a
+    printable flashcards PDF (generate_docs' "flashcards" layout, with the
+    explicit front/back separator so its sentence-split heuristic isn't
+    used). Not saved into a project's Flashcards tab — chat isn't scoped to
+    a Knowledge Space, so there's no deck to save them into from here."""
+    topic = _FLASHCARD_TOPIC_STRIP_RE.sub("", _PDF_MODIFIER_RE.sub(" ", content)).strip(" ?.!") or content.strip()
+    # Honour "make 4 flashcards ..." — found live: a requested count was
+    # ignored and ~10 cards came back regardless.
+    count_match = re.search(r"\b(\d{1,2})\s+(?:\w+\s+)?flash\s?cards?\b", content, re.IGNORECASE)
+    requested = max(2, min(15, int(count_match.group(1)))) if count_match else None
+    prompt = (
+        f"Write {f'exactly {requested}' if requested else '8 to 10'} study flashcards on: {topic}\n"
+        "Output one card per line and nothing else, each exactly like:\n"
+        "Q: a short question or term | A: a concise answer (one or two sentences)"
+    )
+    cards = _flashcards_from_text(await _call_model_or_unavailable(prompt, 900, model_config))
+    if requested:
+        cards = cards[:requested]
+    if len(cards) < 2:
+        raise NeedsClarification(
+            "I couldn't turn that into flashcards — which topic would you like cards on?",
+            {"input_type": "text", "content": content},
+        )
+
+    blocks: list[dict] = [
+        {"type": "text", "content": f"Here are {len(cards)} flashcards on {topic}:", "source": "moderator"},
+        {"type": "table", "headers": ["Front", "Back"], "rows": [[f, b] for f, b in cards], "source": "moderator"},
+    ]
+    fs_path, url_path = _generated_file("pdf")
+    try:
+        await _generate_docs.run(
+            material=[f"{f}{_generate_docs.FRONT_BACK_SEP}{b}" for f, b in cards],
+            doc_type="flashcards",
+            title=f"Flashcards: {topic}"[:120],
+            output_path=fs_path,
+        )
+        blocks.append({"type": "pdf", "content": url_path, "doc_type": "flashcards", "source": "generate_docs"})
+    except Exception as exc:
+        # The cards themselves are still real and shown above — only the
+        # printable copy failed, so say exactly that rather than failing
+        # the whole reply.
+        blocks.append({"type": "error", "engine": "generate_docs", "message": f"couldn't build the PDF copy: {exc}"})
+    return blocks, "flashcards", topic[:80]
 
 
 # task -> file extension, for tasks whose result is a file the client needs
@@ -1125,6 +1358,15 @@ def _infer_task(content: str, detected: list[str]) -> str | None:
         return "unit_convert"
     if _MEMORY_QUERY_RE.search(content):
         return "memory_query"
+    # A visual request with no math in it is a concept diagram, not a plot
+    # — see _DIAGRAM_REQUEST_RE. Checked before the pdf/graph branches
+    # below, since "flow chart" also matches _GRAPH_RE's "chart". A PDF
+    # request for prose ("notes on X as a pdf") has no diagram word and
+    # still reaches write_doc unchanged.
+    if _FLASHCARD_REQUEST_RE.search(content):
+        return "flashcards"
+    if "math" not in detected and not _MATH_EXPRESSION_RE.search(content) and _DIAGRAM_REQUEST_RE.search(content):
+        return "concept_diagram"
     # An explicit "...pdf..." request takes priority over the plain
     # graph/interactive_2d routes — those only ever return interactive
     # point data or a PNG, never a downloadable file, so "graph y=3x+2
@@ -1254,11 +1496,18 @@ async def _author_text(
         # not gated on `if text`, unlike the return value below it.
         model_config["_billed_usage"] = llm_result.get("usage")
         text = llm_result["text"].strip()
-        if text:
+        # A refusal is worse than no text: found live (2026-10-06), the
+        # free local model answered "solve x^2 = 9" with "I'm sorry, but I
+        # can't assist with that." directly above the correct [-3, 3] —
+        # so it gets the same template fallback as an empty reply.
+        if text and not _REFUSAL_RE.match(text):
             return text
     except Exception:
         pass
     return _author_symbolic_text(task, expression, result)
+
+
+_REFUSAL_RE = re.compile(r"^\W*(i'?m sorry|sorry|i (?:can(?:no|')t|am unable|'m unable)|as an ai)\b", re.IGNORECASE)
 
 
 def _author_symbolic_text(task: str, expression: str, result: dict) -> str:

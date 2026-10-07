@@ -7,7 +7,6 @@ import 'package:image_picker/image_picker.dart';
 import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
-import '../../../../core/crypto/user_crypto.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../../core/voice/voice_input_sheet.dart';
 import '../../../../core/widgets/brand_wordmark.dart';
@@ -23,6 +22,7 @@ import '../widgets/message_bubble.dart';
 import '../widgets/pending_pdf_chip.dart';
 import '../widgets/server_settings_dialog.dart';
 import '../widgets/web_url_dialog.dart';
+import '../widgets/working_indicator.dart';
 
 /// The main chat screen — a single thread that accepts text plus four
 /// attachment types (image/PDF/audio/web), all funneled through server/'s
@@ -182,34 +182,7 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
-  /// Builds the per-request BYOK/hosted config — see UserCrypto and
-  /// routers/ask.py's ModelConfig. Returns null for the local backend
-  /// (the server's default, no config needed).
-  Future<Map<String, dynamic>?> _modelConfigForRequest() async {
-    final settings = widget.authService.modelSettings;
-    if (settings.backend == 'local') return null;
-
-    // Hosted tier (blueprint Section 42.1) — Study OS's own pooled
-    // provider key, billed via server/domains/billing/. No key of any
-    // kind is stored or sent from the client for this backend; a 402
-    // (insufficient balance) or 503 (provider not configured on this
-    // server) surfaces as a normal ApiException the caller already
-    // handles, same as any other model call failure.
-    if (settings.backend == 'hosted') {
-      if (settings.hostedProvider == null) return null;
-      return {'backend': 'hosted', 'hosted_provider': settings.hostedProvider};
-    }
-
-    if (!settings.hasApiKey) return null;
-    final key = widget.authService.encryptionKey;
-    if (key == null) return null;
-    final encryptedKey = await UserCrypto.encryptForUser(key, settings.apiKey!);
-    return {
-      'backend': settings.backend,
-      if (settings.modelName != null) 'model_name': settings.modelName,
-      'encrypted_api_key': encryptedKey,
-    };
-  }
+  Future<Map<String, dynamic>?> _modelConfigForRequest() => widget.authService.modelConfigForRequest();
 
   Future<void> _persistActivity(Map<String, dynamic>? activity) async {
     if (activity == null) return;
@@ -606,7 +579,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                   ),
           ),
-          if (_isLoading) const LinearProgressIndicator(minHeight: 2),
+          if (_isLoading) const WorkingIndicator(),
           if (_pendingPdfName != null)
             PendingPdfChip(
               filename: _pendingPdfName!,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/ai_generate_button.dart';
 import '../../../../../core/widgets/empty_state.dart';
 import '../../../../../core/widgets/gradient_button.dart';
 import '../../../../chat/presentation/widgets/block_view.dart';
@@ -327,8 +328,42 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      AiGenerateButton(
+                        label: 'Generate practice questions',
+                        onGenerate: () async => generatedSummary(
+                          await widget.apiClient.generateQuestions(_conceptId),
+                          'questions',
+                          'question',
+                        ),
+                        onDone: _load,
+                      ),
+                      // Cards live in a project's deck, so this needs the
+                      // space this concept belongs to.
+                      if (widget.knowledgeSpaceSlug != null)
+                        AiGenerateButton(
+                          label: 'Make flashcards for this concept',
+                          onGenerate: () async => generatedSummary(
+                            await widget.apiClient.generateFlashcards(
+                              widget.knowledgeSpaceSlug!,
+                              count: 5,
+                              conceptId: _conceptId,
+                            ),
+                            'flashcards',
+                            'flashcard',
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
                   if ((_questions ?? []).isEmpty)
-                    const EmptyState(icon: Icons.quiz_outlined, message: 'No questions yet. Tap + to add one.')
+                    const EmptyState(
+                      icon: Icons.quiz_outlined,
+                      message: 'No questions yet. Generate some from your material, or tap + to write one.',
+                    )
                   else
                     for (final q in _questions!)
                       Card(

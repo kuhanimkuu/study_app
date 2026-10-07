@@ -116,6 +116,21 @@ class ThreeDBlock(BaseModel):
     source: str
 
 
+class ModelUnavailableBlock(BaseModel):
+    """Emitted by features/moderator/engine.py's run() when the chosen AI
+    backend can't be reached (e.g. the free local model on a host with no
+    torch installed or too little RAM). Missing from the union below until
+    2026-10-06, so every such response failed FastAPI's response
+    validation and reached the client as a bare HTTP 500 instead of the
+    actionable "set up an API key" card the Flutter app already renders."""
+
+    type: Literal["model_unavailable"] = "model_unavailable"
+    message: str
+    attempted_backend: str
+    suggested_backend: str | None = None
+    suggested_model: str | None = None
+
+
 Block = Annotated[
     Union[
         TextBlock,
@@ -130,6 +145,7 @@ Block = Annotated[
         DiagramBlock,
         AnimationBlock,
         ThreeDBlock,
+        ModelUnavailableBlock,
     ],
     Field(discriminator="type"),
 ]

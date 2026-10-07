@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/widgets/ai_generate_button.dart';
 import 'concept_detail_screen.dart';
 
 /// Concepts within one Knowledge Space (blueprint Section 15) — a new 4th
@@ -111,6 +112,14 @@ class _ConceptsListScreenState extends State<ConceptsListScreen> {
     }
   }
 
+  Widget _generateButton({bool expand = false}) => AiGenerateButton(
+        label: 'Generate concepts from material',
+        expand: expand,
+        onGenerate: () async =>
+            generatedSummary(await widget.apiClient.generateConcepts(widget.slug), 'concepts', 'concept'),
+        onDone: _load,
+      );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -145,12 +154,16 @@ class _ConceptsListScreenState extends State<ConceptsListScreen> {
                           Icon(Icons.school_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
                           const SizedBox(height: 16),
                           Text(
-                            'No concepts yet. Tap + to add one.',
+                            'No concepts yet. Let AI pull the key concepts out of this project\'s '
+                            'sources, or tap + to add one yourself.',
+                            textAlign: TextAlign.center,
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium
                                 ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                           ),
+                          const SizedBox(height: 20),
+                          _generateButton(expand: true),
                         ],
                       ),
                     ),
@@ -160,8 +173,15 @@ class _ConceptsListScreenState extends State<ConceptsListScreen> {
             }
             return ListView.builder(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: concepts.length,
-              itemBuilder: (context, index) {
+              itemCount: concepts.length + 1,
+              itemBuilder: (context, rawIndex) {
+                if (rawIndex == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                    child: Align(alignment: Alignment.centerLeft, child: _generateButton()),
+                  );
+                }
+                final index = rawIndex - 1;
                 final concept = concepts[index] as Map<String, dynamic>;
                 final id = concept['id'] as int;
                 final name = concept['name'] as String;

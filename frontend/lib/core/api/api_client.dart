@@ -43,6 +43,17 @@ class ApiClient {
   /// "waking up the server" UX.
   static const _authRequestTimeout = Duration(seconds: 100);
 
+  /// Used for every AI call (`/api/ask/*` and the multipart uploads that
+  /// feed them). Found 2026-10-06: a "make me a PDF study guide" request
+  /// against the free local model measured 159s-272s end-to-end, and
+  /// generating any long-form document with a BYOK model plus a Render
+  /// cold start can also run past a minute — so the old shared 60s
+  /// [_requestTimeout] made the app report "Request timed out" while the
+  /// server was still successfully writing the PDF, which read to the
+  /// user as "PDF generation doesn't work". Plain data calls keep the
+  /// shorter timeout, where a long hang really does mean something's wrong.
+  static const _aiRequestTimeout = Duration(minutes: 5);
+
   Never _timeoutError() => throw ApiException(0, 'Request timed out — check the server is reachable.');
 
   /// Mutable (not final) — the settings screen edits this in place on the
@@ -54,6 +65,14 @@ class ApiClient {
   /// login/signup. Every /api/ask/* and /api/account call requires this;
   /// /api/auth/* and /api/health don't.
   String? token;
+
+  /// Supplies the signed-in user's model config (BYOK/hosted) for AI calls
+  /// whose caller doesn't pass one explicitly — set by AuthService. Null
+  /// before login, or for the free local backend.
+  Future<Map<String, dynamic>?> Function()? modelConfigProvider;
+
+  Future<Map<String, dynamic>?> _resolveModelConfig(Map<String, dynamic>? explicit) async =>
+      explicit ?? await modelConfigProvider?.call();
 
   /// A real, browser-like `User-Agent` on every request — without this,
   /// Dart's `http` package sends its own default (`Dart/<version> (dart:io)`),
@@ -243,7 +262,7 @@ class ApiClient {
     if (fileBytes != null && filename != null) {
       request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: filename));
     }
-    final streamed = await request.send().timeout(_requestTimeout, onTimeout: _timeoutError);
+    final streamed = await request.send().timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     final res = await http.Response.fromStream(streamed);
     return _decode(res);
   }
@@ -273,7 +292,7 @@ class ApiClient {
           headers: _jsonHeaders,
           body: jsonEncode({'doc_type': docType, if (title != null) 'title': title}),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -324,7 +343,7 @@ class ApiClient {
             'session_id': sessionId,
           }),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -358,9 +377,14 @@ class ApiClient {
     if (bytes != null && filename != null) {
       return _postMultipart('/api/ask/pdf', bytes: bytes, filename: filename, fields: fields);
     }
+    final modelConfig = await _resolveModelConfig(null);
     final res = await http
-        .post(Uri.parse('$baseUrl/api/ask/pdf'), headers: _authHeaders, body: fields)
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .post(
+          Uri.parse('$baseUrl/api/ask/pdf'),
+          headers: _authHeaders,
+          body: {...fields, if (modelConfig != null) 'model_config': jsonEncode(modelConfig)},
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -388,7 +412,7 @@ class ApiClient {
           headers: _jsonHeaders,
           body: jsonEncode({'url': url, 'kind': kind, 'session_id': sessionId}),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -398,6 +422,7 @@ class ApiClient {
     String? query,
     required String sessionId,
   }) async {
+    final modelConfig = await _resolveModelConfig(null);
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/ask/project'),
@@ -407,9 +432,10 @@ class ApiClient {
             if (project != null) 'project': project,
             if (query != null) 'query': query,
             'session_id': sessionId,
+            if (modelConfig != null) 'model_config': modelConfig,
           }),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -422,11 +448,47 @@ class ApiClient {
     final request = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'));
     request.headers.addAll(_authHeaders);
     request.fields.addAll(fields);
+    // A JSON-string form field (see routers/ask.py's
+    // _resolve_form_model_config) — these routes used to ignore the
+    // user's BYOK/hosted choice entirely (2026-10-07).
+    final modelConfig = await _resolveModelConfig(null);
+    if (modelConfig != null) request.fields['model_config'] = jsonEncode(modelConfig);
     request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
-    final streamed = await request.send().timeout(_requestTimeout, onTimeout: _timeoutError);
+    final streamed = await request.send().timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     final res = await http.Response.fromStream(streamed);
     return _decode(res);
   }
+
+  // --- AI generation from a project's material (2026-10-07) ---
+  //
+  // Each saves what it generates server-side and returns only the newly
+  // created rows plus `skipped_existing` (duplicates of what's already
+  // there). A 503 means the free model isn't available on this server; a
+  // 502 means the model answered but nothing usable could be parsed.
+
+  Future<Map<String, dynamic>> _postGenerate(String path, Map<String, dynamic> body) async {
+    final modelConfig = await _resolveModelConfig(null);
+    final res = await http
+        .post(
+          Uri.parse('$baseUrl$path'),
+          headers: _jsonHeaders,
+          body: jsonEncode({...body, if (modelConfig != null) 'model_config': modelConfig}),
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> generateConcepts(String slug) =>
+      _postGenerate('/api/v1/knowledge-spaces/$slug/concepts/generate', {});
+
+  Future<Map<String, dynamic>> generateFlashcards(String slug, {int count = 8, int? conceptId}) =>
+      _postGenerate('/api/v1/knowledge-spaces/$slug/flashcards/generate', {
+        'count': count,
+        if (conceptId != null) 'concept_id': conceptId,
+      });
+
+  Future<Map<String, dynamic>> generateQuestions(int conceptId, {int count = 6}) =>
+      _postGenerate('/api/v1/concepts/$conceptId/questions/generate', {'count': count});
 
   // --- concepts, mastery, assessment (blueprint Sections 15-18) ---
   //
@@ -623,13 +685,14 @@ class ApiClient {
   /// student's real mastery, memory, and personality server-side; this
   /// call itself takes no parameters beyond an optional BYOK modelConfig.
   Future<Map<String, dynamic>> explainConcept(int conceptId, {Map<String, dynamic>? modelConfig}) async {
+    modelConfig = await _resolveModelConfig(modelConfig);
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/v1/concepts/$conceptId/explain'),
           headers: _jsonHeaders,
           body: jsonEncode({if (modelConfig != null) 'model_config': modelConfig}),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -673,13 +736,14 @@ class ApiClient {
     required dynamic answer,
     Map<String, dynamic>? modelConfig,
   }) async {
+    modelConfig = await _resolveModelConfig(modelConfig);
     final res = await http
         .post(
           Uri.parse('$baseUrl/api/v1/questions/$questionId/attempt'),
           headers: _jsonHeaders,
           body: jsonEncode({'answer': answer, if (modelConfig != null) 'model_config': modelConfig}),
         )
-        .timeout(_requestTimeout, onTimeout: _timeoutError);
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
