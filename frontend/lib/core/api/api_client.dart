@@ -978,9 +978,17 @@ class ApiClient {
         // 2026-09-19: a Cloudflare "Just a moment..." challenge page,
         // triggered on some networks by Dart's default User-Agent — see
         // `_userAgent` above — showed up verbatim on several screens).
-        detail = res.body.trim().startsWith('<')
-            ? 'The server returned an unexpected response (not the app\'s API) — try again in a moment.'
-            : detail;
+        // 2026-10-07: the challenge came back even with the browser
+        // User-Agent, as an HTTP 429 for every request from one Wi-Fi
+        // network's IP — so name it, and give the one thing a student
+        // can actually do about it (another network).
+        final isCloudflareChallenge = res.body.contains('Just a moment') || res.body.contains('challenges.cloudflare.com');
+        if (isCloudflareChallenge) {
+          detail = 'The hosting provider\'s bot protection is blocking requests from this network right now. '
+              'Try switching between Wi-Fi and mobile data, or wait a few minutes and try again.';
+        } else if (res.body.trim().startsWith('<')) {
+          detail = 'The server returned an unexpected response (not the app\'s API) — try again in a moment.';
+        }
       }
       throw ApiException(res.statusCode, detail);
     }

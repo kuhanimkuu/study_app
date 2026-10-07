@@ -19,6 +19,7 @@ from ...core import security
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ..knowledge.models import KnowledgeSpace
+from ..knowledge import index_store
 from ..knowledge.router import get_space_or_404
 from . import generation
 from .flashcard_scheduler import RATINGS, review_flashcard
@@ -101,6 +102,7 @@ async def generate_concepts(
     new rather than duplicating."""
     space = await get_space_or_404(db, current_user["id"], slug)
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    await index_store.ensure_index_file(db, current_user["id"], slug)
     chunks = generation.load_chunks(current_user["id"], slug)
     existing = (await db.scalars(select(Concept.name).where(Concept.knowledge_space_id == space.id))).all()
 
@@ -342,6 +344,7 @@ async def generate_flashcards(
     linked to it."""
     space = await get_space_or_404(db, current_user["id"], slug)
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    await index_store.ensure_index_file(db, current_user["id"], slug)
     budget = generation.material_budget(model_config)
     focus = None
     if payload.concept_id is not None:

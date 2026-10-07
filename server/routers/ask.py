@@ -51,6 +51,7 @@ from ..core import security
 from ..core.model_config import ModelConfig, resolve_model_config_async
 from ..db.session import get_db
 from ..domains.billing import service as billing_service
+from ..domains.knowledge import index_store
 
 router = APIRouter()
 
@@ -355,6 +356,8 @@ async def ask_project(
     yet) and gets back a clarification; the follow-up call sends `query`
     (same session_id) to actually search it."""
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    if payload.project:
+        await index_store.ensure_index_file(db, current_user["id"], payload.project)
     result = await engines.moderator.run(
         input_type="project",
         content=payload.content,

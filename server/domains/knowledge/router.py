@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import engines
 from ...core import security
 from ...db.session import get_db
+from . import index_store
 from .models import GeneratedArtifact, KnowledgeSpace, Material
 
 router = APIRouter()
@@ -113,6 +114,7 @@ async def list_projects(
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
     projects = []
     for space in spaces:
+        await index_store.ensure_index_file(db, current_user["id"], space.slug)
         project = space.public()
         project["chunk_count"] = _chunk_count(projects_dir, space.slug)
         projects.append(project)
@@ -182,6 +184,7 @@ async def add_material(
 
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
     result = await engines.rag_projects.run(project=slug, material=[material_text], projects_dir=projects_dir)
+    await index_store.save_index(db, space.id, current_user["id"], slug)
 
     db.add(Material(knowledge_space_id=space.id, filename=filename, mime_type=mime_type, source_url=source_url))
     await db.commit()
@@ -259,6 +262,7 @@ async def generate_studio_doc(
 
     space = await get_space_or_404(db, current_user["id"], slug)
 
+    await index_store.ensure_index_file(db, current_user["id"], slug)
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
     index = engines.moderator._load_project_index(slug, projects_dir)
     if index is None or not index.get("chunks"):

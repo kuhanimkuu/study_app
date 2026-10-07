@@ -150,3 +150,27 @@ class GeneratedArtifact(Base):
             "url": self.url_path,
             "created_at": self.created_at.isoformat(),
         }
+
+
+class ProjectIndex(Base):
+    """The durable copy of a Knowledge Space's RAG index (chunks + their
+    embedding vectors — exactly the JSON rag/projects writes to
+    features/rag/projects/projects/user_<id>/<slug>.json). Added
+    2026-10-07: on a host with no persistent disk (the Render free tier)
+    that file vanished on every redeploy and every idle spin-down, so
+    search, project chat, Studio and AI generation all reported "no
+    material" while the Materials list (Postgres) still showed the
+    uploads. The file is kept as a cache the engines read unchanged;
+    index_store.py writes this row after each upload and restores the
+    file from it whenever the file is missing."""
+
+    __tablename__ = "project_indexes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    knowledge_space_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_spaces.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    data: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

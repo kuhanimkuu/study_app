@@ -223,3 +223,66 @@ def test_flashcard_parser_drops_copied_statement_fronts():
         "What is the function of the cell membrane?",
         "Osmosis",
     ]
+
+
+# --- the RAG index survives the host losing its disk (2026-10-07) ---
+
+
+async def _wipe_index_dir(client, headers):
+    """What a Render redeploy / idle spin-down does to the index files."""
+    import shutil
+
+    from server.domains.identity.router import _RAG_PROJECTS_ROOT
+
+    user_id = (await client.get("/api/auth/me", headers=headers)).json()["id"]
+    shutil.rmtree(_RAG_PROJECTS_ROOT / f"user_{user_id}")
+
+
+async def test_material_survives_a_wiped_disk(client, space, monkeypatch):
+    h, slug = space["headers"], space["slug"]
+    await _wipe_index_dir(client, h)
+
+    found = (await client.get(f"/api/v1/knowledge-spaces/{slug}/search", params={"q": "ATP"}, headers=h)).json()
+    assert found["results"], "search lost the material after the disk wipe"
+
+    await _wipe_index_dir(client, h)
+    chat = await client.post(
+        "/api/ask/project", json={"project": slug, "query": "what makes ATP?", "session_id": "wipe"}, headers=h
+    )
+    assert any(b["type"] == "source" for b in chat.json()["blocks"]), chat.text
+
+    await _wipe_index_dir(client, h)
+    _mock_model(monkeypatch, "Q: What makes ATP? | A: Mitochondria.")
+    gen = await client.post(f"/api/v1/knowledge-spaces/{slug}/flashcards/generate", json={}, headers=h)
+    assert gen.status_code == 200, gen.text
+
+    await _wipe_index_dir(client, h)
+    studio = await client.post(f"/api/projects/{slug}/studio", json={"doc_type": "summary"}, headers=h)
+    assert studio.status_code == 200, studio.text
+
+    await _wipe_index_dir(client, h)
+    projects = (await client.get("/api/projects", headers=h)).json()["projects"]
+    assert projects[0]["chunk_count"] > 0
+
+
+async def test_index_from_before_the_table_existed_is_backfilled(client, space):
+    """A space indexed before project_indexes existed has a file but no
+    row — the first read must copy it in, so a later wipe can't lose it."""
+    from sqlalchemy import delete, select
+
+    from server.db.session import async_session
+    from server.domains.knowledge.models import KnowledgeSpace, ProjectIndex
+
+    h, slug = space["headers"], space["slug"]
+    user_id = (await client.get("/api/auth/me", headers=h)).json()["id"]
+    async with async_session() as db:  # simulate the pre-migration state — THIS space's row only
+        space_id = await db.scalar(
+            select(KnowledgeSpace.id).where(KnowledgeSpace.user_id == user_id, KnowledgeSpace.slug == slug)
+        )
+        await db.execute(delete(ProjectIndex).where(ProjectIndex.knowledge_space_id == space_id))
+        await db.commit()
+
+    await client.get(f"/api/v1/knowledge-spaces/{slug}/search", params={"q": "ATP"}, headers=h)  # backfills
+    await _wipe_index_dir(client, h)
+    found = (await client.get(f"/api/v1/knowledge-spaces/{slug}/search", params={"q": "ATP"}, headers=h)).json()
+    assert found["results"]

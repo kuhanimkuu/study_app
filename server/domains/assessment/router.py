@@ -20,6 +20,7 @@ from ...core import security
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ..billing import service as billing_service
+from ..knowledge import index_store
 from ..knowledge.models import KnowledgeSpace
 from ..learning import generation
 from ..learning.models import Concept
@@ -105,6 +106,7 @@ async def generate_questions(
     concept = await get_concept_or_404(db, current_user["id"], concept_id)
     space = await db.get(KnowledgeSpace, concept.knowledge_space_id)
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    await index_store.ensure_index_file(db, current_user["id"], space.slug)
     material = await generation.relevant_material(
         current_user["id"], space.slug, f"{concept.name} {concept.description or ''}",
         generation.material_budget(model_config),
