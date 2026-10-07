@@ -23,15 +23,23 @@ def _load_engine(relative_path: str) -> ModuleType:
 
 
 moderator = _load_engine("moderator/engine.py")
-text_input = _load_engine("input_pipeline/text_input/engine.py")
-image_input = _load_engine("input_pipeline/image_input/engine.py")
-pdf_input = _load_engine("input_pipeline/pdf_input/engine.py")
-audio_input = _load_engine("input_pipeline/audio_input/engine.py")
-web_input = _load_engine("input_pipeline/web_input/engine.py")
-query_memory = _load_engine("personalization/query_memory/engine.py")
-rag_projects = _load_engine("rag/projects/engine.py")
-semantic_search = _load_engine("rag/semantic_search/engine.py")
-generate_docs = _load_engine("document_generation/generate_docs/engine.py")
+
+
+def _lazy_engine(relative_path: str) -> ModuleType:
+    """Imported on first use — see the moderator's LazyEngine docstring
+    for the memory measurements behind this (2026-10-07)."""
+    return moderator.LazyEngine(FEATURES_ROOT / relative_path, "server_dep_" + relative_path.replace("/", "_"))
+
+
+text_input = _lazy_engine("input_pipeline/text_input/engine.py")
+image_input = _lazy_engine("input_pipeline/image_input/engine.py")
+pdf_input = _lazy_engine("input_pipeline/pdf_input/engine.py")
+audio_input = _lazy_engine("input_pipeline/audio_input/engine.py")
+web_input = _lazy_engine("input_pipeline/web_input/engine.py")
+query_memory = _lazy_engine("personalization/query_memory/engine.py")
+rag_projects = _lazy_engine("rag/projects/engine.py")
+semantic_search = _lazy_engine("rag/semantic_search/engine.py")
+generate_docs = _lazy_engine("document_generation/generate_docs/engine.py")
 
 # Reuses the SAME loaded instance `moderator` already holds internally
 # (as `_model_router`) rather than a second `_load_engine(...)` call —

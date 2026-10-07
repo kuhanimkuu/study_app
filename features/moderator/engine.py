@@ -84,13 +84,43 @@ def _generated_file(extension: str) -> tuple[str, str]:
     return str(_GENERATED_DIR / filename), f"/generated/{filename}"
 
 
+class LazyEngine(ModuleType):
+    """Stands in for an engine module and imports it on first attribute
+    access. Added 2026-10-07: importing every engine eagerly put the idle
+    server at ~320 MB (scipy.stats alone ~68 MB, matplotlib and sympy
+    ~35 MB each) before any request ran, so on Render's 512 MB instance a
+    single PDF upload (fastembed + its model on top) exceeded the limit
+    and the server was killed. Lazily, a request only pays for the engines
+    it actually uses. Attribute writes and deletes are forwarded too, so
+    tests' monkeypatch.setattr(engine, "run", fake) still patches the real
+    module."""
+
+    def __init__(self, path: Path, module_name: str) -> None:
+        super().__init__(module_name)
+        object.__setattr__(self, "_lazy_path", path)
+        object.__setattr__(self, "_lazy_module", None)
+
+    def _lazy_load(self) -> ModuleType:
+        module = object.__getattribute__(self, "_lazy_module")
+        if module is None:
+            spec = importlib.util.spec_from_file_location(self.__name__, object.__getattribute__(self, "_lazy_path"))
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            object.__setattr__(self, "_lazy_module", module)
+        return module
+
+    def __getattr__(self, attr: str):
+        return getattr(self._lazy_load(), attr)
+
+    def __setattr__(self, attr: str, value) -> None:
+        setattr(self._lazy_load(), attr, value)
+
+    def __delattr__(self, attr: str) -> None:
+        delattr(self._lazy_load(), attr)
+
+
 def _load_sibling_engine(relative_path: str) -> ModuleType:
-    path = _FEATURES_ROOT / relative_path
-    module_name = "moderator_dep_" + relative_path.replace("/", "_")
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return LazyEngine(_FEATURES_ROOT / relative_path, "moderator_dep_" + relative_path.replace("/", "_"))
 
 
 _symbolic = _load_sibling_engine("math_engine/symbolic/engine.py")

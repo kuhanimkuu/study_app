@@ -788,3 +788,26 @@ User installed the new APK and reported (a) a red "server returned an unexpected
 **Verified:** 2 new tests that upload, `rmtree` the user's index dir (what a Render restart does), then confirm search, project chat, flashcard generation, Studio and project chunk counts all still work, plus the backfill path. pytest **156/156**, no leaked index dirs. `flutter analyze` 0, `flutter test` 29/29. New APK built and installed on the phone.
 
 **Limits:** PDFs uploaded to Render *before* this deploy already lost their index (no Postgres copy existed) — they must be re-uploaded once. Index JSON includes 384-float vectors per chunk (~8 KB/chunk), so large projects take real space in Render's free 1 GB Postgres. Cloudflare blocking on this network is outside our control on `*.onrender.com`; a custom domain or a different host would be the real fix.
+
+### 2026-10-07 (later) — FIXED: Render out-of-memory crash on the second PDF upload
+
+User: "I can't upload more than one document to a project", plus Render's "instance exceeded its memory limit … automatic restart" notice (free tier, 512 MB).
+
+**Measured, not guessed** (psutil RSS of the live server, sampled every 50 ms, two 40-page PDF uploads + search):
+
+| | idle | peak | notes |
+|---|---|---|---|
+| before | 323 MB | **1,519 MB** | +~1 GB on the first upload, never released |
+| + batch fix + shared model | 323 MB | 548 MB | |
+| + lazy engines (Render-like, no torch) | **142 MB** | 434 MB | |
+| worst case: chat warm-up then uploads, batch 16 | 197 MB | 487 MB | only ~25 MB headroom |
+| **final: same worst case, batch 8** | 197 MB | **417 MB** | ~95 MB headroom |
+
+**Three root causes, three fixes:**
+1. **fastembed's default `batch_size=256`** — embedding 400 chunks grew the process ~858 MB (isolated benchmark); 16 → ~95 MB, 8 → ~51 MB. Now `EMBED_BATCH_SIZE = 8` in `rag/indexing` and `rag/semantic_search`.
+2. **Up to five copies of the same ~100 MB embedding model** — both engines are loaded by file path from several places (server/engines, moderator, rag/projects, searchable_knowledge), each a separate module with its own "singleton". Now one process-wide registry in `sys.modules`.
+3. **Every engine imported at boot** (scipy.stats ~68 MB, matplotlib ~35, sympy ~36, fastembed ~66, onnxruntime ~24 …) even though most requests use none of them. New `LazyEngine` (moderator) imports a module on first attribute access and forwards attribute writes (so tests' `monkeypatch.setattr(engine, "run", …)` still works); used by the moderator's ~40 sibling engines and `server/engines.py`. Idle 318 → 135 MB.
+
+**Verified**: pytest 156/156 (no test changes needed — monkeypatching through the proxy works). Memory probes above against a torch-less server mimicking Render. 0 leftover test users, 0 index dirs.
+
+**Trade-off / limits:** indexing is slower — 40-page PDF 49–77 s locally at batch 8 (vs ~25 s at 16); Render's fractional CPU will be slower still, within the app's 5-min upload timeout. Very large PDFs (hundreds of pages) still grow the in-memory index (~12 KB/chunk as Python lists, copied during the merge) — not measured beyond 2×40 pages. The first request touching an engine now pays its import time instead of startup.

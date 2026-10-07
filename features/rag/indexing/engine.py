@@ -35,13 +35,41 @@ locally-run embedding model, not a keyword/TF-IDF stand-in.
 """
 from __future__ import annotations
 
+import sys
+import types
 from typing import Any
 
 from fastembed import TextEmbedding
 
 MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
-_model: TextEmbedding | None = None  # lazy singleton — loading it is expensive
+# --- memory (2026-10-07) ---
+# Measured locally: embedding 400 chunks with fastembed's default
+# batch_size (256) grew the process by ~858 MB; 16 by ~95 MB (same speed);
+# 8 by ~51 MB (~35% slower). On Render's 512 MB instance the default crashed
+# the server ("exceeded its memory limit") on a student's second PDF upload,
+# and 16 still left only ~25 MB of headroom in a chat-then-upload worst case.
+EMBED_BATCH_SIZE = 8
+
+# This engine is loaded by file path from several places (server/engines.py,
+# moderator, rag/projects, searchable_knowledge), and each load is a separate
+# module with its own globals — so a per-module "singleton" meant up to five
+# copies of the same ~100 MB model in one process. The registry lives in
+# sys.modules, which every copy shares.
+_REGISTRY_NAME = "_study_os_embedding_models"
+
+
+def _shared_model(model_name: str) -> "TextEmbedding":
+    registry = sys.modules.get(_REGISTRY_NAME)
+    if registry is None:
+        registry = types.ModuleType(_REGISTRY_NAME)
+        registry.models = {}
+        sys.modules[_REGISTRY_NAME] = registry
+    model = registry.models.get(model_name)
+    if model is None:
+        model = TextEmbedding(model_name=model_name)
+        registry.models[model_name] = model
+    return model
 
 
 async def run(**kwargs: Any) -> dict:
@@ -101,17 +129,14 @@ def _chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:
 
 
 def _get_model() -> TextEmbedding:
-    global _model
-    if _model is None:
-        _model = TextEmbedding(model_name=MODEL_NAME)
-    return _model
+    return _shared_model(MODEL_NAME)
 
 
 def _embed(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     model = _get_model()
-    return [vec.tolist() for vec in model.embed(texts)]
+    return [vec.tolist() for vec in model.embed(texts, batch_size=EMBED_BATCH_SIZE)]
 
 
 if __name__ == "__main__":
