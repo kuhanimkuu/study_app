@@ -16,22 +16,26 @@ drift apart — same reasoning as the file this replaces.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 import uuid
+import weakref
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
 from ...core import security
-from ...db.session import get_db
+from ...db.session import async_session, get_db
 from . import index_store
 from .models import GeneratedArtifact, KnowledgeSpace, Material
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
@@ -161,6 +165,31 @@ async def list_materials(
     return {"materials": [m.public() for m in materials]}
 
 
+# Uploads are indexed in a background task since 2026-10-07. Indexing a PDF
+# (text extraction + embedding every chunk) is minutes of CPU on Render's
+# fractional-CPU free instance; done inside the request it blocked the
+# server so completely that Render's health check got "connection reset"
+# and the instance was restarted mid-upload. Tests set this to False
+# (server/tests/conftest.py) so an upload is indexed by the time the
+# request returns.
+INDEX_IN_BACKGROUND = True
+
+# Strong references to running jobs (asyncio only keeps weak ones), and one
+# indexing job at a time per event loop — two concurrent uploads would
+# otherwise double the embedding memory on a 512 MB instance.
+_background_jobs: set[asyncio.Task] = set()
+_index_locks: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock]" = weakref.WeakKeyDictionary()
+
+
+def _index_lock() -> asyncio.Lock:
+    loop = asyncio.get_running_loop()
+    lock = _index_locks.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _index_locks[loop] = lock
+    return lock
+
+
 @router.post("/api/projects/{slug}/material")
 async def add_material(
     slug: str,
@@ -170,41 +199,53 @@ async def add_material(
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Extracts text from whichever of `file` (.pdf or .txt), `text`
-    (pasted text), or `url` (a web page, fetched via the same web_input
-    engine chat's "add a link" attachment already uses) was sent, indexes
-    it into this space via rag/projects (JSON file, unchanged), and
-    records a Material metadata row in Postgres — new: the old version
-    tracked zero metadata per upload."""
+    """Accepts `file` (.pdf or .txt), `text` (pasted), or `url` (a web page,
+    fetched via the same web_input engine chat's "add a link" uses),
+    records a Material row with status "indexing", and indexes it into
+    this space via rag/projects in the background — poll GET .../materials
+    for "indexed" / "failed" (with `error`)."""
     space = await get_space_or_404(db, current_user["id"], slug)
+    filename, mime_type, material_text, pdf_path, source_url = await _receive_material(
+        file, text, url, current_user["id"], slug
+    )
 
-    filename, mime_type, material_text, source_url = await _extract_material(file, text, url, current_user["id"], slug)
-    if not material_text.strip():
-        raise HTTPException(status_code=400, detail="no text content found in the upload")
-
-    projects_dir = engines.moderator._user_projects_dir(current_user["id"])
-    result = await engines.rag_projects.run(project=slug, material=[material_text], projects_dir=projects_dir)
-    await index_store.save_index(db, space.id, current_user["id"], slug)
-
-    db.add(Material(knowledge_space_id=space.id, filename=filename, mime_type=mime_type, source_url=source_url))
+    material = Material(
+        knowledge_space_id=space.id, filename=filename, mime_type=mime_type,
+        source_url=source_url, status="indexing",
+    )
+    db.add(material)
     await db.commit()
+    await db.refresh(material)
 
-    return result
+    job = _index_material(material.id, space.id, current_user["id"], slug, material_text, pdf_path)
+    if INDEX_IN_BACKGROUND:
+        task = asyncio.create_task(job)
+        _background_jobs.add(task)
+        task.add_done_callback(_background_jobs.discard)
+        return {"material": material.public(), "status": "indexing"}
+
+    chunks = await job
+    await db.refresh(material)
+    if material.status == "failed":
+        raise HTTPException(status_code=400, detail=material.error or "indexing failed")
+    return {"material": material.public(), "status": material.status, "chunks": chunks}
 
 
-async def _extract_material(
+async def _receive_material(
     file: UploadFile | None, text: str | None, url: str | None, user_id: int, slug: str
-) -> tuple[str, str, str, str | None]:
-    """Returns (filename, mime_type, extracted_text, source_url)."""
+) -> tuple[str, str, str | None, Path | None, str | None]:
+    """The fast part, done inside the request: returns (filename,
+    mime_type, text, pdf_path, source_url) — exactly one of text/pdf_path
+    is set. PDF text extraction is left to the background job."""
     if text is not None and text.strip():
-        return "pasted_text.txt", "text/plain", text, None
+        return "pasted_text.txt", "text/plain", text, None, None
 
     if url is not None and url.strip():
         try:
             fetched = await engines.web_input.run(content=url.strip())
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"could not fetch URL: {exc}") from exc
-        return url.strip(), "text/html", fetched["content"], fetched["source_url"]
+        return url.strip(), "text/html", fetched["content"], None, fetched["source_url"]
 
     if file is None:
         raise HTTPException(status_code=400, detail="one of 'file', 'text', or 'url' is required")
@@ -212,21 +253,79 @@ async def _extract_material(
     uploads_dir = Path(__file__).resolve().parent.parent.parent / "uploads" / "projects" / f"user_{user_id}"
     uploads_dir.mkdir(parents=True, exist_ok=True)
     filename = file.filename or "upload"
-    dest = uploads_dir / f"{slug}_{filename}"
+    dest = uploads_dir / f"{slug}_{uuid.uuid4().hex[:8]}_{filename}"
     with dest.open("wb") as f:
-        f.write(file.file.read())
+        f.write(await file.read())
 
     if dest.suffix.lower() == ".pdf":
-        try:
-            extracted = await engines.pdf_input.run(content=str(dest))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"could not read PDF: {exc}") from exc
-        return filename, "application/pdf", extracted["content"], None
-
+        return filename, "application/pdf", None, dest, None
     try:
-        return filename, "text/plain", dest.read_text(encoding="utf-8", errors="replace"), None
+        return filename, "text/plain", dest.read_text(encoding="utf-8", errors="replace"), None, None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read file as text: {exc}") from exc
+
+
+def _run_engine_in_thread(engine_run, **kwargs) -> dict:
+    """Engines are `async def` with synchronous bodies (pdf_input's
+    extraction is pure CPU) — run one on its own loop in a worker thread so
+    the server's event loop stays free."""
+    return asyncio.run(engine_run(**kwargs))
+
+
+async def _index_material(
+    material_id: int, space_id: int, user_id: int, slug: str, text: str | None, pdf_path: Path | None
+) -> int | None:
+    """Extracts (for a PDF), indexes, saves the durable index copy, and
+    marks the Material "indexed" or "failed". Never raises — a background
+    task's exception would otherwise vanish. Returns the space's chunk
+    count on success."""
+    async with _index_lock():
+        error: str | None = None
+        chunks: int | None = None
+        try:
+            if pdf_path is not None:
+                try:
+                    extracted = await asyncio.to_thread(_run_engine_in_thread, engines.pdf_input.run, content=str(pdf_path))
+                except Exception as exc:
+                    raise ValueError(f"could not read PDF: {exc}") from exc
+                text = extracted["content"]
+            if not text or not text.strip():
+                raise ValueError(
+                    "no text found in this file — if it's a scanned PDF (photos of pages), "
+                    "uploads can't read it yet; try a text-based PDF or paste the text"
+                )
+            projects_dir = engines.moderator._user_projects_dir(user_id)
+            result = await engines.rag_projects.run(project=slug, material=[text], projects_dir=projects_dir)
+            chunks = result["chunks"]
+        except Exception as exc:
+            error = str(exc)[:1000]
+
+        try:
+            async with async_session() as db:
+                material = await db.get(Material, material_id)
+                if material is None:  # project deleted while indexing
+                    return chunks
+                if error is None:
+                    await index_store.save_index(db, space_id, user_id, slug)
+                material.status = "failed" if error else "indexed"
+                material.error = error
+                await db.commit()
+        except Exception:
+            logger.exception("could not record indexing result for material %s", material_id)
+        return chunks
+
+
+async def mark_interrupted_indexing_failed() -> None:
+    """Called at startup: a material still "indexing" means the process that
+    was indexing it died (a restart, or running out of memory) — say so
+    instead of leaving it spinning forever."""
+    async with async_session() as db:
+        await db.execute(
+            update(Material)
+            .where(Material.status == "indexing")
+            .values(status="failed", error="indexing was interrupted by a server restart — please upload it again")
+        )
+        await db.commit()
 
 
 def _chunk_count(projects_dir: Path, slug: str) -> int:

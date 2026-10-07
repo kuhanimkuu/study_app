@@ -23,6 +23,17 @@ def _reset_rate_limits():
     yield
 
 
+@pytest.fixture(autouse=True)
+def _index_uploads_synchronously(monkeypatch):
+    """Uploads index in the background in production (see knowledge
+    router's INDEX_IN_BACKGROUND); the suite indexes inline so a test can
+    search/generate right after uploading. test_background_indexing.py
+    switches it back on to cover the real path."""
+    from server.domains.knowledge import router as knowledge_router
+
+    monkeypatch.setattr(knowledge_router, "INDEX_IN_BACKGROUND", False)
+
+
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)

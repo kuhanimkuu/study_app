@@ -52,6 +52,7 @@ Run with: uvicorn server.main:app --reload --port 8000
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -66,6 +67,7 @@ from .domains.assessment.router import router as assessment_router
 from .domains.billing.router import router as billing_router
 from .domains.identity.router import router as identity_router
 from .domains.knowledge.notes_router import router as notes_router
+from .domains.knowledge.router import mark_interrupted_indexing_failed
 from .domains.knowledge.router import router as knowledge_router
 from .domains.knowledge.search_router import router as search_router
 from .domains.learning.router import router as learning_router
@@ -82,7 +84,15 @@ FEATURES_ROOT = Path(__file__).resolve().parent.parent / "features"
 GENERATED_DIR = FEATURES_ROOT / "moderator" / "generated"
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="Study OS")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Uploads index in the background (domains/knowledge/router.py) — any
+    # left "indexing" from before this start were cut off by the restart.
+    await mark_interrupted_indexing_failed()
+    yield
+
+
+app = FastAPI(title="Study OS", lifespan=lifespan)
 
 # CORS_ALLOWED_ORIGINS in .env (server/core/config.py) — defaults to "*"
 # (every origin) so local dev against the Flutter app needs no setup; set

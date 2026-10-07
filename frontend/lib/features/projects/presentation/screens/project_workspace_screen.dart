@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -52,6 +54,11 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   String? _sourcesError;
   List<dynamic>? _materials;
 
+  /// Uploads index in the background on the server (2026-10-07) — while
+  /// any material is still "indexing", re-fetch the list every few seconds
+  /// so it flips to ready/failed without the student having to refresh.
+  Timer? _materialsPoll;
+
   // --- Chat tab state ---
   final List<ChatMessage> _messages = [];
   final _chatController = TextEditingController();
@@ -86,10 +93,34 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   Future<void> _loadMaterials() async {
     try {
       final result = await widget.apiClient.listMaterials(widget.slug);
-      if (mounted) setState(() => _materials = result['materials'] as List<dynamic>);
+      if (!mounted) return;
+      final materials = result['materials'] as List<dynamic>;
+      setState(() => _materials = materials);
+      final indexing = materials.any((m) => (m as Map<String, dynamic>)['status'] == 'indexing');
+      if (indexing) {
+        _materialsPoll ??= Timer.periodic(const Duration(seconds: 4), (_) => _loadMaterials());
+      } else if (_materialsPoll != null) {
+        _materialsPoll!.cancel();
+        _materialsPoll = null;
+        _loadChunkCount(); // something just finished indexing
+      }
     } catch (_) {
       // non-critical — Sources tab just won't show upload history yet
     }
+  }
+
+  @override
+  void dispose() {
+    _materialsPoll?.cancel();
+    super.dispose();
+  }
+
+  void _showIndexingStarted() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      content: Text('Uploaded — indexing in the background. Large PDFs can take a few minutes; '
+          'you can keep using the app.'),
+    ));
   }
 
   Future<void> _loadArtifacts() async {
@@ -150,9 +181,9 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       _sourcesError = null;
     });
     try {
-      final result = await widget.apiClient.addProjectMaterial(slug: widget.slug, text: text);
+      await widget.apiClient.addProjectMaterial(slug: widget.slug, text: text);
       _materialController.clear();
-      setState(() => _chunkCount = result['chunks'] as int?);
+      _showIndexingStarted();
       await _loadMaterials();
     } on ApiException catch (e) {
       setState(() => _sourcesError = e.message);
@@ -169,9 +200,9 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       _sourcesError = null;
     });
     try {
-      final result = await widget.apiClient.addProjectMaterial(slug: widget.slug, url: url);
+      await widget.apiClient.addProjectMaterial(slug: widget.slug, url: url);
       _linkController.clear();
-      setState(() => _chunkCount = result['chunks'] as int?);
+      _showIndexingStarted();
       await _loadMaterials();
     } on ApiException catch (e) {
       setState(() => _sourcesError = e.message);
@@ -190,12 +221,12 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       _sourcesError = null;
     });
     try {
-      final response = await widget.apiClient.addProjectMaterial(
+      await widget.apiClient.addProjectMaterial(
         slug: widget.slug,
         fileBytes: file.bytes,
         filename: file.name,
       );
-      setState(() => _chunkCount = response['chunks'] as int?);
+      _showIndexingStarted();
       await _loadMaterials();
     } on ApiException catch (e) {
       setState(() => _sourcesError = e.message);
@@ -396,18 +427,25 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
           ..._materials!.map((raw) {
             final material = raw as Map<String, dynamic>;
             final sourceUrl = material['source_url'] as String?;
+            final status = material['status'] as String? ?? 'indexed';
+            final error = material['error'] as String?;
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: ListItemCard(
                 icon: sourceUrl != null ? Icons.link_outlined : Icons.description_outlined,
+                iconColor: status == 'failed' ? Theme.of(context).colorScheme.error : null,
                 // A link source's filename IS the URL (see router.py's
-                // _extract_material) — showing it again in the subtitle
+                // _receive_material) — showing it again in the subtitle
                 // would just repeat the title, so this branch drops
                 // mime_type (always "text/html", not informative here).
                 title: material['filename'] as String,
-                subtitle: sourceUrl != null
-                    ? material['created_at'] as String
-                    : '${material['mime_type']} · ${material['created_at']}',
+                subtitle: status == 'failed' && error != null
+                    ? 'Failed: $error'
+                    : sourceUrl != null
+                        ? material['created_at'] as String
+                        : '${material['mime_type']} · ${material['created_at']}',
+                subtitleMaxLines: status == 'failed' ? 3 : 1,
+                trailing: _MaterialStatusBadge(status: status),
               ),
             );
           }),
@@ -544,5 +582,31 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         ),
       ],
     );
+  }
+}
+
+
+/// indexing → spinner, failed → red label, indexed → a quiet "Ready".
+class _MaterialStatusBadge extends StatelessWidget {
+  const _MaterialStatusBadge({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final style = Theme.of(context).textTheme.labelSmall;
+    switch (status) {
+      case 'indexing':
+        return Row(mainAxisSize: MainAxisSize.min, children: [
+          const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+          const SizedBox(width: 6),
+          Text('Indexing…', style: style),
+        ]);
+      case 'failed':
+        return Text('Failed', style: style?.copyWith(color: scheme.error, fontWeight: FontWeight.w700));
+      default:
+        return Text('Ready', style: style?.copyWith(color: scheme.primary));
+    }
   }
 }

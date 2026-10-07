@@ -69,7 +69,12 @@ class Material(Base):
     )
     filename: Mapped[str] = mapped_column(String(500), nullable=False)
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    # "indexing" → "indexed" | "failed" since 2026-10-07: uploads are
+    # indexed in the background (router.py's _index_in_background) instead
+    # of inside the request, which on Render ran long enough to block the
+    # server and fail its health check. `error` says why a "failed" one did.
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="indexed")
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The source URL this material was fetched from, when added via a link
     # (router.py's add_material `url` field) — null for pasted text or an
     # uploaded file, which have no URL of their own.
@@ -86,6 +91,7 @@ class Material(Base):
             "filename": self.filename,
             "mime_type": self.mime_type,
             "status": self.status,
+            "error": self.error,
             "source_url": self.source_url,
             "created_at": self.created_at.isoformat(),
         }

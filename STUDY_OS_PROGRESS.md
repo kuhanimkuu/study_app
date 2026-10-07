@@ -811,3 +811,18 @@ User: "I can't upload more than one document to a project", plus Render's "insta
 **Verified**: pytest 156/156 (no test changes needed — monkeypatching through the proxy works). Memory probes above against a torch-less server mimicking Render. 0 leftover test users, 0 index dirs.
 
 **Trade-off / limits:** indexing is slower — 40-page PDF 49–77 s locally at batch 8 (vs ~25 s at 16); Render's fractional CPU will be slower still, within the app's 5-min upload timeout. Very large PDFs (hundreds of pages) still grow the in-memory index (~12 KB/chunk as Python lists, copied during the merge) — not measured beyond 2×40 pages. The first request touching an engine now pays its import time instead of startup.
+
+### 2026-10-07 (later) — FIXED: uploads indexed in the background; Render health-check restarts
+
+After the memory fix deployed, the upload still failed; Render alerted `Get "http://…:10000/api/health": … connection reset by peer`. Root cause: indexing (PDF extraction + embedding) ran **inside the upload request on the event loop** — minutes of CPU on Render's fractional CPU, during which the server answered nothing, including Render's health check, so the instance was restarted mid-upload. Also: ONNX Runtime sized its thread pool from the host's visible CPU count (memory per thread) on a container that gets a fraction of one CPU.
+
+**Fix:**
+- `POST /api/projects/{slug}/material` now saves the file (or pasted text / fetched URL), creates the Material with `status="indexing"` and returns immediately; a background task (one at a time per process, `_index_lock`) extracts PDF text in a worker thread, indexes, saves the durable index copy, and sets `indexed` or `failed` + `error` (new `materials.error` column, migration `b81e4f0c9d27`).
+- Embedding (`rag/indexing`, `rag/semantic_search`) runs via `asyncio.to_thread`; `TextEmbedding(threads=1)`.
+- App startup (`lifespan`) marks any material still `indexing` as failed ("interrupted by a server restart — upload it again").
+- Flutter Sources tab: per-material Indexing…/Ready/Failed badge with the reason, polls every 4 s only while something is indexing, refreshes chunk count when done, snackbar on upload.
+- Tests index inline (conftest flag) except the new `test_background_indexing.py`.
+
+**Verified:** `test_background_indexing.py` (4): upload returns `indexing` immediately and **`/api/health` answers in < 2 s while indexing is still running**, then becomes searchable; an unreadable PDF ends `failed` with a reason; two uploads both land; startup marks interrupted ones failed. pytest **160/160**, `flutter test` 29/29, `flutter analyze` 0.
+
+**Limits:** a job interrupted by a restart isn't retried automatically (the file is on ephemeral disk) — the student re-uploads. Scanned PDFs (no text layer) still fail at upload with a clear reason; OCR for uploads isn't wired.

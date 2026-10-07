@@ -35,6 +35,7 @@ locally-run embedding model, not a keyword/TF-IDF stand-in.
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from typing import Any
@@ -67,7 +68,12 @@ def _shared_model(model_name: str) -> "TextEmbedding":
         sys.modules[_REGISTRY_NAME] = registry
     model = registry.models.get(model_name)
     if model is None:
-        model = TextEmbedding(model_name=model_name)
+        # threads=1: ONNX Runtime otherwise sizes its pool from the CPU
+        # count it can see — on a container host that can be the host's
+        # many cores (each thread with its own memory arena), while the
+        # Render free instance actually gets a fraction of one CPU, so
+        # extra threads add memory and no speed (2026-10-07).
+        model = TextEmbedding(model_name=model_name, threads=1)
         registry.models[model_name] = model
     return model
 
@@ -86,7 +92,10 @@ async def run(**kwargs: Any) -> dict:
     for doc in documents:
         chunks.extend(_chunk_text(doc, chunk_size, chunk_overlap))
 
-    vectors = _embed(chunks)
+    # Off the event loop (2026-10-07): embedding is minutes of CPU on a
+    # small instance, and running it inline froze the whole server — Render's
+    # health check got no answer and the instance was restarted mid-upload.
+    vectors = await asyncio.to_thread(_embed, chunks)
 
     return {
         "index": {"chunks": chunks, "vectors": vectors, "model": MODEL_NAME},

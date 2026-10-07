@@ -28,6 +28,7 @@ engines together).
 """
 from __future__ import annotations
 
+import asyncio
 import sys
 import types
 from typing import Any
@@ -59,7 +60,12 @@ def _shared_model(model_name: str) -> "TextEmbedding":
         sys.modules[_REGISTRY_NAME] = registry
     model = registry.models.get(model_name)
     if model is None:
-        model = TextEmbedding(model_name=model_name)
+        # threads=1: ONNX Runtime otherwise sizes its pool from the CPU
+        # count it can see — on a container host that can be the host's
+        # many cores (each thread with its own memory arena), while the
+        # Render free instance actually gets a fraction of one CPU, so
+        # extra threads add memory and no speed (2026-10-07).
+        model = TextEmbedding(model_name=model_name, threads=1)
         registry.models[model_name] = model
     return model
 
@@ -80,7 +86,7 @@ async def run(**kwargs: Any) -> dict:
     if not chunks:
         return {"results": []}
 
-    query_vector = _embed([query])[0]
+    query_vector = (await asyncio.to_thread(_embed, [query]))[0]
     scores = _cosine_similarities(query_vector, vectors)
 
     ranked = sorted(zip(chunks, scores), key=lambda pair: pair[1], reverse=True)
