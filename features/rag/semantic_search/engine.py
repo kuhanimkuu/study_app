@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 import types
 from typing import Any
 
@@ -55,11 +56,21 @@ _REGISTRY_NAME = "_study_os_embedding_models"
 def _shared_model(model_name: str) -> "TextEmbedding":
     registry = sys.modules.get(_REGISTRY_NAME)
     if registry is None:
-        registry = types.ModuleType(_REGISTRY_NAME)
-        registry.models = {}
-        sys.modules[_REGISTRY_NAME] = registry
+        fresh = types.ModuleType(_REGISTRY_NAME)
+        fresh.models = {}
+        fresh.lock = threading.Lock()
+        # setdefault, not assignment: two threads racing here must end up
+        # sharing one registry (and one lock), not each keep their own.
+        registry = sys.modules.setdefault(_REGISTRY_NAME, fresh)
     model = registry.models.get(model_name)
-    if model is None:
+    if model is not None:
+        return model
+    # Embedding runs in worker threads, so two first requests can both get
+    # here — without the lock each loads its own ~100 MB copy (2026-10-19).
+    with registry.lock:
+        model = registry.models.get(model_name)
+        if model is not None:
+            return model
         # threads=1: ONNX Runtime otherwise sizes its pool from the CPU
         # count it can see — on a container host that can be the host's
         # many cores (each thread with its own memory arena), while the

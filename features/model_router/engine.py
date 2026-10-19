@@ -73,6 +73,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from typing import Any, Protocol
 
 TIER_MODELS = {
@@ -213,6 +214,9 @@ class OpenAIBackend:
 
 
 _local_backends: dict[str, Backend] = {}  # lazy singletons per tier — loading a model is expensive
+# _get_backend runs in a worker thread (see run()), so two first requests
+# could otherwise each load the same model (2026-10-19).
+_local_backends_lock = threading.Lock()
 
 # Caps how many local-model generate() calls run at once — see this
 # module's docstring for why (PyTorch's default thread pool already tries
@@ -229,7 +233,9 @@ def _get_backend(backend_name: str, tier: str, api_key: str | None, model_name: 
         if tier not in _local_backends:
             if tier not in TIER_MODELS:
                 raise ValueError(f"unknown tier: {tier!r} (expected 'tiny' or 'main')")
-            _local_backends[tier] = TransformersBackend(TIER_MODELS[tier])
+            with _local_backends_lock:
+                if tier not in _local_backends:
+                    _local_backends[tier] = TransformersBackend(TIER_MODELS[tier])
         return _local_backends[tier]
 
     if backend_name in ("anthropic", "openai", "deepseek"):
@@ -258,8 +264,11 @@ async def run(**kwargs: Any) -> dict:
     model_name: str | None = kwargs.get("model_name")
     max_tokens: int = kwargs.get("max_tokens", 200)
 
-    backend = _get_backend(backend_name, tier, api_key, model_name)
-    loop = asyncio.get_event_loop()
+    # Off the event loop too (2026-10-19): the local backend's first load
+    # reads the model weights from disk, measured stalling every other
+    # request on the server for ~14s.
+    backend = await asyncio.to_thread(_get_backend, backend_name, tier, api_key, model_name)
+    loop = asyncio.get_running_loop()
     # generate() is a blocking call (local: CPU-bound model inference;
     # hosted: a synchronous SDK network call) — run it off the event loop
     # so this coroutine doesn't block the whole async moderator/scheduler

@@ -61,6 +61,8 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   /// any material is still "indexing", re-fetch the list every few seconds
   /// so it flips to ready/failed without the student having to refresh.
   Timer? _materialsPoll;
+  Duration? _materialsPollDelay;
+  bool _wasIndexing = false;
 
   // --- Chat tab state ---
   final List<ChatMessage> _messages = [];
@@ -93,22 +95,39 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
     _loadArtifacts();
   }
 
-  Future<void> _loadMaterials() async {
+  /// While something is indexing, re-checks after each reply arrives —
+  /// not on a fixed Timer.periodic, which kept firing every 4s even while
+  /// a slow (or cold-starting) server hadn't answered the last one, piling
+  /// up requests. The wait grows 4s → 30s for a long PDF, and starts over
+  /// whenever the screen reloads for its own reason, e.g. a new upload
+  /// (2026-10-19).
+  Future<void> _loadMaterials({bool fromPoll = false}) async {
+    _materialsPoll?.cancel();
+    _materialsPoll = null;
+    if (!fromPoll) _materialsPollDelay = null;
+    // On a failed request, keep checking only if we were already waiting.
+    var indexing = _wasIndexing;
     try {
       final result = await widget.apiClient.listMaterials(widget.slug);
       if (!mounted) return;
       final materials = result['materials'] as List<dynamic>;
       setState(() => _materials = materials);
-      final indexing = materials.any((m) => (m as Map<String, dynamic>)['status'] == 'indexing');
-      if (indexing) {
-        _materialsPoll ??= Timer.periodic(const Duration(seconds: 4), (_) => _loadMaterials());
-      } else if (_materialsPoll != null) {
-        _materialsPoll!.cancel();
-        _materialsPoll = null;
+      indexing = materials.any((m) => (m as Map<String, dynamic>)['status'] == 'indexing');
+      if (!indexing && _wasIndexing) {
         _loadChunkCount(); // something just finished indexing
       }
     } catch (_) {
       // non-critical — Sources tab just won't show upload history yet
+    }
+    if (!mounted) return;
+    _wasIndexing = indexing;
+    if (indexing) {
+      final previous = _materialsPollDelay;
+      final delay = previous == null ? const Duration(seconds: 4) : Duration(seconds: (previous.inSeconds * 3 ~/ 2).clamp(4, 30));
+      _materialsPollDelay = delay;
+      _materialsPoll = Timer(delay, () => _loadMaterials(fromPoll: true));
+    } else {
+      _materialsPollDelay = null;
     }
   }
 

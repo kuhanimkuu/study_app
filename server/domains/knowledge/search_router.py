@@ -12,11 +12,14 @@ output differently for their different callers.
 """
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
 from ...core import security
+from ...core.threads import run_engine_in_thread
 from ...db.session import get_db
 from . import index_store
 from .router import get_space_or_404
@@ -36,12 +39,12 @@ async def search_knowledge_space(
     await index_store.ensure_index_file(db, current_user["id"], slug)
 
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
-    index = engines.moderator._load_project_index(slug, projects_dir)
+    index = await asyncio.to_thread(engines.moderator._load_project_index, slug, projects_dir)
     if index is None or not index.get("chunks"):
         return {"results": []}
 
     try:
-        search_result = await engines.semantic_search.run(index=index, query=q, top_k=limit)
+        search_result = await run_engine_in_thread(engines.semantic_search, index=index, query=q, top_k=limit)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"search failed: {exc}") from exc
 

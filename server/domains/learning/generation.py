@@ -17,12 +17,14 @@ semantic search first.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
+from ...core.threads import run_engine_in_thread
 from ..billing import service as billing_service
 
 # The free local model (~0.5B params) slows down sharply and loses the
@@ -36,8 +38,15 @@ def material_budget(model_config: dict) -> int:
 
 
 def load_chunks(user_id: int, slug: str) -> list[str]:
+    return _chunks_of(_load_index(user_id, slug))
+
+
+def _load_index(user_id: int, slug: str) -> dict | None:
     projects_dir = engines.moderator._user_projects_dir(user_id)
-    index = engines.moderator._load_project_index(slug, projects_dir)
+    return engines.moderator._load_project_index(slug, projects_dir)
+
+
+def _chunks_of(index: dict | None) -> list[str]:
     chunks = (index or {}).get("chunks") or []
     if not chunks:
         raise HTTPException(status_code=400, detail="this project has no material yet — add some in Sources first")
@@ -68,11 +77,13 @@ def sample_material(chunks: list[str], budget: int) -> str:
 async def relevant_material(user_id: int, slug: str, query: str, budget: int) -> str:
     """The passages most relevant to `query` (a concept's name and
     description) — falls back to an even sample if search fails."""
-    chunks = load_chunks(user_id, slug)
-    projects_dir = engines.moderator._user_projects_dir(user_id)
-    index = engines.moderator._load_project_index(slug, projects_dir)
+    # One read of the index, off the event loop — it holds every chunk's
+    # vector, so it's megabytes of JSON for a large project (2026-10-19:
+    # this used to parse the same file twice, inline).
+    index = await asyncio.to_thread(_load_index, user_id, slug)
+    chunks = _chunks_of(index)
     try:
-        result = await engines.semantic_search.run(index=index, query=query, top_k=8)
+        result = await run_engine_in_thread(engines.semantic_search, index=index, query=query, top_k=8)
         ranked = [r["chunk"] for r in result.get("results", []) if r.get("chunk")]
     except Exception:
         ranked = []

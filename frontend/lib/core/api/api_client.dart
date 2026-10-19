@@ -54,6 +54,13 @@ class ApiClient {
   /// shorter timeout, where a long hang really does mean something's wrong.
   static const _aiRequestTimeout = Duration(minutes: 5);
 
+  /// One client for the app's whole life, so requests reuse an open
+  /// connection. The top-level `http.get`/`http.post` helpers open (and
+  /// close) a fresh client per call — a new TCP + TLS handshake to Render
+  /// every time, which on a phone means extra latency, data and battery
+  /// for each of the many small JSON calls a screen makes (2026-10-19).
+  final http.Client _http = http.Client();
+
   Never _timeoutError() => throw ApiException(0, 'Request timed out — check the server is reachable.');
 
   /// Mutable (not final) — the settings screen edits this in place on the
@@ -102,7 +109,7 @@ class ApiClient {
       };
 
   Future<Map<String, dynamic>> health() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/health'), headers: _baseHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -115,7 +122,7 @@ class ApiClient {
     required String password,
     String? displayName,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/auth/signup'),
           headers: {'Content-Type': 'application/json', ..._baseHeaders},
@@ -130,7 +137,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> login({required String email, required String password}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/auth/login'),
           headers: {'Content-Type': 'application/json', ..._baseHeaders},
@@ -144,7 +151,7 @@ class ApiClient {
   /// as signup/login (token + auth_response including encryption_key),
   /// so AuthService applies it through the exact same path.
   Future<Map<String, dynamic>> googleSignIn({required String idToken}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/auth/google'),
           headers: {'Content-Type': 'application/json', ..._baseHeaders},
@@ -155,7 +162,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> me() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/auth/me'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -169,7 +176,7 @@ class ApiClient {
   // calls that need it.
 
   Future<Map<String, dynamic>> getAccount() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/account'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -193,7 +200,7 @@ class ApiClient {
       if (preferredLanguage != null) 'preferred_language': preferredLanguage,
       if (dailyStudyTargetMinutes != null) 'daily_study_target_minutes': dailyStudyTargetMinutes,
     };
-    final res = await http
+    final res = await _http
         .patch(Uri.parse('$baseUrl/api/account'), headers: _jsonHeaders, body: jsonEncode(body))
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -204,7 +211,7 @@ class ApiClient {
   /// token isn't enough on its own — the confirmation dialog in the UI is
   /// a second, separate layer on top of that, not a substitute for it.
   Future<void> deleteAccount({required String password}) async {
-    final res = await http
+    final res = await _http
         .delete(
           Uri.parse('$baseUrl/api/account'),
           headers: _jsonHeaders,
@@ -221,7 +228,7 @@ class ApiClient {
   // embedding compute has to happen somewhere).
 
   Future<Map<String, dynamic>> createProject({required String displayName}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/projects'),
           headers: _jsonHeaders,
@@ -232,14 +239,14 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> listProjects() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/projects'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> deleteProject(String slug) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/projects/$slug'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -262,7 +269,7 @@ class ApiClient {
     if (fileBytes != null && filename != null) {
       request.files.add(http.MultipartFile.fromBytes('file', fileBytes, filename: filename));
     }
-    final streamed = await request.send().timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    final streamed = await _http.send(request).timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     final res = await http.Response.fromStream(streamed);
     return _decode(res);
   }
@@ -273,7 +280,7 @@ class ApiClient {
   /// there's no honest per-file delete yet (see server/domains/knowledge/
   /// router.py's list_materials docstring).
   Future<Map<String, dynamic>> listMaterials(String slug) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/projects/$slug/materials'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -282,7 +289,7 @@ class ApiClient {
   /// Removes an upload and exactly the search content it added (see the
   /// server's delete_material for the one case it refuses, with a reason).
   Future<Map<String, dynamic>> deleteMaterial({required String slug, required int materialId}) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/projects/$slug/materials/$materialId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -293,7 +300,7 @@ class ApiClient {
   /// A short-lived absolute link the phone's browser / PDF viewer can open
   /// without the app's auth header — see server files_router.py.
   Future<Uri> fileLink(int fileId) async {
-    final res = await http
+    final res = await _http
         .post(Uri.parse('$baseUrl/api/files/$fileId/link'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return Uri.parse('$baseUrl${_decode(res)['url']}');
@@ -306,7 +313,7 @@ class ApiClient {
     required String docType,
     String? title,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/projects/$slug/studio'),
           headers: _jsonHeaders,
@@ -317,14 +324,14 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> listStudioDocs(String slug) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/projects/$slug/studio'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> deleteStudioDoc({required String slug, required int artifactId}) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/projects/$slug/studio/$artifactId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -349,7 +356,7 @@ class ApiClient {
     List<Map<String, dynamic>>? localEvents,
     required String sessionId,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/ask/text'),
           headers: _jsonHeaders,
@@ -398,7 +405,7 @@ class ApiClient {
       return _postMultipart('/api/ask/pdf', bytes: bytes, filename: filename, fields: fields);
     }
     final modelConfig = await _resolveModelConfig(null);
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/ask/pdf'),
           headers: _authHeaders,
@@ -426,7 +433,7 @@ class ApiClient {
     String kind = 'url',
     required String sessionId,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/ask/web'),
           headers: _jsonHeaders,
@@ -443,7 +450,7 @@ class ApiClient {
     required String sessionId,
   }) async {
     final modelConfig = await _resolveModelConfig(null);
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/ask/project'),
           headers: _jsonHeaders,
@@ -474,7 +481,7 @@ class ApiClient {
     final modelConfig = await _resolveModelConfig(null);
     if (modelConfig != null) request.fields['model_config'] = jsonEncode(modelConfig);
     request.files.add(http.MultipartFile.fromBytes('file', bytes, filename: filename));
-    final streamed = await request.send().timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    final streamed = await _http.send(request).timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     final res = await http.Response.fromStream(streamed);
     return _decode(res);
   }
@@ -488,7 +495,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> _postGenerate(String path, Map<String, dynamic> body) async {
     final modelConfig = await _resolveModelConfig(null);
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl$path'),
           headers: _jsonHeaders,
@@ -517,7 +524,7 @@ class ApiClient {
   // everything above; no typed models introduced here to match.
 
   Future<Map<String, dynamic>> listConcepts(String slug) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/concepts'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -528,7 +535,7 @@ class ApiClient {
     required String name,
     String? description,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/concepts'),
           headers: _jsonHeaders,
@@ -539,7 +546,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> getConceptMastery(int conceptId) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/mastery'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -552,7 +559,7 @@ class ApiClient {
   // by a user report that some backend features weren't exposed.
 
   Future<Map<String, dynamic>> listConceptRelationships(int conceptId) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/relationships'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -563,7 +570,7 @@ class ApiClient {
     required int toConceptId,
     required String relationshipType,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/concepts/$conceptId/relationships'),
           headers: _jsonHeaders,
@@ -574,7 +581,7 @@ class ApiClient {
   }
 
   Future<void> deleteConceptRelationship({required int conceptId, required int relationshipId}) async {
-    final res = await http
+    final res = await _http
         .delete(
           Uri.parse('$baseUrl/api/v1/concepts/$conceptId/relationships/$relationshipId'),
           headers: _authHeaders,
@@ -589,21 +596,21 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/search').replace(
       queryParameters: {'q': query, 'limit': limit.toString()},
     );
-    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    final res = await _http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   // --- notes ---
 
   Future<Map<String, dynamic>> listNotes(String slug) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/notes'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> createNote({required String slug, required String title, String body = ''}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/notes'),
           headers: _jsonHeaders,
@@ -614,7 +621,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> updateNote({required int noteId, String? title, String? body}) async {
-    final res = await http
+    final res = await _http
         .patch(
           Uri.parse('$baseUrl/api/v1/notes/$noteId'),
           headers: _jsonHeaders,
@@ -625,7 +632,7 @@ class ApiClient {
   }
 
   Future<void> deleteNote(int noteId) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/v1/notes/$noteId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     _decode(res);
@@ -634,7 +641,7 @@ class ApiClient {
   // --- flashcards ---
 
   Future<Map<String, dynamic>> listFlashcards(String slug) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/flashcards'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -644,7 +651,7 @@ class ApiClient {
   /// getDueFlashcards (filtered to already-due). Used by the Planner
   /// calendar to plot every card's upcoming review date.
   Future<Map<String, dynamic>> listAllFlashcards() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/flashcards'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -656,7 +663,7 @@ class ApiClient {
     required String back,
     int? conceptId,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/knowledge-spaces/$slug/flashcards'),
           headers: _jsonHeaders,
@@ -667,7 +674,7 @@ class ApiClient {
   }
 
   Future<void> deleteFlashcard(int flashcardId) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/v1/flashcards/$flashcardId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     _decode(res);
@@ -683,7 +690,7 @@ class ApiClient {
         if (knowledgeSpaceSlug != null) 'knowledge_space_slug': knowledgeSpaceSlug,
       },
     );
-    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    final res = await _http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -691,7 +698,7 @@ class ApiClient {
   /// scale — flashcards are self-graded, unlike quiz questions, so there's
   /// no separate correctness signal to collapse it down to two values).
   Future<Map<String, dynamic>> reviewFlashcard({required int flashcardId, required String rating}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/flashcards/$flashcardId/review'),
           headers: _jsonHeaders,
@@ -706,7 +713,7 @@ class ApiClient {
   /// call itself takes no parameters beyond an optional BYOK modelConfig.
   Future<Map<String, dynamic>> explainConcept(int conceptId, {Map<String, dynamic>? modelConfig}) async {
     modelConfig = await _resolveModelConfig(modelConfig);
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/concepts/$conceptId/explain'),
           headers: _jsonHeaders,
@@ -717,7 +724,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> listQuestions(int conceptId) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/concepts/$conceptId/questions'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -735,7 +742,7 @@ class ApiClient {
     List<String>? options,
     double? tolerance,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/concepts/$conceptId/questions'),
           headers: _jsonHeaders,
@@ -757,7 +764,7 @@ class ApiClient {
     Map<String, dynamic>? modelConfig,
   }) async {
     modelConfig = await _resolveModelConfig(modelConfig);
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/questions/$questionId/attempt'),
           headers: _jsonHeaders,
@@ -776,7 +783,7 @@ class ApiClient {
   // section above.
 
   Future<Map<String, dynamic>> listGoals() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/goals'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -787,7 +794,7 @@ class ApiClient {
     DateTime? targetDate,
     String? knowledgeSpaceSlug,
   }) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/goals'),
           headers: _jsonHeaders,
@@ -802,7 +809,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> deleteGoal(int goalId) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/v1/goals/$goalId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -819,12 +826,12 @@ class ApiClient {
         if (knowledgeSpaceSlug != null) 'knowledge_space_slug': knowledgeSpaceSlug,
       },
     );
-    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    final res = await _http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> createStudySession({int durationMinutes = 60, String? knowledgeSpaceSlug}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/study-sessions'),
           headers: _jsonHeaders,
@@ -838,21 +845,21 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> listStudySessions() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/study-sessions'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> getStudySession(int sessionId) async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/study-sessions/$sessionId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> completeStudySession(int sessionId) async {
-    final res = await http
+    final res = await _http
         .post(Uri.parse('$baseUrl/api/v1/study-sessions/$sessionId/complete'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -863,14 +870,14 @@ class ApiClient {
   // server/domains/learning/router.py and assessment/router.py) ---
 
   Future<Map<String, dynamic>> getMastery() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/mastery'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> getMisconceptions() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/misconceptions'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -878,7 +885,7 @@ class ApiClient {
 
   Future<Map<String, dynamic>> getAttempts({int limit = 50}) async {
     final uri = Uri.parse('$baseUrl/api/v1/attempts').replace(queryParameters: {'limit': limit.toString()});
-    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    final res = await _http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
@@ -892,12 +899,12 @@ class ApiClient {
     final uri = Uri.parse('$baseUrl/api/v1/memories').replace(
       queryParameters: {if (type != null) 'type': type},
     );
-    final res = await http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
+    final res = await _http.get(uri, headers: _authHeaders).timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
 
   Future<Map<String, dynamic>> createMemory({required String key, required dynamic value}) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/memories'),
           headers: _jsonHeaders,
@@ -908,7 +915,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> deleteMemory(int memoryId) async {
-    final res = await http
+    final res = await _http
         .delete(Uri.parse('$baseUrl/api/v1/memories/$memoryId'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -918,7 +925,7 @@ class ApiClient {
   // server-side so there's always a profile to read. ---
 
   Future<Map<String, dynamic>> getPersonality() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/personality'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -944,7 +951,7 @@ class ApiClient {
       if (verbosity != null) 'verbosity': verbosity,
       if (teachingStyle != null) 'teaching_style': teachingStyle,
     };
-    final res = await http
+    final res = await _http
         .patch(Uri.parse('$baseUrl/api/v1/personality'), headers: _jsonHeaders, body: jsonEncode(body))
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -956,7 +963,7 @@ class ApiClient {
   // are integer cents throughout, matching the server's ledger model. ---
 
   Future<Map<String, dynamic>> getBillingBalance() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/billing/balance'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -966,7 +973,7 @@ class ApiClient {
   /// that confirms instantly — see payment_provider.py. No real money
   /// changes hands yet.
   Future<Map<String, dynamic>> createTopup(int amountCents) async {
-    final res = await http
+    final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/billing/topups'),
           headers: _jsonHeaders,
@@ -977,7 +984,7 @@ class ApiClient {
   }
 
   Future<Map<String, dynamic>> listBillingUsage() async {
-    final res = await http
+    final res = await _http
         .get(Uri.parse('$baseUrl/api/v1/billing/usage'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);

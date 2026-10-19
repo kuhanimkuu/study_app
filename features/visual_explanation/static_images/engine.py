@@ -15,17 +15,17 @@ OUTPUT (JSON) — what this engine returns:
 }
 
 Status: later phase
-Built on matplotlib (headless "Agg" backend, appropriate for a server with
-no display). A real render, not a placeholder file.
+Built on matplotlib (its Figure API, which renders headless — appropriate for
+a server with no display). A real render, not a placeholder file.
 """
 from __future__ import annotations
 
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")  # headless — no display available/needed on a server
-import matplotlib.pyplot as plt
+# Figure API, not pyplot (2026-10-19): this runs in a server worker thread
+# (moderator's _in_thread), and pyplot's global current-figure state isn't
+# thread-safe. A bare Figure renders headless with no backend selection.
+from matplotlib.figure import Figure
 
 
 async def run(**kwargs: Any) -> dict:
@@ -41,14 +41,14 @@ async def run(**kwargs: Any) -> dict:
     points = data["points"]
     title = data.get("title", "")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
+    fig = Figure(figsize=(6, 4))
+    ax = fig.subplots()
     ax.plot(points["x"], points["y"])
     if title:
         ax.set_title(title)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.savefig(output_path, format=image_format)
-    plt.close(fig)
 
     return {"image": output_path, "format": image_format}
 

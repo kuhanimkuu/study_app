@@ -32,6 +32,7 @@ PATHWAY.md's architecture.
 """
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from pathlib import Path
@@ -48,6 +49,7 @@ from ..ai.moderator.style import build_adaptive_style_note, verbosity_max_tokens
 from ..ai.personality.router import get_or_create_personality
 from ..ai.schemas import ModeratorResponse
 from ..core import security
+from ..core.threads import run_engine_in_thread
 from ..core.model_config import ModelConfig, resolve_model_config_async
 from ..db.session import get_db
 from ..domains.billing import service as billing_service
@@ -87,6 +89,8 @@ def _validate_session_id(session_id: str) -> str:
 
 
 def _save_upload(file: UploadFile, session_id: str, kind: str) -> Path:
+    """Blocking file I/O (up to 25 MB) — callers run it via
+    asyncio.to_thread so it doesn't stall the event loop."""
     session_id = _validate_session_id(session_id)
 
     # .name drops any directory components the client's filename smuggled
@@ -231,9 +235,9 @@ async def ask_image(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
-    path = _save_upload(file, session_id, kind="image")
+    path = await asyncio.to_thread(_save_upload, file, session_id, "image")
     try:
-        classified = await engines.image_input.run(content=str(path), source="upload")
+        classified = await run_engine_in_thread(engines.image_input, content=str(path), source="upload")
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read image: {exc}") from exc
 
@@ -263,9 +267,9 @@ async def ask_pdf(
     resume logic recovers the stored pdf_path, no need to re-upload."""
     resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
     if file is not None:
-        path = _save_upload(file, session_id, kind="pdf")
+        path = await asyncio.to_thread(_save_upload, file, session_id, "pdf")
         try:
-            classified = await engines.pdf_input.run(content=str(path))
+            classified = await run_engine_in_thread(engines.pdf_input, content=str(path))
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"could not read PDF: {exc}") from exc
         result = await engines.moderator.run(
@@ -293,9 +297,9 @@ async def ask_audio(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
-    path = _save_upload(file, session_id, kind="audio")
+    path = await asyncio.to_thread(_save_upload, file, session_id, "audio")
     try:
-        transcribed = await engines.audio_input.run(content=str(path))
+        transcribed = await run_engine_in_thread(engines.audio_input, content=str(path))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not transcribe audio: {exc}") from exc
 
@@ -325,7 +329,7 @@ async def ask_web(payload: WebAsk, current_user: dict = Depends(security.get_cur
     confusing wrong answer most of the time. Honest scope boundary, see
     moderator/README.md."""
     try:
-        fetched = await engines.web_input.run(content=payload.url, kind=payload.kind)
+        fetched = await run_engine_in_thread(engines.web_input, content=payload.url, kind=payload.kind)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not fetch URL: {exc}") from exc
 

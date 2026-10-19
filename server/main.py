@@ -57,7 +57,9 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES
 
 from .ai.memory.router import router as memory_router
 from .ai.moderator.router import router as moderator_router
@@ -85,6 +87,18 @@ FEATURES_ROOT = Path(__file__).resolve().parent.parent / "features"
 GENERATED_DIR = FEATURES_ROOT / "moderator" / "generated"
 GENERATED_DIR.mkdir(parents=True, exist_ok=True)
 
+
+class _ImmutableStaticFiles(StaticFiles):
+    """Every generated file gets a fresh uuid name and is never rewritten,
+    so the client may cache it for good — reopening a PDF or image no
+    longer re-downloads it over the student's mobile data (2026-10-19)."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # Uploads index in the background (domains/knowledge/router.py) — any
@@ -105,7 +119,19 @@ _cors_origins = get_settings().cors_allowed_origins_list
 app.add_middleware(
     CORSMiddleware, allow_origins=_cors_origins, allow_methods=["*"], allow_headers=["*"]
 )
-app.mount("/generated", StaticFiles(directory=GENERATED_DIR), name="generated")
+# Compresses JSON replies (chat blocks, material lists, flashcards) —
+# usually several times smaller over a phone's connection (2026-10-19).
+# Level 6, not Starlette's default 9: nearly the same size for much less CPU
+# on Render's fraction-of-a-core. PDFs join Starlette's own skip list
+# (images, audio, zips) — already compressed, so gzip would burn CPU for
+# nothing.
+app.add_middleware(
+    GZipMiddleware,
+    minimum_size=1000,
+    compresslevel=6,
+    exclude_content_types=(*DEFAULT_EXCLUDED_CONTENT_TYPES, "application/pdf", "model/gltf-binary"),
+)
+app.mount("/generated", _ImmutableStaticFiles(directory=GENERATED_DIR), name="generated")
 
 app.include_router(health.router)
 app.include_router(identity_router)

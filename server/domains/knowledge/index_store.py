@@ -14,6 +14,7 @@ ensure_index_file() call that still finds their file on disk backfills it.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from sqlalchemy import select
@@ -39,7 +40,7 @@ async def save_index(db: AsyncSession, space_id: int, user_id: int, slug: str) -
     path = _index_file(user_id, slug)
     if not path.exists():
         return
-    data = path.read_text(encoding="utf-8")
+    data = await asyncio.to_thread(path.read_text, encoding="utf-8")
     row = await db.scalar(select(ProjectIndex).where(ProjectIndex.knowledge_space_id == space_id))
     if row is None:
         db.add(ProjectIndex(knowledge_space_id=space_id, data=data))
@@ -55,14 +56,20 @@ async def ensure_index_file(db: AsyncSession, user_id: int, slug: str) -> None:
     if space_id is None:
         return
     path = _index_file(user_id, slug)
+    if path.exists():
+        # The common case, hit by every project chat and search: only ask
+        # whether a durable copy exists. Selecting the whole row pulled the
+        # multi-MB index out of Postgres on every call just to discard it
+        # (2026-10-19).
+        row_id = await db.scalar(select(ProjectIndex.id).where(ProjectIndex.knowledge_space_id == space_id))
+        if row_id is None:
+            # Indexed before the table existed — backfill so a later wipe
+            # of the disk doesn't lose it.
+            data = await asyncio.to_thread(path.read_text, encoding="utf-8")
+            db.add(ProjectIndex(knowledge_space_id=space_id, data=data))
+            await db.commit()
+        return
     row = await db.scalar(select(ProjectIndex).where(ProjectIndex.knowledge_space_id == space_id))
     if row is not None:
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(row.data, encoding="utf-8")
-        return
-    if path.exists():
-        # Indexed before the table existed — backfill so a later wipe of
-        # the disk doesn't lose it.
-        db.add(ProjectIndex(knowledge_space_id=space_id, data=path.read_text(encoding="utf-8")))
-        await db.commit()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_text, row.data, encoding="utf-8")

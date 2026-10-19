@@ -56,10 +56,14 @@ returns a clarification block explaining the gap rather than crashing.
 """
 from __future__ import annotations
 
+import asyncio
+import functools
 import importlib.util
 import json
 import re
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -84,6 +88,10 @@ def _generated_file(extension: str) -> tuple[str, str]:
     return str(_GENERATED_DIR / filename), f"/generated/{filename}"
 
 
+# Reentrant: loading one engine can load another on the same thread.
+_LAZY_LOAD_LOCK = threading.RLock()
+
+
 class LazyEngine(ModuleType):
     """Stands in for an engine module and imports it on first attribute
     access. Added 2026-10-07: importing every engine eagerly put the idle
@@ -93,7 +101,10 @@ class LazyEngine(ModuleType):
     and the server was killed. Lazily, a request only pays for the engines
     it actually uses. Attribute writes and deletes are forwarded too, so
     tests' monkeypatch.setattr(engine, "run", fake) still patches the real
-    module."""
+    module.
+
+    The first load can now happen in a worker thread (see run_in_thread),
+    so it's locked — two threads must not each exec the same module."""
 
     def __init__(self, path: Path, module_name: str) -> None:
         super().__init__(module_name)
@@ -102,11 +113,15 @@ class LazyEngine(ModuleType):
 
     def _lazy_load(self) -> ModuleType:
         module = object.__getattribute__(self, "_lazy_module")
-        if module is None:
-            spec = importlib.util.spec_from_file_location(self.__name__, object.__getattribute__(self, "_lazy_path"))
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            object.__setattr__(self, "_lazy_module", module)
+        if module is not None:
+            return module
+        with _LAZY_LOAD_LOCK:
+            module = object.__getattribute__(self, "_lazy_module")
+            if module is None:
+                spec = importlib.util.spec_from_file_location(self.__name__, object.__getattribute__(self, "_lazy_path"))
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                object.__setattr__(self, "_lazy_module", module)
         return module
 
     def __getattr__(self, attr: str):
@@ -117,6 +132,35 @@ class LazyEngine(ModuleType):
 
     def __delattr__(self, attr: str) -> None:
         delattr(self._lazy_load(), attr)
+
+
+# --- heavy engines off the event loop (2026-10-19) ---
+# Most engines are `async def` with fully synchronous bodies (OCR, sympy,
+# matplotlib, PDF parsing, Whisper, blocking HTTP). Awaited directly, one of
+# them froze the whole server — every other user's request, and Render's
+# health check — until it finished. run_in_thread runs the engine on its own
+# event loop in a worker thread instead. The pool is deliberately small:
+# this work is CPU- and memory-heavy and Render's instance has a fraction of
+# a CPU and 512 MB, so extra jobs queue rather than all running at once and
+# exhausting memory.
+HEAVY_WORKERS = 2
+_heavy_pool = ThreadPoolExecutor(max_workers=HEAVY_WORKERS, thread_name_prefix="heavy-engine")
+
+
+def _run_on_own_loop(engine: ModuleType, kwargs: dict) -> dict:
+    # engine.run is looked up here, in the worker, so a LazyEngine's first
+    # import happens off the event loop too.
+    return asyncio.run(engine.run(**kwargs))
+
+
+async def run_in_thread(engine: ModuleType, **kwargs: Any) -> dict:
+    """`await run_in_thread(engine, **kwargs)` in place of
+    `await engine.run(**kwargs)`. Public because server/core/threads.py
+    shares this same pool for the HTTP layer's own engine calls. Never call
+    it from inside an engine already running in the pool — with a pool
+    this small, that can deadlock."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(_heavy_pool, functools.partial(_run_on_own_loop, engine, kwargs))
 
 
 def _load_sibling_engine(relative_path: str) -> ModuleType:
@@ -231,9 +275,10 @@ _EXAM_REQUEST_RE = re.compile(
 # sin(, or digits joined by an operator) — text_input's classifier misses
 # some of these (found live: "draw y = x^2" came back labelled ["text"]
 # only), so _infer_task checks this too before treating a visual request
-# as a concept diagram.
+# as a concept diagram. "**" counts as one operator (found live 2026-10-19:
+# "image of x**2" was drawn as a concept diagram, not plotted).
 _MATH_EXPRESSION_RE = re.compile(
-    r"[=^]|\b(sin|cos|tan|log|ln|sqrt|exp)\s*\(|\d\s*[-+*/]\s*[\w(]|\b[a-z]\s*[-+*/]\s*\d|\d[a-z]\b",
+    r"[=^]|\b(sin|cos|tan|log|ln|sqrt|exp)\s*\(|\d\s*[-+*/]\s*[\w(]|\b[a-z]\s*(\*\*|[-+*/])\s*\d|\d[a-z]\b",
     re.IGNORECASE,
 )
 _DIAGRAM_TOPIC_STRIP_RE = re.compile(
@@ -518,7 +563,7 @@ async def _route_pdf(content: str, query: str | None, pdf_path: str | None) -> t
         # not scanned_ocr — so full search over scanned PDFs isn't wired up,
         # only this informational OCR pass. Said explicitly in the message.
         try:
-            scanned = await _scanned_ocr.run(pdf=pdf_path)
+            scanned = await run_in_thread(_scanned_ocr, pdf=pdf_path)
             ocr_text = "\n".join(scanned["text"].values())
         except Exception:
             ocr_text = ""
@@ -546,7 +591,7 @@ async def _route_pdf(content: str, query: str | None, pdf_path: str | None) -> t
         )
 
     try:
-        result = await _searchable_knowledge.run(pdf=pdf_path, query=query)
+        result = await run_in_thread(_searchable_knowledge, pdf=pdf_path, query=query)
     except Exception as exc:
         return (
             [{"type": "error", "engine": "searchable_knowledge", "message": str(exc)}],
@@ -605,7 +650,7 @@ async def _route_project(
         # routers/ask.py as a raw 500 instead of the {"blocks": [...]}
         # shape the client expects. Found via a crash/edge-case audit.
         try:
-            material = await _project_material.run(content=content, project=project, projects_dir=projects_dir)
+            material = await run_in_thread(_project_material, content=content, project=project, projects_dir=projects_dir)
         except Exception as exc:
             return [{"type": "error", "engine": "project_material", "message": str(exc)}], "project_material", project
         chunk_count = len(material["context"])
@@ -614,7 +659,7 @@ async def _route_project(
             {"input_type": "project", "content": content, "project": project},
         )
 
-    index = _load_project_index(project, projects_dir)
+    index = await asyncio.to_thread(_load_project_index, project, projects_dir)
     if index is None or not index.get("chunks"):
         return (
             [{"type": "error", "engine": "rag_projects", "message": f"no stored material found for project {project!r}"}],
@@ -623,7 +668,7 @@ async def _route_project(
         )
 
     try:
-        search_result = await _rag_semantic_search.run(index=index, query=query, top_k=3)
+        search_result = await run_in_thread(_rag_semantic_search, index=index, query=query, top_k=3)
     except Exception as exc:
         return [{"type": "error", "engine": "semantic_search", "message": str(exc)}], "semantic_search", query
 
@@ -693,8 +738,8 @@ async def _route_image(content: str) -> tuple[list[dict], str, str]:
     flags it as a best-effort heuristic classifier, not a trained model,
     so this inherits that honesty limit."""
     try:
-        quality = (await _quality_analysis.run(image=content))["quality"]
-        enhanced = await _enhancement.run(image=content, quality=quality)
+        quality = (await run_in_thread(_quality_analysis, image=content))["quality"]
+        enhanced = await run_in_thread(_enhancement, image=content, quality=quality)
         image_path = enhanced["image"]
         applied = enhanced["applied"]
     except Exception:
@@ -704,7 +749,7 @@ async def _route_image(content: str) -> tuple[list[dict], str, str]:
         applied = []
 
     try:
-        routing = await _content_identification.run(image=image_path)
+        routing = await run_in_thread(_content_identification, image=image_path)
         route = routing["route"]
         route_confidence = routing["confidence"]
     except Exception as exc:
@@ -713,7 +758,7 @@ async def _route_image(content: str) -> tuple[list[dict], str, str]:
     engine = _IMAGE_ROUTE_ENGINES.get(route, _text_ocr)
     engine_name = route if route in _IMAGE_ROUTE_ENGINES else "text_ocr"
     try:
-        result = await engine.run(image=image_path)
+        result = await run_in_thread(engine, image=image_path)
     except Exception as exc:
         return [{"type": "error", "engine": engine_name, "message": str(exc)}], engine_name, route
 
@@ -792,7 +837,7 @@ async def _route_text(
 
     if task == "graph":
         try:
-            result = await _graphing.run(expression=expression, range=[-10, 10])
+            result = await run_in_thread(_graphing, expression=expression, range=[-10, 10])
         except Exception as exc:
             return [{"type": "error", "engine": "graphing", "message": str(exc)}], "graphing", expression
         blocks = [
@@ -804,7 +849,7 @@ async def _route_text(
     if task in ("solve", "simplify", "differentiate", "integrate", "matrix_det", "matrix_inverse"):
         operation = None if task == "solve" else task
         try:
-            result = await _symbolic.run(expression=expression, operation=operation)
+            result = await run_in_thread(_symbolic, expression=expression, operation=operation)
         except Exception as exc:
             return [{"type": "error", "engine": "symbolic", "message": str(exc)}], "symbolic", expression
         text = await _author_text(task, expression, result, model_config, personality_style, personality_max_tokens)
@@ -848,7 +893,7 @@ async def _route_research_or_clarify(
 
     if intent.get("needs_external"):
         try:
-            sources = (await _search_pipeline.run(query=content))["sources"]
+            sources = (await run_in_thread(_search_pipeline, query=content))["sources"]
         except Exception:
             sources = []
         if sources:
@@ -953,7 +998,7 @@ async def _route_unit_convert(content: str) -> tuple[list[dict], str, str]:
         )
     value_str, from_unit, to_unit = match.groups()
     try:
-        result = await _unit_conversion.run(value=float(value_str), from_unit=from_unit, to_unit=to_unit)
+        result = await run_in_thread(_unit_conversion, value=float(value_str), from_unit=from_unit, to_unit=to_unit)
     except Exception as exc:
         return [{"type": "error", "engine": "unit_conversion", "message": str(exc)}], "unit_conversion", content
     text = f"{value_str} {from_unit} = {result['value']:.6g} {to_unit}"
@@ -996,7 +1041,7 @@ async def _route_interactive_2d(expression: str, params: dict) -> tuple[list[dic
     expr = params.get("expression", expression)
     value_range = params.get("range", [-10, 10])
     try:
-        result = await _interactive_2d.run(expression=expr, range=value_range)
+        result = await run_in_thread(_interactive_2d, expression=expr, range=value_range)
     except Exception as exc:
         return [{"type": "error", "engine": "interactive_2d", "message": str(exc)}], "interactive_2d", expr
     points = result["visual"]["data"]["points"]
@@ -1020,8 +1065,9 @@ async def _route_static_image(expression: str, params: dict, content: str) -> tu
     image_format = "pdf" if _PDF_EXPORT_RE.search(content) else params.get("format", "png")
     fs_path, url_path = _generated_file(image_format)
     try:
-        graph_result = await _graphing.run(expression=expr, range=value_range)
-        image_result = await _static_images.run(
+        graph_result = await run_in_thread(_graphing, expression=expr, range=value_range)
+        image_result = await run_in_thread(
+            _static_images,
             data={"points": graph_result["points"], "title": graph_result["latex"]},
             format=image_format,
             output_path=fs_path,
@@ -1166,7 +1212,7 @@ async def _route_write_doc(
         # exam's questions and answer key are already written out by the
         # model — generate_docs' own "practice_exam" builder is a cloze
         # heuristic for raw material, not for finished questions.
-        await _generate_docs.run(material=material, doc_type="study_guide", title=title, output_path=fs_path)
+        await run_in_thread(_generate_docs, material=material, doc_type="study_guide", title=title, output_path=fs_path)
     except Exception as exc:
         return [{"type": "error", "engine": "generate_docs", "message": str(exc)}], "generate_docs", topic
 
@@ -1235,7 +1281,7 @@ async def _route_concept_diagram(content: str, model_config: dict) -> tuple[list
         relationships.append([len(labels) - 1, 0])
     kind = "cycle" if is_cycle else "process"
     try:
-        result = await _diagrams.run(data={"kind": kind, "elements": labels, "relationships": relationships})
+        result = await run_in_thread(_diagrams, data={"kind": kind, "elements": labels, "relationships": relationships})
     except Exception as exc:
         return [{"type": "error", "engine": "diagrams", "message": str(exc)}], "diagrams", topic
 
@@ -1332,7 +1378,8 @@ async def _route_flashcards(content: str, model_config: dict) -> tuple[list[dict
     ]
     fs_path, url_path = _generated_file("pdf")
     try:
-        await _generate_docs.run(
+        await run_in_thread(
+            _generate_docs,
             material=[f"{f}{_generate_docs.FRONT_BACK_SEP}{b}" for f, b in cards],
             doc_type="flashcards",
             title=f"Flashcards: {topic}"[:120],
@@ -1362,7 +1409,7 @@ async def _route_structured(task: str, params: dict) -> tuple[list[dict], str, s
         call_kwargs["output_path"] = fs_path
 
     try:
-        result = await engine.run(**call_kwargs)
+        result = await run_in_thread(engine, **call_kwargs)
     except Exception as exc:
         return [{"type": "error", "engine": task, "message": str(exc)}], task, task
     blocks = _structured_result_to_blocks(task, result, url_path)

@@ -7,6 +7,7 @@ ones, see STUDY_OS_PROGRESS.md, 2026-09-14.
 """
 from __future__ import annotations
 
+import asyncio
 import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -103,7 +104,7 @@ async def generate_concepts(
     space = await get_space_or_404(db, current_user["id"], slug)
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
     await index_store.ensure_index_file(db, current_user["id"], slug)
-    chunks = generation.load_chunks(current_user["id"], slug)
+    chunks = await asyncio.to_thread(generation.load_chunks, current_user["id"], slug)
     existing = (await db.scalars(select(Concept.name).where(Concept.knowledge_space_id == space.id))).all()
 
     material = generation.sample_material(chunks, generation.material_budget(model_config))
@@ -354,7 +355,9 @@ async def generate_flashcards(
             current_user["id"], slug, f"{concept.name} {concept.description or ''}", budget
         )
     else:
-        material = generation.sample_material(generation.load_chunks(current_user["id"], slug), budget)
+        material = generation.sample_material(
+            await asyncio.to_thread(generation.load_chunks, current_user["id"], slug), budget
+        )
 
     text = await generation.call_model(
         generation.flashcards_prompt(material, payload.count, focus), 120 + 90 * payload.count,

@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
 from ...core import security
+from ...core.threads import run_engine_in_thread
 from ...db.session import async_session, get_db
 from . import index_store
 from .files_router import store_file
@@ -223,7 +224,7 @@ async def add_material(
     # opens its source_url instead).
     stored = None
     if pdf_path is not None:
-        stored = await store_file(db, current_user["id"], filename, mime_type, pdf_path.read_bytes())
+        stored = await store_file(db, current_user["id"], filename, mime_type, await asyncio.to_thread(pdf_path.read_bytes))
     elif source_url is None and material_text is not None:
         stored = await store_file(db, current_user["id"], filename, "text/plain; charset=utf-8", material_text.encode("utf-8"))
 
@@ -260,7 +261,7 @@ async def _receive_material(
 
     if url is not None and url.strip():
         try:
-            fetched = await engines.web_input.run(content=url.strip())
+            fetched = await run_engine_in_thread(engines.web_input, content=url.strip())
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"could not fetch URL: {exc}") from exc
         return url.strip(), "text/html", fetched["content"], None, fetched["source_url"]
@@ -270,24 +271,44 @@ async def _receive_material(
 
     uploads_dir = Path(__file__).resolve().parent.parent.parent / "uploads" / "projects" / f"user_{user_id}"
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    filename = file.filename or "upload"
+    # .name: the client's filename could carry "../" segments that would
+    # otherwise land the file outside uploads_dir (2026-10-19).
+    filename = Path(file.filename or "").name or "upload"
     dest = uploads_dir / f"{slug}_{uuid.uuid4().hex[:8]}_{filename}"
-    with dest.open("wb") as f:
-        f.write(await file.read())
+    await asyncio.to_thread(_write_upload, file, dest)
 
     if dest.suffix.lower() == ".pdf":
         return filename, "application/pdf", None, dest, None
     try:
-        return filename, "text/plain", dest.read_text(encoding="utf-8", errors="replace"), None, None
+        text = await asyncio.to_thread(dest.read_text, encoding="utf-8", errors="replace")
+        return filename, "text/plain", text, None, None
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read file as text: {exc}") from exc
 
 
-def _run_engine_in_thread(engine_run, **kwargs) -> dict:
-    """Engines are `async def` with synchronous bodies (pdf_input's
-    extraction is pure CPU) — run one on its own loop in a worker thread so
-    the server's event loop stays free."""
-    return asyncio.run(engine_run(**kwargs))
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # same cap as /api/ask/* uploads
+_READ_CHUNK_BYTES = 1024 * 1024
+
+
+def _write_upload(file: UploadFile, dest: Path) -> None:
+    """Streams the upload to disk in chunks, refusing anything over the cap
+    — `await file.read()` used to pull the whole file into memory at once,
+    with no limit at all, on a 512 MB instance (2026-10-19). Blocking I/O;
+    run via asyncio.to_thread."""
+    size = 0
+    try:
+        with dest.open("wb") as f:
+            while chunk := file.file.read(_READ_CHUNK_BYTES):
+                size += len(chunk)
+                if size > _MAX_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"file exceeds maximum size of {_MAX_UPLOAD_BYTES // (1024 * 1024)} MB",
+                    )
+                f.write(chunk)
+    except HTTPException:
+        dest.unlink(missing_ok=True)
+        raise
 
 
 async def _index_material(
@@ -303,7 +324,7 @@ async def _index_material(
         try:
             if pdf_path is not None:
                 try:
-                    extracted = await asyncio.to_thread(_run_engine_in_thread, engines.pdf_input.run, content=str(pdf_path))
+                    extracted = await run_engine_in_thread(engines.pdf_input, content=str(pdf_path))
                 except Exception as exc:
                     raise ValueError(f"could not read PDF: {exc}") from exc
                 text = extracted["content"]
@@ -320,7 +341,9 @@ async def _index_material(
                 await index_store.ensure_index_file(restore_db, user_id, slug)
             projects_dir = engines.moderator._user_projects_dir(user_id)
             chunk_start = _chunk_count(projects_dir, slug)
-            result = await engines.rag_projects.run(project=slug, material=[text], projects_dir=projects_dir)
+            result = await run_engine_in_thread(
+                engines.rag_projects, project=slug, material=[text], projects_dir=projects_dir
+            )
             chunks = result["chunks"]
         except Exception as exc:
             error = str(exc)[:1000]
@@ -453,7 +476,7 @@ async def generate_studio_doc(
 
     await index_store.ensure_index_file(db, current_user["id"], slug)
     projects_dir = engines.moderator._user_projects_dir(current_user["id"])
-    index = engines.moderator._load_project_index(slug, projects_dir)
+    index = await asyncio.to_thread(engines.moderator._load_project_index, slug, projects_dir)
     if index is None or not index.get("chunks"):
         raise HTTPException(status_code=400, detail="this project has no material yet — add some in Sources first")
 
@@ -461,14 +484,16 @@ async def generate_studio_doc(
     filename = f"{uuid.uuid4().hex}.pdf"
     dest = _user_generated_dir(current_user["id"]) / filename
     try:
-        await engines.generate_docs.run(
-            material=index["chunks"], doc_type=payload.doc_type, title=title, output_path=str(dest)
+        await run_engine_in_thread(
+            engines.generate_docs, material=index["chunks"], doc_type=payload.doc_type, title=title, output_path=str(dest)
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"could not generate document: {exc}") from exc
     url_path = f"/generated/user_{current_user['id']}/{filename}"
 
-    stored = await store_file(db, current_user["id"], f"{title}.pdf", "application/pdf", dest.read_bytes())
+    stored = await store_file(
+        db, current_user["id"], f"{title}.pdf", "application/pdf", await asyncio.to_thread(dest.read_bytes)
+    )
     artifact = GeneratedArtifact(
         knowledge_space_id=space.id, doc_type=payload.doc_type, title=title, url_path=url_path,
         file_id=stored.id if stored else None,

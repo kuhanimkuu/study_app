@@ -30,17 +30,23 @@ deployment would likely use a larger model.
 """
 from __future__ import annotations
 
+import threading
 from typing import Any
 
 from faster_whisper import WhisperModel
 
 _model: WhisperModel | None = None  # lazy singleton — loading it is expensive
+# run() executes in worker threads (server/core/threads.py), so two first
+# requests could otherwise both load the model (2026-10-19).
+_model_lock = threading.Lock()
 
 
 def _get_model() -> WhisperModel:
     global _model
     if _model is None:
-        _model = WhisperModel("tiny", device="cpu", compute_type="int8")
+        with _model_lock:
+            if _model is None:
+                _model = WhisperModel("tiny", device="cpu", compute_type="int8")
     return _model
 
 

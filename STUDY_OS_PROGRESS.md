@@ -640,6 +640,7 @@ After the HelioHost/Oracle/Cloud-Run hosting research, user asked to focus back 
 - Standalone semantic search now exists (`GET /api/v1/knowledge-spaces/{slug}/search`, 2026-09-16) — scoped to semantic-only (no keyword/metadata/reranking/graph blending yet, see that entry above), closing the 2026-09-14 audit finding.
 - Frontend now covers Concepts/Mastery/Practice, Planner (Goals/Plan/Sessions), Progress, Home, Personality/Memory/Student-profile settings, account deletion, Flashcards, Notes, and standalone Search (2026-09-16). All 10 question types now have practice/authoring UI (2026-09-15), verified via live browser click-through as of 2026-09-16 (matching/ordering specifically). `ProjectWorkspaceScreen` is now 7 tabs (scrollable). Still-open frontend gaps: a sequential multi-question quiz mode, the `chat`→`tutor/chat`/`projects`→`knowledge/spaces` cosmetic renames, and any dedicated onboarding *flow* (the underlying data is reachable via Account today).
 - **Browser-automation lesson learned 2026-09-16** (worth remembering for future live-click-through sessions): a lone trailing `AppBar` action icon in the top-right corner can be fully hidden under Flutter's debug-mode "DEBUG" ribbon at this window width — visible coordinate guessing can be off by 15-20px; trigger the button's hover tooltip first to find its true position rather than guessing from what's visible. Also: pressing Escape while a text field is focused pops the current screen in this app (a real navigation fact, not a bug) — don't mistake that for a failed click.
+- Account deletion during a background indexing job leaves an orphaned RAG index dir (2026-10-19, see that entry) — the job should check the space still exists before writing.
 - Account deletion cleans up Postgres (cascade) and this user's RAG project-index files, but **not** `server/uploads/<session_id>/` — upload sessions aren't tied to `user_id` anywhere in the schema (2026-09-16 finding). A real, separate, pre-existing gap; would need a schema change (associate uploads with a user) to close properly.
 
 ### 2026-09-20 — REDESIGNED + BUILT (backend): hosted pay-as-you-go AI tier, replacing the BYOK auto-provisioning idea
@@ -845,3 +846,44 @@ User, after a successful upload: generated study guide can't be downloaded; uplo
 **Verified:** pytest **170/170** (new `test_project_files.py` 7, project-chat answer/fallback 2, disk-wipe-then-upload 1); found and mocked an existing test that had started calling the real local model (suite went 70 s → 173 s; back to 75 s). `flutter analyze` 0, `flutter test` 29/29. No leaked index dirs.
 
 **Limits:** uploads/Studio PDFs from before this deploy have no stored copy (re-upload / regenerate to open them); stored files count against Render's free 1 GB Postgres; on-device verification of opening a PDF link via the phone's viewer is pending the user.
+
+### 2026-10-08 — CONFIRMED on device
+
+User installed build `639ccac` on their phone (wireless adb, now 192.168.100.32) and confirmed it works: uploads index and persist, Studio PDFs and uploaded files open, uploads can be deleted, project chat answers, no nav-bar overlap. Closes the "on-device verification pending" limit in the 2026-10-07 entries above.
+
+### 2026-10-19 — FIXED: heavy work no longer freezes the server; less load on network and phone
+
+User asked: stop heavy work from blocking everyone (shared thread helper; ask.py's audio/image/PDF; the moderator's OCR, image, math and chart engines; locks on the Whisper and fastembed lazy loads; matplotlib Figure API instead of pyplot), "and any other thing that can cause a strain on network, server or client phone".
+
+**Server — off the event loop:**
+- `features/moderator/engine.py`: new public `run_in_thread(engine, **kwargs)` — runs an engine on its own loop in a **2-worker pool** (small on purpose: Render has 512 MB, so extra jobs queue rather than run side by side). Used for scanned-PDF OCR, searchable_knowledge, the whole image pipeline, symbolic/graphing/unit conversion, static images, interactive 2D, diagrams, generate_docs, every structured task (animation/3D/simulation/numeric), web search (blocking `requests`), project material and semantic search. The project index JSON is read with `asyncio.to_thread`. `LazyEngine`'s first load is now locked (the first load can happen in a worker).
+- `server/core/threads.py`: `run_engine_in_thread`, replacing the private helper in `domains/knowledge/router.py`. It delegates to the moderator's pool, so there is one pool in total. Used by `routers/ask.py` (image/pdf/audio/web input) and in knowledge (web_input, pdf_input, rag_projects indexing, Studio's generate_docs), search and learning/generation (semantic search).
+- Locks on the lazy loads: Whisper (`audio_input`), the shared fastembed registry (`rag/indexing`, `rag/semantic_search`; the lock lives in the `sys.modules` registry, so every module copy shares it), and the local LLM (`model_router`).
+- **Found while verifying:** the local model's first load (`model_router._get_backend`) ran **on** the event loop. Every other request stalled for ~14-25 s, measured live with asyncio slow-callback logging. It now runs in a thread.
+- `animations` and `static_images` use `matplotlib.figure.Figure` (pyplot is no longer imported).
+- Uploads: `ask.py`'s `_save_upload` runs in a thread. Knowledge uploads used to do `await file.read()` with **no size cap**; they now stream to disk with the same 25 MB cap (413). **Found:** the client filename was joined into the path unsanitised (`../` traversal); it now uses `Path(...).name`. `store_file`'s `read_bytes` runs in a thread.
+
+**Server ↔ Postgres / network:**
+- `index_store.ensure_index_file` used to `SELECT` the whole multi-MB `project_indexes` row on every project chat and search, only to discard it when the file was already on disk. It now selects only the id in that case.
+- `learning/generation.relevant_material` parsed the same index file twice per call; it now reads it once, off the loop.
+- `GZipMiddleware` (level 6, ≥1 KB, PDFs/GLB excluded alongside Starlette's image/audio defaults). A graph reply measured 7.7 KB → 2.5 KB on the wire.
+- `/generated/*` files are served with `Cache-Control: private, max-age=31536000, immutable` (uuid names, never rewritten).
+
+**Phone:**
+- `ApiClient` keeps one shared `http.Client`. The top-level `http.get/post` helpers opened a new TCP+TLS connection to Render for every call.
+- The materials poll was `Timer.periodic(4s)`, which kept firing even while a slow or cold server hadn't answered, piling up requests. It now schedules the next check only after a reply arrives, backing off 4 s → 30 s, and resets on the screen's own reloads.
+
+**Also found:** "image of x\*\*2" was routed to the concept-diagram route (LLM) instead of the plotter, because `_MATH_EXPRESSION_RE` didn't recognise `**`. Fixed.
+
+**Verified:** pytest **170/170** (twice, before and after the model-router and regex fixes). `flutter analyze` 0 issues, `flutter test` 29/29. Live, against a real uvicorn + Postgres with a throwaway user, pinging `/api/health` every 100 ms:
+- Batch: 24-frame animation, two static images at once, and an image upload through the OCR pipeline. Health max was **25 s before** the model-router fix and **50 ms after** (median 19 ms).
+- Cold local-model chat (27 s): health max 264 ms.
+- Both concurrent PNGs are distinct and served with the cache header.
+- A 26 MB knowledge upload gets a 413; a `../../evil.txt` filename is stored as `evil.txt`.
+- Test users deleted (0 left); generated/upload artifacts removed.
+
+**Limits / found, not fixed:**
+- Deleting an account while one of its uploads is still indexing in the background leaves an orphaned `features/rag/projects/projects/user_<id>/` dir: the job writes the index after the delete removed the folder. Seen live and cleaned up by hand.
+- The pool size (2) is a judgement for Render's instance, not measured under real multi-user load.
+- `Image.network` has no disk cache, so chat images re-download after an app restart. Browsers and PDF viewers do honour the new cache header.
+- No on-device check of the Flutter changes yet.

@@ -23,7 +23,7 @@ This implementation treats each step as a math expression to plot
 that shows how a graph changes across a sequence of expressions — a
 genuine, testable interpretation, not the only possible one. Composes
 math_engine/graphing (via importlib) for each frame's point data and
-matplotlib (headless "Agg" backend) + Pillow to render and assemble the
+matplotlib (headless Figure API) + Pillow to render and assemble the
 real GIF, rather than faking placeholder frame references.
 """
 from __future__ import annotations
@@ -34,10 +34,10 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+# Figure API, not pyplot (2026-10-19): this runs in a server worker thread
+# (moderator's _in_thread), and pyplot's global current-figure state isn't
+# thread-safe. A bare Figure needs no backend selection and no close().
+from matplotlib.figure import Figure
 from PIL import Image
 
 _HERE = Path(__file__).resolve().parent
@@ -84,7 +84,8 @@ async def run(**kwargs: Any) -> dict:
 
 
 def _render_frame(points: dict, title: str) -> Image.Image:
-    fig, ax = plt.subplots(figsize=(5, 4))
+    fig = Figure(figsize=(5, 4))
+    ax = fig.subplots()
     ax.plot(points["x"], points["y"])
     ax.set_title(f"y = {title}")
     ax.grid(True, alpha=0.3)
@@ -92,7 +93,6 @@ def _render_frame(points: dict, title: str) -> Image.Image:
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png")
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
