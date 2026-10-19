@@ -78,11 +78,28 @@ echo "Python $PY_VER"
 
 # ---------------------------------------------------------------------------
 step "3/11  Firewall (allow only SSH, HTTP, HTTPS) and brute-force protection"
-ufw allow OpenSSH >/dev/null
+# Open the port(s) SSH really uses - not just 22. Many VPSes run SSH on a
+# custom port, and enabling the firewall without it locks you out (only the
+# Contabo VNC console gets you back in). Ports come from sshd's own config,
+# from Ubuntu 24.04's socket-activated ssh.socket (systemd owns the port
+# there, not sshd) and from what sshd is listening on right now; 22 only if
+# none of them finds anything.
+SSH_PORTS=$( { sshd -T 2>/dev/null | awk '$1 == "port" {print $2}'
+               systemctl show ssh.socket -p Listen --value 2>/dev/null | grep -oE ':[0-9]+ ' | tr -d ': '
+               ss -tlnpH 2>/dev/null | awk '/"sshd"/ {n = split($4, a, ":"); print a[n]}'; } | sort -un | tr '\n' ' ')
+[[ -n "${SSH_PORTS// /}" ]] || SSH_PORTS="22"
+for port in $SSH_PORTS; do
+  ufw allow "$port/tcp" comment 'SSH' >/dev/null
+done
+echo "SSH port(s) kept open: $SSH_PORTS"
 ufw allow 'Nginx Full' >/dev/null
 ufw --force enable >/dev/null
-ufw status | sed -n '1,8p'
-systemctl enable --now fail2ban >/dev/null 2>&1 || warn "fail2ban did not start - not critical, continuing."
+ufw status | sed -n '1,12p'
+# fail2ban's sshd jail watches port 22 by default; point it at the real port(s).
+mkdir -p /etc/fail2ban/jail.d
+printf '[sshd]\nenabled = true\nport = %s\n' "$(echo "$SSH_PORTS" | xargs | tr ' ' ',')" > /etc/fail2ban/jail.d/study-os-sshd.local
+systemctl enable fail2ban >/dev/null 2>&1 || true
+systemctl restart fail2ban >/dev/null 2>&1 || warn "fail2ban did not start - not critical, continuing."
 systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
 
 # ---------------------------------------------------------------------------
