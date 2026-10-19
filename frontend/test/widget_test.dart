@@ -28,6 +28,23 @@ void main() {
     expect(find.text('Sign in'), findsWidgets);
   });
 
+  testWidgets('Intro says up front that AI answers need your own key', (WidgetTester tester) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(StudyOsApp(apiClient: ApiClient(baseUrl: 'http://127.0.0.1:8000')));
+    await tester.pumpAndSettle();
+
+    // visible on the very first page, before anyone can skip past it
+    expect(find.textContaining('AI answers use your own API key (BYOK)'), findsOneWidget);
+    expect(find.textContaining('still in development'), findsOneWidget);
+
+    // the banner opens the page that explains it
+    await tester.tap(find.textContaining('AI answers use your own API key (BYOK)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Bring your own AI key'), findsOneWidget);
+    expect(find.textContaining('Profile → AI model'), findsOneWidget);
+    expect(find.textContaining('Free built-in AI (no key needed) is still in development'), findsOneWidget);
+  });
+
   testWidgets('App boots with no saved session but a seen intro and shows the login screen', (WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({'intro_seen': true});
     await tester.pumpWidget(StudyOsApp(apiClient: ApiClient(baseUrl: 'http://127.0.0.1:8000')));

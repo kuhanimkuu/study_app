@@ -54,7 +54,7 @@ async def test_local_model_failure_returns_actionable_model_unavailable_block(mo
     assert result["blocks"] == [
         {
             "type": "model_unavailable",
-            "message": "The free local AI model is currently unavailable.",
+            "message": "Free built-in AI is still in development. Add your own AI key (DeepSeek, OpenAI or Anthropic) to get answers.",
             "attempted_backend": "local",
             "suggested_backend": "deepseek",
             "suggested_model": "deepseek-chat",

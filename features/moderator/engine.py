@@ -942,7 +942,7 @@ async def _route_research_or_clarify(
     except Exception as exc:
         if backend == "local":
             raise ModelUnavailable(
-                "The free local AI model is currently unavailable.",
+                "Free built-in AI is still in development. Add your own AI key (DeepSeek, OpenAI or Anthropic) to get answers.",
                 attempted_backend="local",
             ) from exc
         # A BYOK backend's own SDK client failed — surface the real reason
@@ -1171,7 +1171,7 @@ async def _call_model_or_unavailable(prompt: str, max_tokens: int, model_config:
     except Exception as exc:
         if backend == "local":
             raise ModelUnavailable(
-                "The free local AI model is currently unavailable.",
+                "Free built-in AI is still in development. Add your own AI key (DeepSeek, OpenAI or Anthropic) to get answers.",
                 attempted_backend="local",
             ) from exc
         raise ModelUnavailable(

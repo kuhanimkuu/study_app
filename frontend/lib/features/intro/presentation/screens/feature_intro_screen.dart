@@ -34,6 +34,20 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
           'Study OS tracks your mastery of every concept and schedules reviews with spaced repetition (FSRS) — so you revisit things right before you\'d forget them.',
       gradient: StudyOsColors.brandGradient,
     ),
+    // Said plainly up front (2026-10-19): AI answers need the student's own
+    // key for now — the free local model isn't available yet.
+    _IntroPage(
+      tag: 'Bring your own AI key',
+      icon: Icons.key_rounded,
+      title: 'AI answers use\nyour own AI key',
+      description:
+          'Study OS connects to an AI provider you choose: DeepSeek, OpenAI or Anthropic (Claude). '
+          'Add your API key in Profile → AI model after you sign up; you pay the provider directly for what you use. '
+          'Your key is stored encrypted on this phone and is used only for your own questions.',
+      note: 'Free built-in AI (no key needed) is still in development and not available yet. '
+          'Your own flashcards, notes, study plans and progress tracking work without a key.',
+      gradient: LinearGradient(colors: [StudyOsColors.primary, StudyOsColors.amber], begin: Alignment.topLeft, end: Alignment.bottomRight),
+    ),
     _IntroPage(
       tag: 'Practice your way',
       icon: Icons.style_rounded,
@@ -47,7 +61,8 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
       icon: Icons.forum_rounded,
       title: 'Ask in plain language,\nget deep answers',
       description:
-          'Ask questions in plain language, or start a guided session that explains a concept and checks your understanding as you go.',
+          'Ask questions in plain language, or start a guided session that explains a concept and checks your understanding as you go. '
+          'Powered by your own AI key.',
       gradient: LinearGradient(colors: [StudyOsColors.primaryDark, StudyOsColors.primary], begin: Alignment.topLeft, end: Alignment.bottomRight),
     ),
     _IntroPage(
@@ -59,6 +74,9 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
       gradient: LinearGradient(colors: [StudyOsColors.amber, StudyOsColors.primaryDark], begin: Alignment.topLeft, end: Alignment.bottomRight),
     ),
   ];
+
+  /// Index of the "Bring your own AI key" page — the banner jumps there.
+  static const _byokPage = 1;
 
   @override
   void dispose() {
@@ -95,6 +113,9 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
                 padding: const EdgeInsets.all(8),
                 child: TextButton(onPressed: _finish, child: const Text('Skip')),
               ),
+            ),
+            _ByokBanner(
+              onTap: () => _pageController.animateToPage(_byokPage, duration: const Duration(milliseconds: 300), curve: Curves.easeInOut),
             ),
             Expanded(
               child: PageView.builder(
@@ -138,67 +159,95 @@ class _FeatureIntroScreenState extends State<FeatureIntroScreen> {
 
   Widget _buildPage(BuildContext context, _IntroPage page) {
     final theme = Theme.of(context);
+    // The text takes what it needs, up to ~2/3 of the height (scrolling
+    // beyond that), and the illustration shrinks into the rest — the BYOK
+    // page's longer copy overflowed a small phone by 340 px otherwise.
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 24),
-      child: Column(
-        children: [
-          Expanded(
-            child: Container(
-              width: double.infinity,
-              margin: const EdgeInsets.only(bottom: 32),
-              padding: const EdgeInsets.all(24),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Center(
-                child: Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    gradient: page.gradient,
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(color: StudyOsColors.primary.withValues(alpha: 0.25), blurRadius: 28, offset: const Offset(0, 12))],
+      child: LayoutBuilder(
+        builder: (context, constraints) => Column(
+          children: [
+            Expanded(
+              child: Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 20),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: theme.colorScheme.surfaceContainerHighest, borderRadius: BorderRadius.circular(24)),
+                child: Center(
+                  child: FittedBox(
+                    child: Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        gradient: page.gradient,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(color: StudyOsColors.primary.withValues(alpha: 0.25), blurRadius: 28, offset: const Offset(0, 12)),
+                        ],
+                      ),
+                      child: Icon(page.icon, size: 54, color: Colors.white),
+                    ),
                   ),
-                  child: Icon(page.icon, size: 54, color: Colors.white),
                 ),
               ),
             ),
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(20),
-              ),
-              child: Text(
-                page.tag,
-                style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, letterSpacing: 0.2),
-              ),
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: constraints.maxHeight * 0.65),
+              child: SingleChildScrollView(child: _buildPageText(theme, page)),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPageText(ThemeData theme, _IntroPage page) {
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(color: theme.colorScheme.primaryContainer, borderRadius: BorderRadius.circular(20)),
+            child: Text(page.tag, style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary, letterSpacing: 0.2)),
           ),
-          const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              page.title,
-              textAlign: TextAlign.left,
-              style: theme.textTheme.displaySmall,
-            ),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(page.title, textAlign: TextAlign.left, style: theme.textTheme.displaySmall),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            page.description,
+            textAlign: TextAlign.left,
+            style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.6),
           ),
+        ),
+        if (page.note != null) ...[
           const SizedBox(height: 12),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              page.description,
-              textAlign: TextAlign.left,
-              style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant, height: 1.6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(color: theme.colorScheme.tertiaryContainer, borderRadius: BorderRadius.circular(12)),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.construction_rounded, size: 18, color: theme.colorScheme.onTertiaryContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    page.note!,
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onTertiaryContainer, height: 1.4),
+                  ),
+                ),
+              ],
             ),
           ),
         ],
-      ),
+      ],
     );
   }
 
@@ -225,6 +274,7 @@ class _IntroPage {
     required this.title,
     required this.description,
     required this.gradient,
+    this.note,
   });
 
   final String tag;
@@ -232,4 +282,48 @@ class _IntroPage {
   final String title;
   final String description;
   final Gradient gradient;
+
+  /// A highlighted caveat under the description (e.g. "in development").
+  final String? note;
+}
+
+/// Shown above every intro page, so even a student who taps Skip on the
+/// first page knows AI answers need their own key. Tapping it opens the
+/// page that explains how.
+class _ByokBanner extends StatelessWidget {
+  const _ByokBanner({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+      child: Material(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                Icon(Icons.key_rounded, size: 18, color: theme.colorScheme.onSecondaryContainer),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'AI answers use your own API key (BYOK). Free built-in AI is still in development.',
+                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSecondaryContainer, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                Icon(Icons.chevron_right_rounded, size: 18, color: theme.colorScheme.onSecondaryContainer),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

@@ -39,7 +39,7 @@ class ModelUnavailableBlockView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final message = block['message']?.toString() ?? 'The free local AI model is currently unavailable.';
+    final message = block['message']?.toString() ?? 'Free built-in AI is still in development. Add your own AI key to get answers.';
     final suggestedBackend = block['suggested_backend']?.toString();
     final suggestedModel = block['suggested_model']?.toString();
     // Present when the *free* local model failed (BYOK is a fresh

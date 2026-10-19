@@ -950,3 +950,29 @@ Studio PDFs and real users' project indexes are never touched. On this dev machi
 - `flutter analyze` 0 issues, `flutter test` **31/31** (new `chat_media_consent_test.dart`: one card for two pictures, "Don't save" remembered, Profile switch persists). The two existing image/animation URL tests pass unchanged.
 - Release APK built and installed on the phone (192.168.100.33).
 - **Not yet checked on the device:** the consent card, saving, opening a saved PDF, and Delete saved files.
+
+### 2026-10-19 (later) — DONE: setup_server.sh reviewed; app says up front that AI is BYOK
+
+**`setup_server.sh` (now committed).** Reviewed against the repo:
+- The settings it writes match `config.py` and `security.py`, and its Google client id matches `render.yaml`.
+- All 17 migrations run on an empty database and create all 21 tables, identical to the dev DB. (Tested in a temporary schema; migration `b5ee5d199c84`'s constraint lookup isn't schema-scoped, which only matters with two schemas side by side, not on a fresh server.)
+- `requirements.txt` resolves to 98 prebuilt wheels for Python 3.12 / Linux x86_64, so nothing compiles on the server, and opencv is the headless build.
+- The repo is public (anonymous clone works). Render's database is PostgreSQL 16, matching Ubuntu 24.04, so `study-os-import`'s `pg_dump` works.
+- The three helper commands it generates pass `bash -n`.
+- Fixed: installs `sudo` and `cron` (both used, never installed) and sets `NEEDRESTART_MODE=a`, so the upgrade can't stop at needrestart's prompt.
+- Not run on a real Ubuntu box yet: its first run will be on the Contabo VPS.
+
+**App: BYOK stated plainly** (the user asked for it on the first pages):
+- Every intro page now has a banner, "AI answers use your own API key (BYOK). Free built-in AI is still in development.", so students who skip on page 1 still see it. Tapping it opens a new second page, **Bring your own AI key**:
+  - providers: DeepSeek, OpenAI or Anthropic
+  - add the key in Profile → AI model; you pay the provider directly
+  - the key is stored encrypted on the phone and used only for the student's own questions
+  - a highlighted note says the free built-in AI is in development, and that their own flashcards, notes, plans and progress tracking work without a key. (Wording narrowed after checking: short-answer grading and AI generation do need a key.)
+- The AI moderator page adds "Powered by your own AI key". The Profile model list's "Local model" now says "In development — not available yet" (it said "Free, on the server — no key needed").
+- The server's no-key message is now "Free built-in AI is still in development. Add your own AI key (DeepSeek, OpenAI or Anthropic) to get answers." It used to read like an outage ("currently unavailable").
+
+**Found while verifying:** the longer page overflowed a 360×640 phone by 340 px. The intro layout now caps the text at ~2/3 of the height (scrolling beyond that) and scales the illustration into the rest. The new `intro_layout_test.dart` walks every page at text scale 1.0 and 1.3.
+
+**Verified:** pytest 178/178. `flutter analyze` 0 issues, `flutter test` 34/34 (new: intro BYOK test, intro layout tests).
+
+**Open:** "Study OS Hosted (pay-as-you-go)" is still offered in Profile, but no hosted keys are configured (decision 2026-10-07: BYOK only for now), so choosing it fails with a clear error. Hide it until hosted keys exist? APK not rebuilt for this change; build it once the new server's address is known.

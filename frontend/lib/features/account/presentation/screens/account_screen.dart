@@ -424,7 +424,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 Column(
                   children: [
                     for (final option in const [
-                      (id: 'local', name: 'Local model', sub: 'Free, on the server — no key needed'),
+                      (id: 'local', name: 'Local model', sub: 'In development — not available yet'),
                       (id: 'hosted', name: 'Study OS Hosted', sub: 'Pay-as-you-go — no key needed'),
                       (id: 'anthropic', name: 'Anthropic Claude', sub: 'Bring your own key'),
                       (id: 'openai', name: 'OpenAI GPT', sub: 'Bring your own key'),
