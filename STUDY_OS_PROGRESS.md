@@ -976,3 +976,30 @@ Studio PDFs and real users' project indexes are never touched. On this dev machi
 **Verified:** pytest 178/178. `flutter analyze` 0 issues, `flutter test` 34/34 (new: intro BYOK test, intro layout tests).
 
 **Open:** "Study OS Hosted (pay-as-you-go)" is still offered in Profile, but no hosted keys are configured (decision 2026-10-07: BYOK only for now), so choosing it fails with a clear error. Hide it until hosted keys exist? APK not rebuilt for this change; build it once the new server's address is known.
+
+### 2026-10-19 (later) — DEPLOYED: Contabo VPS at https://studytutor.duckdns.org
+
+**Server:** Contabo Cloud VPS, `62.171.182.123`, Ubuntu 24.04.5, 4 vCPUs (shared), 7.8 GB RAM, 96 GB disk. SSH is on **port 1257**. Domain is the free DuckDNS name `studytutor.duckdns.org`; HTTPS is a Let's Encrypt certificate, auto-renewing, until 2027-01-17. Started fresh, with no Render data imported (user's choice). Deployed with `setup_server.sh`, run as root over a dedicated deploy key (`~/.ssh/study_os_deploy` on the dev PC; the user's own key is a passphrase-protected PuTTY key). Ran twice: first without a domain, then with it for HTTPS.
+
+**Found while deploying:**
+- **SSH lockout averted:** the script's firewall allowed only port 22 while sshd listens on 1257. Fixed before running: the script now detects the real port(s) and points fail2ban at them.
+- **Audio was broken:** `av` (PyAV) wasn't pinned, and a fresh install got 19.0.1, whose `av.open()` dropped `metadata_errors`, so every audio upload failed with 400. Pinned `av==18.1.0`.
+- **Web links and web search were broken:** both parse with `lxml`, which wasn't in `requirements.txt` at all (present on the dev PC by chance). Added `lxml==6.0.2`.
+- After both fixes, every feature engine (42) imports on the server. The only modules missing are torch and transformers, the optional local AI, absent by design.
+
+**Verified live, over HTTPS:**
+- signup, solve, chart image (served with the immutable cache header), gzip on JSON, the no-key `model_unavailable` card, photo OCR, audio, PDF, project upload → indexing → search (top match 0.73), web link, web search; all test accounts deleted.
+- Upload limits: 31 MB is stopped by nginx (413) and 26 MB reaches the app.
+- From outside, only ports 80, 443 and 1257 are open (5432 and 8000 closed), and HTTP 301-redirects to HTTPS.
+- Engine limits resolved to 2 heavy workers × 1 thread on 4 vCPUs. fail2ban guards 1257; ufw is active.
+- `certbot renew --dry-run` succeeds. `study-os-backup` wrote a database dump plus files (root-only).
+- `study-os-update` deployed both fixes (pull, pip, alembic, restart, health).
+
+**App:** default server changed to `https://studytutor.duckdns.org` (`default_base_url.dart`). Release APK built (analyze 0 issues, 34/34 tests) and installed on the phone.
+
+**Open:**
+- 15-user load test against the real server not run yet. Signup allows 5 per hour per IP, so it needs `--accounts` with pre-made logins, or a run spread across hours.
+- Revoke the deploy key from `/root/.ssh/authorized_keys` once deployment work is done, if wanted.
+- Password login over SSH is still on (guide step 8 explains switching to keys only).
+- Render is still running the old code; shut it down once the new server is confirmed on the phone.
+- Pip pins only direct dependencies, so other indirect packages differ from the dev PC (protobuf 5→7, filelock 3→4, and others). Everything works today, but a lock file generated from the verified server (`pip freeze`) would make future installs reproducible.
