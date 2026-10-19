@@ -79,6 +79,10 @@ faster-whisper==1.2.1
 av==18.1.0
 requests==2.32.5
 beautifulsoup4==4.15.0
+# The parser web_input and research_engine/search_pipeline ask BeautifulSoup
+# for ("lxml"). It was only installed on the dev machine by chance, so on a
+# fresh server (2026-10-19) every web link and web search failed.
+lxml==6.0.2
 
 # --- rag (embeddings for project search) ---
 fastembed==0.8.0
