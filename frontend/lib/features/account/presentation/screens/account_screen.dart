@@ -9,6 +9,7 @@ import '../../../history/presentation/screens/history_screen.dart';
 import '../../../profile/presentation/screens/memory_screen.dart';
 import '../../../profile/presentation/screens/personality_settings_screen.dart';
 import '../../../progress/presentation/screens/progress_screen.dart';
+import '../widgets/chat_media_settings.dart';
 
 /// Profile + BYOK model preference. Rebuilt to match the approved visual
 /// reference's `Profile.tsx`: a gradient header card (avatar/name/email/
@@ -624,6 +625,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
                 const SizedBox(height: 28),
                 _sectionHeader(context, 'Data & privacy'),
+                const ChatMediaSettingsCard(),
                 _ProfileRow(
                   icon: Icons.history_rounded,
                   label: 'Activity history',

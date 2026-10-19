@@ -93,10 +93,10 @@ class ApiClient {
   /// device report; reproducible only on whatever network/IP Cloudflare's
   /// heuristics flagged, not from every network, which is why it wasn't
   /// caught by earlier `curl` testing from this environment's own IP.
-  static const _userAgent = 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) '
+  static const userAgent = 'Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) '
       'Chrome/120.0.0.0 Mobile Safari/537.36 StudyOS/1.0';
 
-  Map<String, String> get _baseHeaders => {'User-Agent': _userAgent};
+  Map<String, String> get _baseHeaders => {'User-Agent': userAgent};
 
   Map<String, String> get _authHeaders => {
         ..._baseHeaders,
@@ -1004,7 +1004,7 @@ class ApiClient {
         // `ApiException.message` directly as user-facing text (found
         // 2026-09-19: a Cloudflare "Just a moment..." challenge page,
         // triggered on some networks by Dart's default User-Agent — see
-        // `_userAgent` above — showed up verbatim on several screens).
+        // `userAgent` above — showed up verbatim on several screens).
         // 2026-10-07: the challenge came back even with the browser
         // User-Agent, as an HTTP 429 for every request from one Wi-Fi
         // network's IP — so name it, and give the one thing a student

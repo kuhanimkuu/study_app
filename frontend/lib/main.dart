@@ -6,8 +6,14 @@ import 'core/api/api_client.dart';
 import 'core/api/default_base_url.dart';
 import 'core/auth/auth_service.dart';
 import 'core/settings/model_settings_service.dart';
+import 'core/storage/chat_media_store.dart';
 
-void main() {
+Future<void> main() async {
+  // The student's saved answer to "keep chat files on this phone?" — read
+  // before the first frame so the chat never flashes the question to
+  // someone who already answered. SharedPreferences needs the binding.
+  WidgetsFlutterBinding.ensureInitialized();
+  await ChatMediaStore.instance.load();
   runApp(StudyOsApp(
     // One shared ApiClient for the whole app — AuthService attaches the
     // login token to this exact instance, so every screen (chat, history,

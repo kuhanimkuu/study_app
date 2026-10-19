@@ -1,4 +1,15 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- open_filex (opens chat PDFs/3D models saved on this phone) declares
+         media/storage READ permissions for opening files elsewhere on the
+         device. This app only opens files in its own private folder, which
+         the plugin opens without any permission, so they're removed: no
+         prompt and no media access for the student to worry about
+         (2026-10-19). -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" tools:node="remove" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" tools:node="remove" />
     <!-- Flutter's template only adds this to the debug/profile manifests
          (android/app/src/{debug,profile}/AndroidManifest.xml) by default —
          a release build uses only this file, so without it every network

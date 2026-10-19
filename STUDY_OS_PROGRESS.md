@@ -640,8 +640,8 @@ After the HelioHost/Oracle/Cloud-Run hosting research, user asked to focus back 
 - Standalone semantic search now exists (`GET /api/v1/knowledge-spaces/{slug}/search`, 2026-09-16) — scoped to semantic-only (no keyword/metadata/reranking/graph blending yet, see that entry above), closing the 2026-09-14 audit finding.
 - Frontend now covers Concepts/Mastery/Practice, Planner (Goals/Plan/Sessions), Progress, Home, Personality/Memory/Student-profile settings, account deletion, Flashcards, Notes, and standalone Search (2026-09-16). All 10 question types now have practice/authoring UI (2026-09-15), verified via live browser click-through as of 2026-09-16 (matching/ordering specifically). `ProjectWorkspaceScreen` is now 7 tabs (scrollable). Still-open frontend gaps: a sequential multi-question quiz mode, the `chat`→`tutor/chat`/`projects`→`knowledge/spaces` cosmetic renames, and any dedicated onboarding *flow* (the underlying data is reachable via Account today).
 - **Browser-automation lesson learned 2026-09-16** (worth remembering for future live-click-through sessions): a lone trailing `AppBar` action icon in the top-right corner can be fully hidden under Flutter's debug-mode "DEBUG" ribbon at this window width — visible coordinate guessing can be off by 15-20px; trigger the button's hover tooltip first to find its true position rather than guessing from what's visible. Also: pressing Escape while a text field is focused pops the current screen in this app (a real navigation fact, not a bug) — don't mistake that for a failed click.
-- Generated files (`features/moderator/generated/`) and chat uploads (`server/uploads/<session>/`) are never cleaned up (2026-10-19 load test: ~830 files in 2 minutes) — needs a scheduled cleanup on the server.
-- Account deletion during a background indexing job leaves an orphaned RAG index dir (2026-10-19, see that entry) — the job should check the space still exists before writing.
+- ~~Generated files and chat uploads never cleaned up~~ — closed 2026-10-19 (`server/workers/cleanup.py`; phone keeps its own copy of chat media with the student's consent).
+- ~~Account deletion during a background indexing job leaves an orphaned RAG index dir~~ — swept up by the cleanup worker (2026-10-19, orphaned `user_<id>` folders older than an hour).
 - Account deletion cleans up Postgres (cascade) and this user's RAG project-index files, but **not** `server/uploads/<session_id>/` — upload sessions aren't tied to `user_id` anywhere in the schema (2026-09-16 finding). A real, separate, pre-existing gap; would need a schema change (associate uploads with a user) to close properly.
 
 ### 2026-09-20 — REDESIGNED + BUILT (backend): hosted pay-as-you-go AI tier, replacing the BYOK auto-provisioning idea
@@ -923,3 +923,30 @@ Both runs keep the server responsive; more workers mainly shorten the queue for 
 - No local LLM in the test (it's serialised at 1 and takes ~27 s per reply).
 - **Found:** nothing ever deletes old files in `features/moderator/generated/` or `server/uploads/<session>/`. A 2-minute 15-user test wrote ~830 files, so on a long-running server these grow without limit. That needs a cleanup job, for example a nightly delete of files older than N days, alongside the guide's backup timer.
 - `Study_OS_Contabo_Deploy_Guide.pdf`'s "Before you open it to 15 users" section is now out of date (both items done), and `setup_server.sh` is not in Downloads.
+
+### 2026-10-19 (later) — DONE: server disk cleanup + chat files saved on the phone (with the student's consent)
+
+**Server: `server/workers/cleanup.py`.** An in-process task started from `main.py`'s lifespan: the first pass runs a minute after start, then every `CLEANUP_INTERVAL_HOURS` (6; 0 = off). Each pass deletes:
+- everything under `server/uploads/` older than `UPLOAD_RETENTION_HOURS` (24). Chat uploads are only needed while a PDF follow-up is pending, and project uploads only while indexing (originals are in Postgres).
+- top-level chat-made files in `features/moderator/generated/` older than `GENERATED_RETENTION_DAYS` (14).
+- `user_<id>` folders (generated/, RAG indexes, project uploads) whose user no longer exists and that haven't been touched for over an hour, so a user who signs up mid-pass is safe. This closes the deleted-account-while-indexing orphan gap.
+
+Studio PDFs and real users' project indexes are never touched. On this dev machine it would remove 61 old uploads (4.6 MB), 1 chat image and 54 orphaned test-user folders on its first pass.
+
+**The user asked: does the phone keep what the server deletes?** Chat text and equations yes (LocalDb), but pictures, charts and PDFs no: chat history only holds their links. The user chose to save them on the phone, **but only with the student's approval and awareness**.
+
+**App: `ChatMediaStore`** (`core/storage/`, with an io version and a no-op web stub):
+- Saves chat pictures, animations, PDFs and 3D models into the app's private `chat_media/` folder. That needs no storage permission, and Android deletes it with the app.
+- **Nothing is downloaded until the student agrees.** The first chat picture or file shows a one-time card ("Save chat pictures and PDFs on this phone?") explaining the trade-off: two weeks on the server, phone storage used, where to change it. Only one card shows at a time, and it disappears once answered; the answer is kept in SharedPreferences.
+- Profile → Data & privacy → **Chat files on this phone** has a switch with a plain-language explanation of each state, the space used, and **Delete saved files** (with confirmation).
+- Saved-file lookups use a list built once at startup, so rendering never touches the disk. Students who haven't agreed load straight from the server, exactly as before.
+- PDFs and 3D models are saved when the card appears, not only when opened. They open through `open_filex`, whose READ_MEDIA_*/READ_EXTERNAL_STORAGE permissions are stripped in the manifest (`tools:node="remove"`). They're only needed for files outside the app's folder, and the release APK's permission list was checked with `aapt`: unchanged from before.
+- An expired, unsaved picture shows "This picture is no longer available…" plus how to keep future ones, instead of a raw error.
+
+**Found while building:** loading the saved answer in `main()` before `WidgetsFlutterBinding.ensureInitialized()` failed silently, so the app would have asked again on every launch. Fixed.
+
+**Verified:**
+- pytest **178/178** (4 new in `test_cleanup.py`, run against temp folders), plus one live pass against the real Postgres pointed at temp folders (deleted 2 old files and 1 orphan).
+- `flutter analyze` 0 issues, `flutter test` **31/31** (new `chat_media_consent_test.dart`: one card for two pictures, "Don't save" remembered, Profile switch persists). The two existing image/animation URL tests pass unchanged.
+- Release APK built and installed on the phone (192.168.100.33).
+- **Not yet checked on the device:** the consent card, saving, opening a saved PDF, and Delete saved files.

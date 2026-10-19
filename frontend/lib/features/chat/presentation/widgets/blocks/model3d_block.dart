@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:url_launcher/url_launcher.dart';
+
+import '../chat_media.dart';
 
 /// Renders a `{"type": "3d", "content": "/generated/FILENAME.glb", "format":
 /// "glb"}` block as a reference card, NOT inline 3D rendering — actual glTF/
@@ -16,37 +17,14 @@ class Model3dBlockView extends StatelessWidget {
   final Map<String, dynamic> block;
   final String baseUrl;
 
-  Future<void> _open(BuildContext context) async {
-    final path = block['content']?.toString() ?? '';
-    final uri = Uri.parse('$baseUrl$path');
-    try {
-      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-      if (!opened && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open $uri')));
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Could not open 3D model: $e')));
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final path = block['content']?.toString() ?? '';
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      child: ListTile(
-        leading: const Icon(Icons.view_in_ar_outlined),
-        title: Text('3D model generated (${block['format'] ?? 'glb'})'),
-        subtitle: Text('$baseUrl$path', style: Theme.of(context).textTheme.bodySmall),
-        trailing: IconButton(
-          icon: const Icon(Icons.open_in_new),
-          tooltip: 'Open',
-          onPressed: () => _open(context),
-        ),
-        onTap: () => _open(context),
-      ),
+    return ChatMediaFileCard(
+      baseUrl: baseUrl,
+      path: block['content']?.toString() ?? '',
+      icon: Icons.view_in_ar_outlined,
+      title: '3D model generated (${block['format'] ?? 'glb'})',
+      what: '3D model',
     );
   }
 }

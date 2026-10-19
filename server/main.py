@@ -55,6 +55,7 @@ from __future__ import annotations
 # First: sets CPU-thread limits before numpy/torch/ONNX load (see that module).
 from .core import runtime_env  # noqa: F401  isort: skip
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -79,6 +80,7 @@ from .domains.knowledge.search_router import router as search_router
 from .domains.learning.router import router as learning_router
 from .domains.planning.router import router as planning_router
 from .routers import ask, health
+from .workers.cleanup import cleanup_loop
 
 FEATURES_ROOT = Path(__file__).resolve().parent.parent / "features"
 
@@ -107,7 +109,10 @@ async def lifespan(_app: FastAPI):
     # Uploads index in the background (domains/knowledge/router.py) — any
     # left "indexing" from before this start were cut off by the restart.
     await mark_interrupted_indexing_failed()
+    # Deletes old uploads/generated files every few hours (workers/cleanup.py).
+    cleaner = asyncio.create_task(cleanup_loop())
     yield
+    cleaner.cancel()
 
 
 app = FastAPI(title="Study OS", lifespan=lifespan)
