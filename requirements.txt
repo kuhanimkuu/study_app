@@ -73,6 +73,10 @@ pymupdf==1.28.0
 
 # --- input_pipeline (audio/web) ---
 faster-whisper==1.2.1
+# faster-whisper's audio decoder, pinned (2026-10-19): unpinned, a fresh
+# install got av 19, which dropped the `metadata_errors` argument
+# faster-whisper 1.2.1 passes to av.open() — every audio upload failed.
+av==18.1.0
 requests==2.32.5
 beautifulsoup4==4.15.0
 
