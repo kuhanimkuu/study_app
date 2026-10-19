@@ -36,6 +36,7 @@ locally-run embedding model, not a keyword/TF-IDF stand-in.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import threading
 import types
@@ -79,12 +80,13 @@ def _shared_model(model_name: str) -> "TextEmbedding":
         model = registry.models.get(model_name)
         if model is not None:
             return model
-        # threads=1: ONNX Runtime otherwise sizes its pool from the CPU
+        # threads: ONNX Runtime otherwise sizes its pool from the CPU
         # count it can see — on a container host that can be the host's
         # many cores (each thread with its own memory arena), while the
         # Render free instance actually gets a fraction of one CPU, so
-        # extra threads add memory and no speed (2026-10-07).
-        model = TextEmbedding(model_name=model_name, threads=1)
+        # extra threads add memory and no speed (2026-10-07). ENGINE_THREADS
+        # (server/core/runtime_env.py) sets it; 1 by default.
+        model = TextEmbedding(model_name=model_name, threads=int(os.environ.get("ENGINE_THREADS", "1")))
         registry.models[model_name] = model
     return model
 

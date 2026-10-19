@@ -60,6 +60,7 @@ import asyncio
 import functools
 import importlib.util
 import json
+import os
 import re
 import threading
 import uuid
@@ -137,14 +138,31 @@ class LazyEngine(ModuleType):
 # --- heavy engines off the event loop (2026-10-19) ---
 # Most engines are `async def` with fully synchronous bodies (OCR, sympy,
 # matplotlib, PDF parsing, Whisper, blocking HTTP). Awaited directly, one of
-# them froze the whole server — every other user's request, and Render's
-# health check — until it finished. run_in_thread runs the engine on its own
-# event loop in a worker thread instead. The pool is deliberately small:
-# this work is CPU- and memory-heavy and Render's instance has a fraction of
-# a CPU and 512 MB, so extra jobs queue rather than all running at once and
-# exhausting memory.
-HEAVY_WORKERS = 2
-_heavy_pool = ThreadPoolExecutor(max_workers=HEAVY_WORKERS, thread_name_prefix="heavy-engine")
+# them froze the whole server — every other user's request, and the health
+# check — until it finished. run_in_thread runs the engine on its own event
+# loop in a worker thread instead. The pool is deliberately small: this work
+# is CPU- and memory-heavy, so extra jobs queue rather than all running at
+# once. Its size comes from HEAVY_ENGINE_WORKERS, which the server resolves
+# from the machine's CPUs and RAM at startup — see server/core/runtime_env.py
+# for the shared-VPS reasoning; 2 when run outside the server.
+HEAVY_WORKERS = max(1, int(os.environ.get("HEAVY_ENGINE_WORKERS", "2")))
+_HEAVY_NICE = int(os.environ.get("HEAVY_ENGINE_NICE", "0"))
+
+
+def _lower_worker_priority() -> None:
+    # Linux applies nice per thread, so this lowers only the heavy workers:
+    # under CPU contention the event loop thread, answering every other
+    # request, gets scheduled first.
+    if _HEAVY_NICE and hasattr(os, "setpriority") and hasattr(threading, "get_native_id"):
+        try:
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), _HEAVY_NICE)
+        except OSError:
+            pass
+
+
+_heavy_pool = ThreadPoolExecutor(
+    max_workers=HEAVY_WORKERS, thread_name_prefix="heavy-engine", initializer=_lower_worker_priority
+)
 
 
 def _run_on_own_loop(engine: ModuleType, kwargs: dict) -> dict:
@@ -437,7 +455,14 @@ async def run(**kwargs: Any) -> dict:
         # keyword match, since those depend on the stored pdf_path/project
         # to mean anything at all (there's no fresh pdf_path/project on a
         # bare text reply to recover those from).
-        if inferred_task is None and input_type == "text" and pending_input_type == "text":
+        #
+        # A NEW upload (an image, or a PDF with its own text/path) is never
+        # a reply either — found by the 2026-10-19 load test: after a PDF's
+        # "what would you like me to do with it?", the student's next photo
+        # or PDF in that chat was discarded and the old PDF's context
+        # replayed instead. A PDF follow-up carries no new content or path.
+        new_upload = input_type in ("image", "pdf") and bool(content.strip() or pdf_path)
+        if new_upload or (inferred_task is None and input_type == "text" and pending_input_type == "text"):
             pending = None
         else:
             task = inferred_task

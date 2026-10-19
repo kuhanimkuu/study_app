@@ -30,6 +30,7 @@ deployment would likely use a larger model.
 """
 from __future__ import annotations
 
+import os
 import threading
 from typing import Any
 
@@ -46,7 +47,11 @@ def _get_model() -> WhisperModel:
     if _model is None:
         with _model_lock:
             if _model is None:
-                _model = WhisperModel("tiny", device="cpu", compute_type="int8")
+                # cpu_threads: CTranslate2 otherwise takes up to 4 cores per
+                # transcription — see ENGINE_THREADS in server/core/runtime_env.py.
+                _model = WhisperModel(
+                    "tiny", device="cpu", compute_type="int8", cpu_threads=int(os.environ.get("ENGINE_THREADS", "1"))
+                )
     return _model
 
 

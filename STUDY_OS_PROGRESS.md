@@ -640,6 +640,7 @@ After the HelioHost/Oracle/Cloud-Run hosting research, user asked to focus back 
 - Standalone semantic search now exists (`GET /api/v1/knowledge-spaces/{slug}/search`, 2026-09-16) — scoped to semantic-only (no keyword/metadata/reranking/graph blending yet, see that entry above), closing the 2026-09-14 audit finding.
 - Frontend now covers Concepts/Mastery/Practice, Planner (Goals/Plan/Sessions), Progress, Home, Personality/Memory/Student-profile settings, account deletion, Flashcards, Notes, and standalone Search (2026-09-16). All 10 question types now have practice/authoring UI (2026-09-15), verified via live browser click-through as of 2026-09-16 (matching/ordering specifically). `ProjectWorkspaceScreen` is now 7 tabs (scrollable). Still-open frontend gaps: a sequential multi-question quiz mode, the `chat`→`tutor/chat`/`projects`→`knowledge/spaces` cosmetic renames, and any dedicated onboarding *flow* (the underlying data is reachable via Account today).
 - **Browser-automation lesson learned 2026-09-16** (worth remembering for future live-click-through sessions): a lone trailing `AppBar` action icon in the top-right corner can be fully hidden under Flutter's debug-mode "DEBUG" ribbon at this window width — visible coordinate guessing can be off by 15-20px; trigger the button's hover tooltip first to find its true position rather than guessing from what's visible. Also: pressing Escape while a text field is focused pops the current screen in this app (a real navigation fact, not a bug) — don't mistake that for a failed click.
+- Generated files (`features/moderator/generated/`) and chat uploads (`server/uploads/<session>/`) are never cleaned up (2026-10-19 load test: ~830 files in 2 minutes) — needs a scheduled cleanup on the server.
 - Account deletion during a background indexing job leaves an orphaned RAG index dir (2026-10-19, see that entry) — the job should check the space still exists before writing.
 - Account deletion cleans up Postgres (cascade) and this user's RAG project-index files, but **not** `server/uploads/<session_id>/` — upload sessions aren't tied to `user_id` anywhere in the schema (2026-09-16 finding). A real, separate, pre-existing gap; would need a schema change (associate uploads with a user) to close properly.
 
@@ -887,3 +888,38 @@ User asked: stop heavy work from blocking everyone (shared thread helper; ask.py
 - The pool size (2) is a judgement for Render's instance, not measured under real multi-user load.
 - `Image.network` has no disk cache, so chat images re-download after an app restart. Browsers and PDF viewers do honour the new cache header.
 - No on-device check of the Flutter changes yet.
+
+### 2026-10-19 (later) — DONE: engine limits tuned for a shared VPS (Contabo) + 15-user load test
+
+User asked to tune the background-pool work for the Contabo VPS, keeping in mind that it's a **shared** VPS. The guide in Downloads, `Study_OS_Contabo_Deploy_Guide.pdf`, also listed a 15-user load test as the next step.
+
+**Built:**
+- `server/core/runtime_env.py`, imported first by `server/main.py` and `server/engines.py`. It loads `.env` into `os.environ` (the engines can't read pydantic Settings) and resolves the limits before numpy, torch or ONNX load.
+  - `HEAVY_ENGINE_WORKERS`: auto = CPUs/2, clamped 1-4, and at most one per 1.5 GB of RAM. The CPU and RAM figures respect cgroup quotas, so Render's container no longer looks like the host's full core count.
+  - `ENGINE_THREADS`: default 1. It sets OMP/OpenBLAS/MKL/tesseract threads, fastembed's ONNX threads and Whisper's `cpu_threads`.
+  - `LOCAL_MODEL_THREADS`: auto = CPUs/2, 1-8, applied with `torch.set_num_threads`.
+  - `HEAVY_ENGINE_NICE`: default 10. Linux nice applies per thread, so only the heavy workers are deprioritised and the event loop wins under contention.
+  - The resolved values are logged at startup.
+- Why "half the CPUs": the vCPUs are shared with other customers, so running every core flat out means CPU steal and a starved event loop, Postgres and nginx.
+- `server/scripts/load_test.py`, reusable against a real server with `--accounts`. It runs N users, each with a project and material, looping over a weighted mix (DB pages, solve, graph, chart image, photo OCR, Whisper, PDF, animation, project search) with 1-4 s of think time. A pinger checks `/api/health` every 200 ms throughout, and the script cleans up its own accounts.
+
+**Found by the load test:** after a PDF's "what would you like me to do with it?", the student's next photo or PDF in the same chat was discarded and the old PDF's context replayed. The moderator's pending-resume logic treated every non-text request as a reply. A new upload now replaces the pending question; a query-only PDF follow-up still resumes. Regression test included; it fails without the fix (`'old notes' == 'new notes'`). The bug first showed up as impossibly fast OCR times (20 ms) in the load results.
+
+**Verified:** pytest **174/174**, including 4 new tests in `test_heavy_engine_limits.py`. Load test runs: 15 users, 120 s, local machine with 8 CPUs, torch/transformers blocked so it matches a server without the optional local model, no errors in either run.
+
+| | auto (4 workers) | 2 workers |
+|---|---|---|
+| requests/s | 4.9 | 4.6 |
+| photo OCR p50 / p95 | 1.1 / 2.1 s | 1.3 / 3.9 s |
+| chart image p95 | 0.8 s | 2.7 s |
+| audio (Whisper) p95 | 3.1 s | 3.9 s |
+| solve / project search p95 | 0.16 / 0.60 s | 1.3 / 1.2 s |
+| health ping p95 / max | 37 / 136 ms | 23 / 214 ms |
+
+Both runs keep the server responsive; more workers mainly shorten the queue for heavy jobs. All 15+ test accounts were deleted (0 left) and the run's ~830 generated and upload files removed.
+
+**Limits:**
+- Run on this dev machine, not the Contabo VPS, which has a different vCPU count and real CPU steal. Re-run `load_test.py --accounts` there after deploying.
+- No local LLM in the test (it's serialised at 1 and takes ~27 s per reply).
+- **Found:** nothing ever deletes old files in `features/moderator/generated/` or `server/uploads/<session>/`. A 2-minute 15-user test wrote ~830 files, so on a long-running server these grow without limit. That needs a cleanup job, for example a nightly delete of files older than N days, alongside the guide's backup timer.
+- `Study_OS_Contabo_Deploy_Guide.pdf`'s "Before you open it to 15 users" section is now out of date (both items done), and `setup_server.sh` is not in Downloads.

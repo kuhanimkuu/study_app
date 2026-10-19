@@ -9,6 +9,8 @@ import importlib.util
 from pathlib import Path
 from types import ModuleType
 
+from .core import runtime_env  # noqa: F401  — thread limits before any engine loads
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FEATURES_ROOT = REPO_ROOT / "features"
 

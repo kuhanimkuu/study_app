@@ -52,6 +52,9 @@ Run with: uvicorn server.main:app --reload --port 8000
 """
 from __future__ import annotations
 
+# First: sets CPU-thread limits before numpy/torch/ONNX load (see that module).
+from .core import runtime_env  # noqa: F401  isort: skip
+
 from contextlib import asynccontextmanager
 from pathlib import Path
 

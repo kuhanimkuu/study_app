@@ -102,6 +102,13 @@ class TransformersBackend:
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
+        # OMP_NUM_THREADS is pinned low for the heavy engines (server/core/
+        # runtime_env.py), which torch would inherit — the LLM gets its own,
+        # larger share. Process-wide, but torch is only used here.
+        threads = os.environ.get("LOCAL_MODEL_THREADS")
+        if threads:
+            torch.set_num_threads(max(1, int(threads)))
+
         self._tokenizer = AutoTokenizer.from_pretrained(model_id)
         # dtype=torch.bfloat16: load in the checkpoint's own native
         # precision (see this module's docstring) instead of silently
