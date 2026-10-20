@@ -1164,3 +1164,40 @@ The user asked for a meter showing students their AI token use and its total pri
   - APK 1.0.4 served byte-identical; site zip built with 1.0.4.
   - Installed on the phone once it was connected (versionName 1.0.4, versionCode 5).
 - **Known limit:** usage before this release was never logged for BYOK, so the meter starts from zero.
+
+### 2026-10-20 (later) — Release 1.0.5: spending limit, reminders, exam countdown, crash reports, offline flashcards, off-server backups
+
+The user asked to implement the suggested features. On inspection, two already existed: the FSRS flashcard review with a "cards due" deck on Home, and goals with target dates that already steer the planner. Nightly backups also existed, but only on the server's own disk. Built:
+
+- **Monthly AI spending limit:**
+  - `ai_spend_limits` table (migration `e7b2c4d81a36`), student-set.
+  - `billing_service.enforce_spend_limit` runs in `resolve_model_config_async` before every non-local call and returns 402 once this calendar month's priced spend reaches the cap. The free model is never blocked.
+  - Endpoint `PUT /api/v1/billing/ai-usage/limit` (1 cent to $1,000, or null to remove).
+  - The meter gained `this_month` and `monthly_limit_cents`. The app shows a bar (amber at 80%, red at 100%) and a set/change/remove dialog.
+- **Study reminders:**
+  - `flutter_local_notifications` with inexact scheduling, so no exact-alarm permission.
+  - Opt-in from Profile, which is when Android asks for notification permission; time is selectable.
+  - Home reschedules the next 7 days on each load. The first reminder uses the real streak and cards due; today's is skipped once studied. Unopened, reminders stop after a week.
+  - Fixed along the way: `computeStudyStreak` shows 0 until you study today, so an "ends tonight" reminder was impossible. Added `endingYesterday:`.
+  - Manifest: `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED` and the plugin receivers; desugaring enabled. Status icon `ic_stat_study` is kept from resource shrinking via `res/raw/keep.xml` (checked in the APK with aapt).
+- **Exam countdown:** a Home card for the nearest goal dated today or later. A goals fetch failure doesn't break Home.
+- **Crash reports, self-hosted:**
+  - `server/domains/diagnostics`, `client_errors` table (migration `f4c8a2e65b19`).
+  - `POST /api/v1/client-errors` works signed out. 30 per hour per account or IP; message capped at 2 KB, stack at 8 KB; repeats folded by a fingerprint with numbers masked. Kept 30 days after last seen (cleanup worker).
+  - `study-os-errors [days]` on the server prints them.
+  - App: `ErrorReporter` (release builds only, network errors skipped, each error once per run, at most 10 per run, messages cut to 500 characters).
+  - Disclosed in the privacy policy in both the app and the website.
+- **Offline flashcards:**
+  - `OfflineFlashcards` keeps up to 50 account-wide due cards and a queue of ratings in SharedPreferences. It syncs on the review screen and on Home load; a rating the server refuses is dropped.
+  - `POST /flashcards/{id}/review` accepts `reviewed_at`, honoured unless it's in the future, more than 30 days old, or before the last review.
+  - Subject-scoped review still needs a connection.
+- **Off-server backups:**
+  - `ops/pull-backups.ps1` copies new server backups to `D:\StudyOS-backups`, keeping 14 days by backup date to match the privacy policy's 14-day promise.
+  - Run once: 4 files. A test restore of the latest dump into a throwaway database worked (3 users, 21 tables), and the database was dropped afterwards.
+  - Scheduling it daily was blocked from the agent (persistence); the user must create the task.
+- **Verified:**
+  - 193/193 backend tests; analyze clean; 56/56 Flutter tests.
+  - Deployed: both migrations ran; live crash-report endpoint returned 204 and showed in `study-os-errors` (smoke row deleted); limit endpoint returns 401 without login.
+  - APK 1.0.5 (versionCode 6) served byte-identical and installed on the phone.
+  - Site zip rebuilt with 1.0.5 and 62 MB.
+- **Not done:** Google Play Store. It needs the user's developer account, and the release build is still signed with the debug key; a real upload key is needed first.
