@@ -1146,3 +1146,22 @@ The user created a HelioHost account (`studyos.helioho.st`, Plesk) and chose a z
   - **Subject chat:** the welcome now matches the main chat — Sage greets you by the subject's name (in its colour), with colourful starter cards. `StarterCard`/`StarterCardGrid` are now shared widgets. Bubbles, the thinking indicator and the input bar were already shared.
   - **Verified:** `aapt` reads label "Study OS" and the adaptive icon from the APK. analyze clean; 38/38 tests. Installed on the phone (versionName 1.0.2). The APK is served byte-identical. The site zip is built with version 1.0.2.
 - **Pending:** the user re-uploads `studyos-website.zip` to HelioHost so the site shows 1.0.2.
+
+### 2026-10-20 (later) — Release 1.0.4: AI token meter
+
+The user asked for a meter showing students their AI token use and its total price, and whether that's a security issue. It isn't: each student sees only their own usage, no API key is involved, and the price is labelled an estimate.
+
+- **Server:**
+  - New `ai_usage` table (migration `d3a9e6b15f42`): one row per real provider call, BYOK and hosted. Local-model calls report no usage and get no row.
+  - All four AI call sites (chat/ask, explain, grading, generation) now go through `billing_service.record_ai_usage`. It logs the row and, on the hosted tier only, still debits the wallet via `charge_for_usage`.
+  - Cost is stored in micro-USD, so a fraction-of-a-cent BYOK call isn't rounded to free. BYOK cost is an estimate from `pricing.py`'s table; it is null, not $0, for a model the table doesn't price. Hosted cost is what the wallet paid.
+  - `GET /api/v1/billing/ai-usage` returns the caller's totals for today, the last 30 days and all time, an `unpriced_calls` count, and a per-model breakdown.
+- **App:** Profile has an "AI usage" card (last 30 days: tokens and approximate cost) that opens a screen with the three periods, each model, and an always-visible disclaimer. The disclaimer says prices are estimates, to check the provider's dashboard, and only you can see this.
+- **Verified:**
+  - 184/184 backend tests, including the hosted end-to-end path, BYOK not touching the wallet, partial pricing, and one student never seeing another's usage.
+  - analyze clean; 40/40 Flutter tests.
+  - Deployed to Contabo: migration ran, and the endpoint returns 401 without login.
+  - APK 1.0.4 served byte-identical; site zip built with 1.0.4.
+- **Not yet done:**
+  - Installing on the phone: it wasn't connected to adb.
+  - Usage before this release was never logged for BYOK, so the meter starts from zero.
