@@ -17,7 +17,6 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import engines
 from ...core import security
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
@@ -64,11 +63,9 @@ async def explain_concept(
 
     # See explain.py's generate_explanation doc comment — "_billed_usage"
     # is its internal write-back, not part of this endpoint's response.
-    hosted_provider = model_config.get("hosted_provider")
-    if hosted_provider:
-        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
-        usage = model_config.get("_billed_usage")
-        await billing_service.charge_for_usage(db, current_user["id"], hosted_provider, model_name, usage)
+    usage = model_config.get("_billed_usage")
+    if usage is not None:
+        await billing_service.record_ai_usage(db, current_user["id"], model_config, usage, "explain")
         await db.commit()
 
     return ExplainResponse(blocks=[TextBlock(content=text, source="moderator")], depth=depth, reasoning=reasoning)

@@ -75,3 +75,15 @@ def compute_charge(provider: str, model_name: str, input_tokens: int, output_tok
         "infra_surcharge_cents": infra,
         "total_cents": base + markup + infra,
     }
+
+
+def estimate_cost_micro_usd(provider: str, model_name: str, input_tokens: int, output_tokens: int) -> int | None:
+    """What the provider itself charges for these tokens, in millionths of a
+    dollar — for the token meter's BYOK estimate. None (not 0) for a model
+    the table above doesn't price, e.g. a BYOK model_name override."""
+    prices = _PROVIDER_PRICES_USD_PER_MILLION.get(provider, {}).get(model_name)
+    if prices is None:
+        return None
+    input_price, output_price = prices
+    # tokens * USD-per-million == micro-USD exactly.
+    return int(input_tokens * input_price + output_tokens * output_price + 0.5)

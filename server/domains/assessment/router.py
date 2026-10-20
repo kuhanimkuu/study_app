@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import engines
 from ...ai.memory.service import create_episodic_memory
 from ...core import security
 from ...core.model_config import ModelConfig, resolve_model_config_async
@@ -183,12 +182,11 @@ async def submit_attempt(
     # "_billed_usage" is grading.py's internal write-back (not part of this
     # endpoint's response) for whether _grade_via_llm made a real provider
     # call — see grading.py's _grade_via_llm doc comment. Only the hosted
-    # tier (model_config carries "hosted_provider") gets billed for it.
-    hosted_provider = model_config.get("hosted_provider")
-    if hosted_provider:
-        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
-        usage = model_config.get("_billed_usage")
-        await billing_service.charge_for_usage(db, current_user["id"], hosted_provider, model_name, usage)
+    # tier (model_config carries "hosted_provider") gets billed for it;
+    # every backend's call is logged for the token meter.
+    await billing_service.record_ai_usage(
+        db, current_user["id"], model_config, model_config.get("_billed_usage"), "grading"
+    )
 
     attempt = QuestionAttempt(
         user_id=current_user["id"],

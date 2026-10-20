@@ -95,3 +95,34 @@ class LedgerEntry(Base):
             "confirmed": self.confirmed,
             "created_at": self.created_at.isoformat(),
         }
+
+
+class AiUsage(Base):
+    """One row per real AI provider call, for the student-facing token meter
+    (2026-10-20) — every backend that reports token counts (BYOK and the
+    hosted tier alike), unlike LedgerEntry, which only exists for hosted
+    calls because only those move money in this app. Local-model calls
+    report no usage and are free, so they get no row.
+
+    cost_micro_usd is millionths of a dollar, not cents: a typical BYOK
+    call costs a small fraction of a cent, which cents would round to 0.
+    For a hosted call it's what the wallet was actually debited; for BYOK
+    it's an estimate from pricing.py's price table (the student's provider
+    bills them directly, Study OS never sees that bill), and null for a
+    model that table doesn't price — never a guessed $0."""
+
+    __tablename__ = "ai_usage"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider: Mapped[str] = mapped_column(String(20), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # "chat" | "explain" | "grading" | "generation" — which feature spent it.
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    hosted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_micro_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False, index=True
+    )

@@ -13,7 +13,7 @@ import uuid
 import pytest
 from sqlalchemy import delete
 
-from server.ai.moderator import router as moderator_router_module
+from server import engines
 from server.core.config import get_settings
 from server.core.model_config import ModelConfig, resolve_model_config_async
 from server.db.session import async_session
@@ -237,6 +237,13 @@ async def test_ask_text_with_hosted_backend_debits_wallet_end_to_end(
     assert entries[0]["model_name"] == "claude-sonnet-5"
     assert entries[0]["amount_cents"] == -234
 
+    # The token meter sees the same call, priced at what the wallet paid.
+    meter = (await client.get("/api/v1/billing/ai-usage", headers=student["headers"])).json()
+    assert meter["all_time"]["calls"] == 1
+    assert meter["all_time"]["input_tokens"] == 100_000
+    assert meter["all_time"]["cost_micro_usd"] == 2_340_000
+    assert meter["by_model"][0]["hosted"] is True
+
 
 async def test_explain_concept_with_hosted_backend_debits_wallet_end_to_end(
     client, student, hosted_anthropic_configured, monkeypatch
@@ -259,7 +266,7 @@ async def test_explain_concept_with_hosted_backend_debits_wallet_end_to_end(
     assert concept.status_code == 200, concept.text
     concept_id = concept.json()["id"]
 
-    monkeypatch.setattr(moderator_router_module.engines.model_router, "run", _fake_model_router_run)
+    monkeypatch.setattr(engines.model_router, "run", _fake_model_router_run)
 
     resp = await client.post(
         f"/api/v1/concepts/{concept_id}/explain",
@@ -271,3 +278,87 @@ async def test_explain_concept_with_hosted_backend_debits_wallet_end_to_end(
     async with async_session() as db:
         wallet = await billing_service.get_or_create_wallet(db, student["user_id"])
         assert wallet.balance_cents == 10_000 - 234
+
+
+# ---------------------------------------------------------------------------
+# Token meter (2026-10-20) — every provider call is logged per student, BYOK
+# included; the summary endpoint only ever shows the caller's own rows.
+# ---------------------------------------------------------------------------
+
+def test_estimate_cost_is_none_for_an_unpriced_model_not_zero():
+    assert pricing.estimate_cost_micro_usd("openai", "some-custom-model", 1000, 1000) is None
+    # gpt-4o-mini: 1M in @ $0.15 + 1M out @ $0.60 = $0.75 = 750,000 micro-USD.
+    assert pricing.estimate_cost_micro_usd("openai", "gpt-4o-mini", 1_000_000, 1_000_000) == 750_000
+
+
+async def test_record_ai_usage_logs_byok_without_touching_the_wallet(student):
+    async with async_session() as db:
+        row = await billing_service.record_ai_usage(
+            db, student["user_id"], {"backend": "openai", "api_key": "k"},
+            {"input_tokens": 2000, "output_tokens": 500}, "chat",
+        )
+        await billing_service.record_ai_usage(
+            db, student["user_id"], {"backend": "openai", "api_key": "k", "model_name": "custom-x"},
+            {"input_tokens": 10, "output_tokens": 10}, "chat",
+        )
+        none_row = await billing_service.record_ai_usage(db, student["user_id"], {"backend": "local"}, None, "chat")
+        await db.commit()
+        assert none_row is None
+        assert row.model_name == "gpt-4o-mini" and row.hosted is False
+        assert row.cost_micro_usd == 600  # 2000 * 0.15 + 500 * 0.60
+        wallet = await billing_service.get_or_create_wallet(db, student["user_id"])
+        assert wallet.balance_cents == 0
+
+
+async def test_ai_usage_summary_totals_and_partial_pricing(client, student):
+    async with async_session() as db:
+        for _ in range(2):
+            await billing_service.record_ai_usage(
+                db, student["user_id"], {"backend": "openai", "api_key": "k"},
+                {"input_tokens": 2000, "output_tokens": 500}, "chat",
+            )
+        await billing_service.record_ai_usage(
+            db, student["user_id"], {"backend": "openai", "api_key": "k", "model_name": "custom-x"},
+            {"input_tokens": 10, "output_tokens": 10}, "grading",
+        )
+        await db.commit()
+
+    resp = await client.get("/api/v1/billing/ai-usage", headers=student["headers"])
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    for period in ("today", "last_30_days", "all_time"):
+        assert body[period] == {
+            "calls": 3, "input_tokens": 4010, "output_tokens": 1010,
+            "cost_micro_usd": 1200, "unpriced_calls": 1,
+        }
+    models = {m["model_name"]: m for m in body["by_model"]}
+    assert models["gpt-4o-mini"]["calls"] == 2 and models["gpt-4o-mini"]["cost_micro_usd"] == 1200
+    assert models["custom-x"]["cost_micro_usd"] is None
+
+
+async def test_ai_usage_summary_never_shows_another_students_usage(client, student):
+    async with async_session() as db:
+        await billing_service.record_ai_usage(
+            db, student["user_id"], {"backend": "openai", "api_key": "k"},
+            {"input_tokens": 2000, "output_tokens": 500}, "chat",
+        )
+        await db.commit()
+
+    other_email = _unique_email()
+    signup = await client.post("/api/auth/signup", json={"email": other_email, "password": "testpass123"})
+    try:
+        resp = await client.get(
+            "/api/v1/billing/ai-usage", headers={"Authorization": f"Bearer {signup.json()['token']}"}
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["all_time"]["calls"] == 0
+        assert resp.json()["by_model"] == []
+    finally:
+        async with async_session() as db:
+            await db.execute(delete(User).where(User.email == other_email))
+            await db.commit()
+
+
+async def test_ai_usage_requires_login(client):
+    resp = await client.get("/api/v1/billing/ai-usage")
+    assert resp.status_code == 401

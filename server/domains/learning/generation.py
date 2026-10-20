@@ -92,7 +92,7 @@ async def relevant_material(user_id: int, slug: str, query: str, budget: int) ->
 
 async def call_model(prompt: str, max_tokens: int, model_config: dict, db: AsyncSession, user_id: int) -> str:
     """One model call with this app's standard failure messages, plus
-    hosted-tier billing (same as the attempt endpoint)."""
+    token-meter logging and hosted-tier billing (same as the attempt endpoint)."""
     backend = model_config.get("backend", "local")
     try:
         result = await engines.model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
@@ -105,10 +105,9 @@ async def call_model(prompt: str, max_tokens: int, model_config: dict, db: Async
             ) from exc
         raise HTTPException(status_code=502, detail=f"Your {backend} backend didn't respond: {exc}") from exc
 
-    hosted_provider = model_config.get("hosted_provider")
-    if hosted_provider:
-        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
-        await billing_service.charge_for_usage(db, user_id, hosted_provider, model_name, result.get("usage"))
+    usage = result.get("usage")
+    if usage is not None:
+        await billing_service.record_ai_usage(db, user_id, model_config, usage, "generation")
         # Committed now, not with the caller's rows: the provider billed this
         # call even if its output then turns out unusable (a 502 below).
         await db.commit()

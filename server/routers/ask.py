@@ -168,13 +168,11 @@ async def _charge_hosted_usage(result: dict, model_config: dict, db: AsyncSessio
     """"_usage" is moderator/engine.py's internal signal (not part of the
     public ModeratorResponse schema) for whether this request actually
     made a real provider call — see that module's run() doc comment.
-    Only the hosted tier (model_config carries "hosted_provider") gets
-    billed for it; a BYOK/local call never does."""
+    Logged for the token meter on every backend; only the hosted tier
+    (model_config carries "hosted_provider") is also billed for it."""
     usage = result.pop("_usage", None)
-    hosted_provider = model_config.get("hosted_provider")
-    if hosted_provider:
-        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
-        await billing_service.charge_for_usage(db, user_id, hosted_provider, model_name, usage)
+    if usage is not None:
+        await billing_service.record_ai_usage(db, user_id, model_config, usage, "chat")
         await db.commit()
     return result
 

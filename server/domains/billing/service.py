@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import pricing
-from .models import LedgerEntry, WalletBalance
+from .models import AiUsage, LedgerEntry, WalletBalance
 
 
 async def get_or_create_wallet(db: AsyncSession, user_id: int) -> WalletBalance:
@@ -71,3 +71,39 @@ async def charge_for_usage(
     db.add(entry)
     await db.flush()
     return entry
+
+
+async def record_ai_usage(db: AsyncSession, user_id: int, model_config: dict, usage: dict | None, source: str) -> AiUsage | None:
+    """The one call every AI call site makes after a model_router.run:
+    logs the call for the token meter and, on the hosted tier only, debits
+    the wallet (charge_for_usage). No-op when `usage` is None — the local
+    model, or a call that never reached a provider. Flushes, doesn't
+    commit: callers commit with their own rows (or right away, where the
+    provider's bill must persist even if the request then fails)."""
+    if usage is None:
+        return None
+    # Imported here, not at module top: the model router pulls in the
+    # provider SDKs, which billing's own unit tests don't need.
+    from ... import engines
+
+    input_tokens = usage.get("input_tokens") or 0
+    output_tokens = usage.get("output_tokens") or 0
+    hosted_provider = model_config.get("hosted_provider")
+    if hosted_provider:
+        provider = hosted_provider
+        model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
+        entry = await charge_for_usage(db, user_id, provider, model_name, usage)
+        cost = entry.amount_cents * -10_000 if entry is not None else None
+    else:
+        provider = model_config.get("backend", "local")
+        model_name = model_config.get("model_name") or engines.model_router.DEFAULT_MODEL_NAMES.get(provider, provider)
+        cost = pricing.estimate_cost_micro_usd(provider, model_name, input_tokens, output_tokens)
+
+    row = AiUsage(
+        user_id=user_id, provider=provider, model_name=model_name, source=source,
+        hosted=bool(hosted_provider), input_tokens=input_tokens, output_tokens=output_tokens,
+        cost_micro_usd=cost,
+    )
+    db.add(row)
+    await db.flush()
+    return row

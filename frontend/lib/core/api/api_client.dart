@@ -990,6 +990,16 @@ class ApiClient {
     return _decode(res);
   }
 
+  /// The token meter: this student's own AI usage (today / last 30 days /
+  /// all time, plus per model) — see billing/router.py's ai_usage_summary.
+  /// Costs are integer micro-USD (millionths of a dollar).
+  Future<Map<String, dynamic>> getAiUsage() async {
+    final res = await _http
+        .get(Uri.parse('$baseUrl/api/v1/billing/ai-usage'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
   Map<String, dynamic> _decode(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       String detail = res.body;

@@ -10,6 +10,7 @@ import '../../../history/presentation/screens/history_screen.dart';
 import '../../../profile/presentation/screens/memory_screen.dart';
 import '../../../profile/presentation/screens/personality_settings_screen.dart';
 import '../../../progress/presentation/screens/progress_screen.dart';
+import '../widgets/ai_usage_meter.dart';
 import '../widgets/chat_media_settings.dart';
 
 /// Profile + BYOK model preference. Rebuilt to match the approved visual
@@ -561,6 +562,9 @@ class _AccountScreenState extends State<AccountScreen> {
                     ],
                   ],
                 ),
+
+                const SizedBox(height: 12),
+                AiUsageMeterCard(apiClient: _apiClient),
 
                 const SizedBox(height: 28),
                 _sectionHeader(context, 'Personalization'),

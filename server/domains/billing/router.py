@@ -9,15 +9,17 @@ is the shape to add when a real processor gets chosen.
 """
 from __future__ import annotations
 
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core import security
 from ...db.session import get_db
 from . import service
-from .models import LedgerEntry
+from .models import AiUsage, LedgerEntry
 from .payment_provider import get_payment_provider
 
 router = APIRouter(prefix="/api/v1/billing")
@@ -111,3 +113,62 @@ async def list_usage(
         .limit(100)
     )
     return {"entries": [entry.public() for entry in entries]}
+
+
+@router.get("/ai-usage")
+async def ai_usage_summary(
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The token meter (2026-10-20): this student's own AI usage — today,
+    the last 30 days and all time — plus a per-model breakdown. Only ever
+    the caller's rows; no key or other student's data is involved.
+
+    cost_micro_usd sums only priced calls; unpriced_calls counts the rest
+    (a BYOK model the price table doesn't know), so the app can say the
+    total is partial instead of passing it off as complete."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    periods = {"today": day_start, "last_30_days": now - datetime.timedelta(days=30), "all_time": None}
+
+    def totals_query(since):
+        q = select(
+            func.count(AiUsage.id),
+            func.coalesce(func.sum(AiUsage.input_tokens), 0),
+            func.coalesce(func.sum(AiUsage.output_tokens), 0),
+            func.coalesce(func.sum(AiUsage.cost_micro_usd), 0),
+            func.count(AiUsage.id).filter(AiUsage.cost_micro_usd.is_(None)),
+        ).where(AiUsage.user_id == current_user["id"])
+        if since is not None:
+            q = q.where(AiUsage.created_at >= since)
+        return q
+
+    summary = {}
+    for name, since in periods.items():
+        calls, input_tokens, output_tokens, cost, unpriced = (await db.execute(totals_query(since))).one()
+        summary[name] = {
+            "calls": calls, "input_tokens": input_tokens, "output_tokens": output_tokens,
+            "cost_micro_usd": cost, "unpriced_calls": unpriced,
+        }
+
+    rows = await db.execute(
+        select(
+            AiUsage.provider, AiUsage.model_name, AiUsage.hosted,
+            func.count(AiUsage.id),
+            func.sum(AiUsage.input_tokens), func.sum(AiUsage.output_tokens),
+            func.sum(AiUsage.cost_micro_usd),
+        )
+        .where(AiUsage.user_id == current_user["id"])
+        .group_by(AiUsage.provider, AiUsage.model_name, AiUsage.hosted)
+        .order_by(func.sum(AiUsage.input_tokens + AiUsage.output_tokens).desc())
+    )
+    by_model = [
+        {
+            "provider": provider, "model_name": model_name, "hosted": hosted, "calls": calls,
+            "input_tokens": input_tokens or 0, "output_tokens": output_tokens or 0,
+            # null when none of this model's calls could be priced.
+            "cost_micro_usd": cost,
+        }
+        for provider, model_name, hosted, calls, input_tokens, output_tokens, cost in rows
+    ]
+    return {**summary, "by_model": by_model}
