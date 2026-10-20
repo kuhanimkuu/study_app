@@ -29,6 +29,39 @@ String formatMicroUsd(int micro) {
 
 int _int(Object? v) => (v as num?)?.toInt() ?? 0;
 
+/// Share of the monthly limit used (0..1+), or null with no limit set.
+double? limitFraction(Map<String, dynamic>? usage) {
+  final limitCents = (usage?['monthly_limit_cents'] as num?)?.toInt();
+  if (usage == null || limitCents == null || limitCents <= 0) return null;
+  return _int((usage['this_month'] as Map?)?['cost_micro_usd']) / (limitCents * 10000);
+}
+
+/// Amber from 80% of the limit, red at 100%.
+Color limitColor(double fraction) =>
+    fraction >= 1 ? StudyOsColors.redOnLight : (fraction >= 0.8 ? StudyOsColors.streak : StudyOsColors.success);
+
+/// The monthly-limit bar shared by the Profile card and the meter screen.
+class _LimitBar extends StatelessWidget {
+  const _LimitBar({required this.usage});
+
+  final Map<String, dynamic> usage;
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = limitFraction(usage)!;
+    final color = limitColor(fraction);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(6),
+      child: LinearProgressIndicator(
+        value: fraction.clamp(0, 1).toDouble(),
+        minHeight: 8,
+        color: color,
+        backgroundColor: color.withValues(alpha: 0.18),
+      ),
+    );
+  }
+}
+
 /// Profile → "AI usage": this month's tokens and estimated cost at a
 /// glance; tap for the full breakdown.
 class AiUsageMeterCard extends StatefulWidget {
@@ -62,27 +95,37 @@ class _AiUsageMeterCardState extends State<AiUsageMeterCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final month = _usage?['last_30_days'] as Map<String, dynamic>?;
+    final usage = _usage;
+    final month = usage?['this_month'] as Map<String, dynamic>?;
     final tokens = _int(month?['input_tokens']) + _int(month?['output_tokens']);
+    final fraction = limitFraction(usage);
+    final limitCents = (usage?['monthly_limit_cents'] as num?)?.toInt();
 
     final String summary;
     if (_failed) {
       summary = 'Couldn\'t load your usage right now';
     } else if (month == null) {
       summary = 'Loading…';
+    } else if (fraction != null && fraction >= 1) {
+      summary = 'Monthly limit of ${formatMicroUsd(limitCents! * 10000)} reached — paid AI paused until the 1st';
     } else if (_int(month['calls']) == 0) {
-      summary = 'No AI calls in the last 30 days';
+      summary = 'No AI use this month';
     } else {
-      summary = '${formatTokens(tokens)} tokens · about ${formatMicroUsd(_int(month['cost_micro_usd']))} in the last 30 days';
+      summary = '${formatTokens(tokens)} tokens · about ${formatMicroUsd(_int(month['cost_micro_usd']))} this month'
+          '${limitCents != null ? ' of ${formatMicroUsd(limitCents * 10000)}' : ''}';
     }
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (context) => AiUsageScreen(apiClient: widget.apiClient)),
-        ),
+        onTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (context) => AiUsageScreen(apiClient: widget.apiClient)),
+          );
+          // The limit may have changed on that screen.
+          _load();
+        },
         child: Padding(
           padding: const EdgeInsets.all(14),
           child: Row(
@@ -101,6 +144,10 @@ class _AiUsageMeterCardState extends State<AiUsageMeterCard> {
                     Text('AI usage', style: theme.textTheme.titleSmall),
                     const SizedBox(height: 2),
                     Text(summary, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                    if (fraction != null) ...[
+                      const SizedBox(height: 8),
+                      _LimitBar(usage: usage!),
+                    ],
                   ],
                 ),
               ),
@@ -143,6 +190,24 @@ class _AiUsageScreenState extends State<AiUsageScreen> {
     }
   }
 
+  Future<void> _editLimit() async {
+    final current = (_usage?['monthly_limit_cents'] as num?)?.toInt();
+    final result = await showDialog<_LimitChoice>(
+      context: context,
+      builder: (context) => _LimitDialog(currentCents: current),
+    );
+    if (result == null || !mounted) return;
+    try {
+      await widget.apiClient.setAiSpendLimit(result.cents);
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e is ApiException ? e.message : 'Couldn\'t save the limit.')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -177,11 +242,13 @@ class _AiUsageScreenState extends State<AiUsageScreen> {
               children: [
                 Expanded(child: _PeriodTile(label: 'Today', data: usage['today'] as Map<String, dynamic>)),
                 const SizedBox(width: 8),
-                Expanded(child: _PeriodTile(label: 'Last 30 days', data: usage['last_30_days'] as Map<String, dynamic>)),
+                Expanded(child: _PeriodTile(label: 'This month', data: usage['this_month'] as Map<String, dynamic>)),
                 const SizedBox(width: 8),
                 Expanded(child: _PeriodTile(label: 'All time', data: usage['all_time'] as Map<String, dynamic>)),
               ],
             ),
+            const SizedBox(height: 12),
+            _LimitCard(usage: usage, onChange: _editLimit),
             const SizedBox(height: 20),
             Text('BY MODEL', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, letterSpacing: 1)),
             const SizedBox(height: 8),
@@ -332,6 +399,124 @@ class _Disclaimer extends StatelessWidget {
           Text('Only you can see this. Your API key is never shown or used here.', style: style),
         ],
       ),
+    );
+  }
+}
+
+/// Monthly limit: the bar and a button to set, change or remove it.
+class _LimitCard extends StatelessWidget {
+  const _LimitCard({required this.usage, required this.onChange});
+
+  final Map<String, dynamic> usage;
+  final VoidCallback onChange;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final limitCents = (usage['monthly_limit_cents'] as num?)?.toInt();
+    final fraction = limitFraction(usage);
+    final spent = _int((usage['this_month'] as Map?)?['cost_micro_usd']);
+    final String status;
+    if (limitCents == null) {
+      status = 'No limit. Set one and paid AI pauses once this month\'s estimate reaches it.';
+    } else if (fraction! >= 1) {
+      status = 'Limit reached. Paid AI is paused until the 1st (the free model still works).';
+    } else if (fraction >= 0.8) {
+      status = 'Almost there: ${(fraction * 100).round()}% of your limit used.';
+    } else {
+      status = '${formatMicroUsd(spent)} of ${formatMicroUsd(limitCents * 10000)} used this month.';
+    }
+    return Card(
+      margin: EdgeInsets.zero,
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(child: Text('Monthly limit', style: theme.textTheme.titleSmall)),
+                TextButton(onPressed: onChange, child: Text(limitCents == null ? 'Set a limit' : 'Change')),
+              ],
+            ),
+            if (fraction != null) ...[
+              _LimitBar(usage: usage),
+              const SizedBox(height: 8),
+            ],
+            Text(
+              status,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: fraction != null && fraction >= 0.8 ? limitColor(fraction) : theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// What the limit dialog returns; `cents` null means "remove the limit".
+class _LimitChoice {
+  const _LimitChoice(this.cents);
+  final int? cents;
+}
+
+class _LimitDialog extends StatefulWidget {
+  const _LimitDialog({required this.currentCents});
+
+  final int? currentCents;
+
+  @override
+  State<_LimitDialog> createState() => _LimitDialogState();
+}
+
+class _LimitDialogState extends State<_LimitDialog> {
+  late final _controller = TextEditingController(
+    text: widget.currentCents == null ? '' : (widget.currentCents! / 100).toStringAsFixed(2),
+  );
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final dollars = double.tryParse(_controller.text.trim().replaceAll('\$', ''));
+    if (dollars == null || dollars < 0.01 || dollars > 1000) {
+      setState(() => _error = 'Enter an amount between \$0.01 and \$1000');
+      return;
+    }
+    Navigator.of(context).pop(_LimitChoice((dollars * 100).round()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Monthly AI limit'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Paid AI pauses once this month\'s estimated spend reaches this. It resets on the 1st.'),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(prefixText: '\$ ', labelText: 'Amount (USD)', errorText: _error),
+            onSubmitted: (_) => _save(),
+          ),
+        ],
+      ),
+      actions: [
+        if (widget.currentCents != null)
+          TextButton(onPressed: () => Navigator.of(context).pop(const _LimitChoice(null)), child: const Text('Remove limit')),
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: _save, child: const Text('Save')),
+      ],
     );
   }
 }

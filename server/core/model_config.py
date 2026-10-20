@@ -78,6 +78,11 @@ async def resolve_model_config_async(
     and BYOK call site should use this version now that "hosted" exists —
     resolve_model_config stays for now only as the explicit "not updated
     yet" guard above, not as a second real code path to keep in sync."""
+    # The student's own monthly cap applies to every paid call, BYOK and
+    # hosted alike; the free local model never costs anything.
+    if model_config is not None and model_config.backend != "local":
+        await billing_service.enforce_spend_limit(db, current_user["id"])
+
     if model_config is not None and model_config.backend == "hosted":
         provider = model_config.hosted_provider
         if provider not in _HOSTED_PROVIDERS:

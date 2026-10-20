@@ -697,12 +697,15 @@ class ApiClient {
   /// `rating` must be one of "again"/"hard"/"good"/"easy" (the full FSRS
   /// scale — flashcards are self-graded, unlike quiz questions, so there's
   /// no separate correctness signal to collapse it down to two values).
-  Future<Map<String, dynamic>> reviewFlashcard({required int flashcardId, required String rating}) async {
+  ///
+  /// [reviewedAt] is for a review made offline and sent later — see
+  /// core/storage/offline_flashcards.dart.
+  Future<Map<String, dynamic>> reviewFlashcard({required int flashcardId, required String rating, DateTime? reviewedAt}) async {
     final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/flashcards/$flashcardId/review'),
           headers: _jsonHeaders,
-          body: jsonEncode({'rating': rating}),
+          body: jsonEncode({'rating': rating, if (reviewedAt != null) 'reviewed_at': reviewedAt.toUtc().toIso8601String()}),
         )
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
@@ -998,6 +1001,35 @@ class ApiClient {
         .get(Uri.parse('$baseUrl/api/v1/billing/ai-usage'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
+  }
+
+  /// The student's own monthly AI spending cap, in cents; null removes it.
+  Future<Map<String, dynamic>> setAiSpendLimit(int? monthlyLimitCents) async {
+    final res = await _http
+        .put(
+          Uri.parse('$baseUrl/api/v1/billing/ai-usage/limit'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'monthly_limit_cents': monthlyLimitCents}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// A crash report — see core/errors/error_reporter.dart. Sent signed in
+  /// when there's a token, but works without one.
+  Future<void> reportClientError({
+    required String message,
+    required String stack,
+    required String appVersion,
+    required String platform,
+  }) async {
+    await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/client-errors'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'message': message, 'stack': stack, 'app_version': appVersion, 'platform': platform}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
   }
 
   Map<String, dynamic> _decode(http.Response res) {

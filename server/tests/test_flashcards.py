@@ -199,3 +199,47 @@ async def test_flashcard_delete_and_ownership(client, student):
     async with async_session() as db:
         await db.execute(delete(User).where(User.email == other_email))
         await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Offline reviews (2026-10-20): the app may send when a review really
+# happened; it's honoured within sane bounds, otherwise treated as now.
+# ---------------------------------------------------------------------------
+
+async def _new_card(client, student) -> int:
+    created = await client.post(
+        f"/api/v1/knowledge-spaces/{student['slug']}/flashcards", json={"front": "a", "back": "b"},
+        headers=student["headers"],
+    )
+    return created.json()["id"]
+
+
+async def test_offline_review_is_scheduled_from_when_it_happened(client, student):
+    import datetime
+
+    card_id = await _new_card(client, student)
+    two_hours_ago = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=2)
+    resp = await client.post(
+        f"/api/v1/flashcards/{card_id}/review",
+        json={"rating": "good", "reviewed_at": two_hours_ago.isoformat()},
+        headers=student["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    last_review = datetime.datetime.fromisoformat(resp.json()["last_review"])
+    assert abs((last_review - two_hours_ago).total_seconds()) < 1
+
+
+async def test_future_or_ancient_review_times_fall_back_to_now(client, student):
+    import datetime
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for when in (now + datetime.timedelta(days=1), now - datetime.timedelta(days=90)):
+        card_id = await _new_card(client, student)
+        resp = await client.post(
+            f"/api/v1/flashcards/{card_id}/review",
+            json={"rating": "good", "reviewed_at": when.isoformat()},
+            headers=student["headers"],
+        )
+        assert resp.status_code == 200, resp.text
+        last_review = datetime.datetime.fromisoformat(resp.json()["last_review"])
+        assert abs((last_review - now).total_seconds()) < 60, when

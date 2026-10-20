@@ -71,6 +71,7 @@ from .ai.personality.router import router as personality_router
 from .core.config import get_settings
 from .domains.assessment.router import router as assessment_router
 from .domains.billing.router import router as billing_router
+from .domains.diagnostics.router import router as diagnostics_router
 from .domains.identity.router import router as identity_router
 from .domains.knowledge.files_router import router as files_router
 from .domains.knowledge.notes_router import router as notes_router
@@ -155,3 +156,4 @@ app.include_router(moderator_router)
 app.include_router(memory_router)
 app.include_router(personality_router)
 app.include_router(billing_router)
+app.include_router(diagnostics_router)

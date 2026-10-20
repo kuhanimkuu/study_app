@@ -362,6 +362,15 @@ echo "App did not come back up. Check: journalctl -u $SERVICE -n 100"; exit 1
 EOF
 chmod 755 /usr/local/bin/study-os-update
 
+cat > /usr/local/bin/study-os-errors <<EOF
+#!/usr/bin/env bash
+# The app's crash reports, most frequent first. Usage: study-os-errors [days, default 7]
+set -euo pipefail
+cd /
+sudo -u $APP_USER -H bash -c "cd $APP_DIR && set -a && . ./.env && set +a && .venv/bin/python -m server.domains.diagnostics.report \${1:-7}"
+EOF
+chmod 755 /usr/local/bin/study-os-errors
+
 cat > /usr/local/bin/study-os-import <<EOF
 #!/usr/bin/env bash
 # Copy all data from another Postgres database (e.g. Render's External Database

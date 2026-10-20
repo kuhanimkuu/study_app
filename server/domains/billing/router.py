@@ -129,7 +129,12 @@ async def ai_usage_summary(
     total is partial instead of passing it off as complete."""
     now = datetime.datetime.now(datetime.timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    periods = {"today": day_start, "last_30_days": now - datetime.timedelta(days=30), "all_time": None}
+    periods = {
+        "today": day_start,
+        "this_month": service.month_start(now),
+        "last_30_days": now - datetime.timedelta(days=30),
+        "all_time": None,
+    }
 
     def totals_query(since):
         q = select(
@@ -171,4 +176,22 @@ async def ai_usage_summary(
         }
         for provider, model_name, hosted, calls, input_tokens, output_tokens, cost in rows
     ]
-    return {**summary, "by_model": by_model}
+    limit_cents = await service.get_monthly_limit_cents(db, current_user["id"])
+    return {**summary, "by_model": by_model, "monthly_limit_cents": limit_cents}
+
+
+class SpendLimit(BaseModel):
+    # null removes the cap; capped at $1,000 so a typo can't silently
+    # mean "no limit".
+    monthly_limit_cents: int | None = Field(default=None, ge=1, le=100_000)
+
+
+@router.put("/ai-usage/limit")
+async def set_spend_limit(
+    payload: SpendLimit,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    await service.set_monthly_limit_cents(db, current_user["id"], payload.monthly_limit_cents)
+    await db.commit()
+    return {"monthly_limit_cents": payload.monthly_limit_cents}

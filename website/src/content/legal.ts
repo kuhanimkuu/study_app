@@ -98,6 +98,7 @@ export const privacy: LegalSection[] = [
       'Pictures and PDFs Sage makes in a chat: deleted from our server after about two weeks.',
       'Backups: made nightly and kept for 14 days.',
       'Server logs (IP address, time, and the address requested): kept for up to 30 days, for security and troubleshooting.',
+      'Crash reports, if the app hits an error: the error, where in the app it happened, the app version and the kind of phone — never your notes, chats or what you typed. Kept for 30 days.',
     ],
   },
   {

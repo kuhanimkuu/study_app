@@ -5,6 +5,8 @@ import 'app/theme.dart';
 import 'core/api/api_client.dart';
 import 'core/api/default_base_url.dart';
 import 'core/auth/auth_service.dart';
+import 'core/errors/error_reporter.dart';
+import 'core/notifications/study_reminders.dart';
 import 'core/settings/model_settings_service.dart';
 import 'core/storage/chat_media_store.dart';
 
@@ -14,13 +16,16 @@ Future<void> main() async {
   // someone who already answered. SharedPreferences needs the binding.
   WidgetsFlutterBinding.ensureInitialized();
   await ChatMediaStore.instance.load();
-  runApp(StudyOsApp(
-    // One shared ApiClient for the whole app — AuthService attaches the
-    // login token to this exact instance, so every screen (chat, history,
-    // account) that holds a reference to it is authenticated automatically.
-    // Creating a second instance anywhere would silently lose the token.
-    apiClient: ApiClient(baseUrl: defaultBaseUrl()),
-  ));
+  // Whether study reminders are on, so Home's first load can reschedule them.
+  await StudyReminders.instance.load();
+  // One shared ApiClient for the whole app — AuthService attaches the
+  // login token to this exact instance, so every screen (chat, history,
+  // account) that holds a reference to it is authenticated automatically.
+  // Creating a second instance anywhere would silently lose the token.
+  final apiClient = ApiClient(baseUrl: defaultBaseUrl());
+  // Crash reports to our own server (release builds only).
+  ErrorReporter(apiClient: apiClient).install();
+  runApp(StudyOsApp(apiClient: apiClient));
 }
 
 class StudyOsApp extends StatelessWidget {

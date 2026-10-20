@@ -126,3 +126,22 @@ class AiUsage(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False, index=True
     )
+
+
+class AiSpendLimit(Base):
+    """A student's own monthly cap on AI spending (2026-10-20), checked
+    before every non-local AI call (core/model_config.py's
+    resolve_model_config_async). One row per student, only once they set
+    one; no row (or a null limit) means no cap. Counted against the same
+    estimates the token meter shows, per calendar month (UTC)."""
+
+    __tablename__ = "ai_spend_limits"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    monthly_limit_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

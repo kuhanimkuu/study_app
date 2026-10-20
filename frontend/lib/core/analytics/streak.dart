@@ -6,13 +6,18 @@
 ///
 /// [activity] items must each have a `_timestamp` ISO-8601 string key —
 /// see `ProgressScreen`'s merged-activity-feed construction.
-int computeStudyStreak(List<Map<String, dynamic>> activity) {
+///
+/// [endingYesterday] counts the run up to yesterday instead — the streak
+/// that's still alive but at risk on a day with no study yet (today's
+/// count is 0 until the student does something). Study reminders use it.
+int computeStudyStreak(List<Map<String, dynamic>> activity, {bool endingYesterday = false}) {
   DateTime dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
   final activeDays = activity.map((a) => dateOnly(DateTime.parse(a['_timestamp'] as String).toLocal())).toSet();
 
   var streak = 0;
-  var day = dateOnly(DateTime.now());
+  final today = dateOnly(DateTime.now());
+  var day = endingYesterday ? DateTime(today.year, today.month, today.day - 1) : today;
   while (activeDays.contains(day)) {
     streak++;
     day = day.subtract(const Duration(days: 1));

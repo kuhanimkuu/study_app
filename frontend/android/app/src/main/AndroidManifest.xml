@@ -33,6 +33,12 @@
          the 2026-09-14 decision that voice stays client-native, actually
          implemented in the UI for the first time 2026-09-19. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Study reminders (core/notifications/study_reminders.dart, 2026-10-20):
+         opt-in from Profile, which is when Android 13+ asks for
+         POST_NOTIFICATIONS. BOOT_COMPLETED lets a scheduled reminder survive
+         a restart. Inexact timing on purpose, so no exact-alarm permission. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:label="Study OS"
         android:name="${applicationName}"
@@ -61,6 +67,15 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />
+        <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationBootReceiver">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED"/>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED"/>
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON"/>
+            </intent-filter>
+        </receiver>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

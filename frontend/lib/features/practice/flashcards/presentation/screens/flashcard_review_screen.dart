@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
+import '../../../../../core/storage/offline_flashcards.dart';
 import '../../../../../core/widgets/empty_state.dart';
 import '../../../../../core/widgets/gradient_button.dart';
 
@@ -13,6 +14,10 @@ import '../../../../../core/widgets/gradient_button.dart';
 /// `knowledgeSpaceSlug` is optional — when null, this reviews across every
 /// Knowledge Space (same account-wide-by-default convention as GET
 /// /api/v1/mastery and the Planner's default plan).
+///
+/// The account-wide review also works without signal (2026-10-20): it uses
+/// the phone's copy of the due cards and queues ratings until the server
+/// is reachable again — see OfflineFlashcards.
 class FlashcardReviewScreen extends StatefulWidget {
   const FlashcardReviewScreen({super.key, required this.apiClient, this.knowledgeSpaceSlug});
 
@@ -30,6 +35,8 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
   bool _isSubmitting = false;
   String? _error;
   int _reviewedCount = 0;
+  bool _offline = false;
+  late final _store = OfflineFlashcards(widget.apiClient);
 
   @override
   void initState() {
@@ -43,14 +50,16 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
       _error = null;
     });
     try {
-      final result = await widget.apiClient.getDueFlashcards(knowledgeSpaceSlug: widget.knowledgeSpaceSlug);
-      final flashcards = (result['flashcards'] as List<dynamic>).cast<Map<String, dynamic>>();
+      final due = await _store.loadDue(knowledgeSpaceSlug: widget.knowledgeSpaceSlug);
       setState(() {
-        _queue = flashcards;
+        _queue = due.cards;
+        _offline = due.offline;
         _isRevealed = false;
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
+    } catch (_) {
+      setState(() => _error = "You're offline. This subject's cards need a connection; the Review deck on Home works offline.");
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -60,11 +69,12 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
     if (_queue.isEmpty) return;
     setState(() => _isSubmitting = true);
     try {
-      await widget.apiClient.reviewFlashcard(flashcardId: _queue.first['id'] as int, rating: rating);
+      final queued = await _store.review(_queue.first['id'] as int, rating);
       setState(() {
         _queue.removeAt(0);
         _isRevealed = false;
         _reviewedCount++;
+        if (queued) _offline = true;
       });
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -100,6 +110,10 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
                     style: Theme.of(context).textTheme.titleMedium,
                     textAlign: TextAlign.center,
                   ),
+                  if (_offline) ...[
+                    const SizedBox(height: 16),
+                    const Padding(padding: EdgeInsets.symmetric(horizontal: 24), child: _OfflineBanner()),
+                  ],
                 ],
               ),
             );
@@ -110,6 +124,10 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
             padding: const EdgeInsets.all(24),
             child: Column(
               children: [
+                if (_offline) ...[
+                  const _OfflineBanner(),
+                  const SizedBox(height: 12),
+                ],
                 Text('${_queue.length} card(s) left', style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 16),
                 Expanded(
@@ -186,6 +204,34 @@ class _FlashcardReviewScreenState extends State<FlashcardReviewScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off_rounded, size: 18, color: theme.colorScheme.onSurfaceVariant),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              "You're offline. Your answers are saved on this phone and sync when you're back online.",
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
       ),
     );
   }

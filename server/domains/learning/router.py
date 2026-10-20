@@ -457,6 +457,30 @@ async def delete_flashcard(
 
 class ReviewFlashcard(BaseModel):
     rating: str
+    # Set by the app for a review made offline and synced later; see
+    # flashcard_scheduler.review_flashcard.
+    reviewed_at: datetime.datetime | None = None
+
+
+# How far back an offline review may be dated. Older ones still count,
+# just as if made now — a phone's stale queue shouldn't rewrite history.
+_MAX_OFFLINE_REVIEW_AGE = datetime.timedelta(days=30)
+
+
+def _review_time(flashcard: Flashcard, reviewed_at: datetime.datetime | None) -> datetime.datetime | None:
+    """A trustworthy review time, or None (= now): naive times are taken
+    as UTC; future times, ones over 30 days old, and ones before the card's
+    last review (a queue replayed out of order) fall back to now."""
+    if reviewed_at is None:
+        return None
+    if reviewed_at.tzinfo is None:
+        reviewed_at = reviewed_at.replace(tzinfo=datetime.timezone.utc)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if reviewed_at > now or now - reviewed_at > _MAX_OFFLINE_REVIEW_AGE:
+        return None
+    if flashcard.fsrs_last_review is not None and reviewed_at < flashcard.fsrs_last_review:
+        return None
+    return reviewed_at
 
 
 @router.post("/flashcards/{flashcard_id}/review")
@@ -469,7 +493,7 @@ async def review_flashcard_endpoint(
     if payload.rating not in RATINGS:
         raise HTTPException(status_code=400, detail=f"rating must be one of {sorted(RATINGS)}")
     flashcard = await get_flashcard_or_404(db, current_user["id"], flashcard_id)
-    review_flashcard(flashcard, payload.rating)
+    review_flashcard(flashcard, payload.rating, _review_time(flashcard, payload.reviewed_at))
     await db.commit()
     await db.refresh(flashcard)
     return flashcard.public()

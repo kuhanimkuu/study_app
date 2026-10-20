@@ -8,6 +8,8 @@ down to binary.
 """
 from __future__ import annotations
 
+import datetime
+
 from fsrs import Card, Rating, Scheduler, State
 
 from .models import Flashcard
@@ -37,13 +39,18 @@ def _apply_card_to_flashcard(flashcard: Flashcard, card: Card) -> None:
     flashcard.fsrs_last_review = card.last_review
 
 
-def review_flashcard(flashcard: Flashcard, rating: str) -> Flashcard:
+def review_flashcard(flashcard: Flashcard, rating: str, reviewed_at: datetime.datetime | None = None) -> Flashcard:
     """Updates `flashcard` in place after a self-graded review. Caller is
     responsible for adding/committing the session. `rating` must be one of
     RATINGS' keys — validated by the caller (the router), since a 400 there
-    carries more context than one raised from inside this helper."""
+    carries more context than one raised from inside this helper.
+
+    `reviewed_at` is when the student actually rated the card — later than
+    now for nothing, but earlier for a review made offline and synced
+    afterwards (2026-10-20), so the next due date counts from the real
+    review, not from when the phone got signal back. None means now."""
     card = _card_from_flashcard(flashcard)
-    new_card, _review_log = _scheduler.review_card(card, RATINGS[rating])
+    new_card, _review_log = _scheduler.review_card(card, RATINGS[rating], review_datetime=reviewed_at)
     _apply_card_to_flashcard(flashcard, new_card)
     flashcard.reviews += 1
     return flashcard

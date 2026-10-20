@@ -362,3 +362,57 @@ async def test_ai_usage_summary_never_shows_another_students_usage(client, stude
 async def test_ai_usage_requires_login(client):
     resp = await client.get("/api/v1/billing/ai-usage")
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Monthly spending limit (2026-10-20) — the student's own cap, enforced on
+# every paid (non-local) call before it's made.
+# ---------------------------------------------------------------------------
+
+async def test_spend_limit_blocks_paid_calls_once_reached_but_never_local(client, student):
+    resp = await client.put(
+        "/api/v1/billing/ai-usage/limit", json={"monthly_limit_cents": 1}, headers=student["headers"]
+    )
+    assert resp.status_code == 200, resp.text
+
+    async with async_session() as db:
+        # Under the cap: a BYOK call resolves (no key decryption needed to
+        # pass the limit check, so check the limit directly).
+        await billing_service.enforce_spend_limit(db, student["user_id"])
+        # 1,000,000 in-tokens of gpt-4o-mini = $0.15, past the $0.01 cap.
+        await billing_service.record_ai_usage(
+            db, student["user_id"], {"backend": "openai", "api_key": "k"},
+            {"input_tokens": 1_000_000, "output_tokens": 0}, "chat",
+        )
+        await db.commit()
+
+        with pytest.raises(Exception) as exc_info:
+            await resolve_model_config_async(
+                ModelConfig(backend="openai", encrypted_api_key="x"), {"id": student["user_id"]}, db
+            )
+        assert getattr(exc_info.value, "status_code", None) == 402
+        assert "monthly AI spending limit of $0.01" in exc_info.value.detail
+
+        # The free local model is never blocked.
+        local = await resolve_model_config_async(ModelConfig(backend="local"), {"id": student["user_id"]}, db)
+        assert local["backend"] == "local"
+
+    meter = (await client.get("/api/v1/billing/ai-usage", headers=student["headers"])).json()
+    assert meter["monthly_limit_cents"] == 1
+    assert meter["this_month"]["cost_micro_usd"] == 150_000
+
+    # Removing the cap unblocks.
+    resp = await client.put(
+        "/api/v1/billing/ai-usage/limit", json={"monthly_limit_cents": None}, headers=student["headers"]
+    )
+    assert resp.status_code == 200
+    async with async_session() as db:
+        await billing_service.enforce_spend_limit(db, student["user_id"])
+
+
+async def test_spend_limit_rejects_zero_and_absurd_values(client, student):
+    for bad in (0, -5, 100_001):
+        resp = await client.put(
+            "/api/v1/billing/ai-usage/limit", json={"monthly_limit_cents": bad}, headers=student["headers"]
+        )
+        assert resp.status_code == 422, bad

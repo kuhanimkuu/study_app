@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The study-reminder icon is only referenced by name from Dart
+     (core/notifications/study_reminders.dart), which release resource
+     shrinking can't see — keep it. -->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_stat_study" />

@@ -7,11 +7,14 @@ read-modify-write logic.
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+import datetime
+
+from fastapi import HTTPException
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import pricing
-from .models import AiUsage, LedgerEntry, WalletBalance
+from .models import AiSpendLimit, AiUsage, LedgerEntry, WalletBalance
 
 
 async def get_or_create_wallet(db: AsyncSession, user_id: int) -> WalletBalance:
@@ -107,3 +110,47 @@ async def record_ai_usage(db: AsyncSession, user_id: int, model_config: dict, us
     db.add(row)
     await db.flush()
     return row
+
+
+def month_start(now: datetime.datetime | None = None) -> datetime.datetime:
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+async def month_spend_micro_usd(db: AsyncSession, user_id: int) -> int:
+    """This calendar month's (UTC) priced AI spend — unpriced calls can't
+    count toward a dollar limit, which the app's meter screen says."""
+    total = await db.scalar(
+        select(func.coalesce(func.sum(AiUsage.cost_micro_usd), 0)).where(
+            AiUsage.user_id == user_id, AiUsage.created_at >= month_start()
+        )
+    )
+    return int(total or 0)
+
+
+async def get_monthly_limit_cents(db: AsyncSession, user_id: int) -> int | None:
+    return await db.scalar(select(AiSpendLimit.monthly_limit_cents).where(AiSpendLimit.user_id == user_id))
+
+
+async def set_monthly_limit_cents(db: AsyncSession, user_id: int, limit_cents: int | None) -> None:
+    row = await db.scalar(select(AiSpendLimit).where(AiSpendLimit.user_id == user_id))
+    if row is None:
+        row = AiSpendLimit(user_id=user_id)
+        db.add(row)
+    row.monthly_limit_cents = limit_cents
+    await db.flush()
+
+
+async def enforce_spend_limit(db: AsyncSession, user_id: int) -> None:
+    """Raises 402 once this month's spend has reached the student's own
+    cap. Checked before the call (like the hosted balance check), so one
+    call can take the total a little past the cap — the next is blocked."""
+    limit_cents = await get_monthly_limit_cents(db, user_id)
+    if limit_cents is None:
+        return
+    if await month_spend_micro_usd(db, user_id) >= limit_cents * 10_000:
+        raise HTTPException(
+            status_code=402,
+            detail=f"You've reached your monthly AI spending limit of ${limit_cents / 100:.2f}. "
+            "Raise or remove it in Profile → AI usage, or switch to the free model.",
+        )

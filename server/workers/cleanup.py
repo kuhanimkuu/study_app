@@ -37,9 +37,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select
+import datetime
+
+from sqlalchemy import delete, select
 
 from ..db.session import async_session
+from ..domains.diagnostics.models import RETENTION_DAYS as CLIENT_ERROR_RETENTION_DAYS
+from ..domains.diagnostics.models import ClientError
 from ..domains.identity.models import User
 
 logger = logging.getLogger("study_os.cleanup")
@@ -119,9 +123,20 @@ def clean_files(live_user_ids: set[int], *, upload_hours: float, generated_days:
     return result
 
 
+async def delete_old_client_errors() -> int:
+    """App crash reports are kept 30 days after they were last seen, as the
+    privacy policy says. Returns how many were deleted."""
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=CLIENT_ERROR_RETENTION_DAYS)
+    async with async_session() as db:
+        result = await db.execute(delete(ClientError).where(ClientError.last_seen < cutoff))
+        await db.commit()
+    return result.rowcount or 0
+
+
 async def run_cleanup_once() -> CleanupResult:
     async with async_session() as db:
         live_user_ids = set((await db.scalars(select(User.id))).all())
+    await delete_old_client_errors()
     result = await asyncio.to_thread(
         clean_files,
         live_user_ids,

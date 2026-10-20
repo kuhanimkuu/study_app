@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../../../app/theme.dart';
 import '../../../../core/analytics/streak.dart';
+import '../../../../core/notifications/study_reminders.dart';
+import '../../../../core/storage/offline_flashcards.dart';
+import '../widgets/exam_countdown.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/widgets/gradient_button.dart';
@@ -66,6 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, dynamic>>? _mastery;
   List<dynamic>? _dueFlashcards;
   List<dynamic>? _projects;
+  ({Map<String, dynamic> goal, int daysLeft})? _exam;
   int _streak = 0;
   int _answeredToday = 0;
   bool _isLoading = false;
@@ -82,6 +86,8 @@ class _HomeScreenState extends State<HomeScreen> {
       _isLoading = true;
       _error = null;
     });
+    // Offline flashcard ratings go up first, so the due count below is right.
+    await OfflineFlashcards(widget.apiClient).sync();
     try {
       final results = await Future.wait([
         widget.apiClient.getPlan(durationMinutes: 60),
@@ -90,6 +96,9 @@ class _HomeScreenState extends State<HomeScreen> {
         widget.apiClient.listProjects(),
         widget.apiClient.listStudySessions(),
         widget.apiClient.getAttempts(),
+        // Only feeds the exam countdown — a failure here shouldn't take
+        // the whole dashboard down with it.
+        widget.apiClient.listGoals().catchError((_) => <String, dynamic>{'goals': <dynamic>[]}),
       ]);
       final mastery = (results[1]['mastery'] as List<dynamic>).cast<Map<String, dynamic>>()
         ..sort((a, b) => (a['mastery'] as num).compareTo(b['mastery'] as num));
@@ -104,12 +113,24 @@ class _HomeScreenState extends State<HomeScreen> {
         return at != null && at.year == now.year && at.month == now.month && at.day == now.day;
       }).length;
 
+      final activity = [...sessions, ...attempts.map((a) => {...a, '_timestamp': a['created_at']})];
+      final streak = computeStudyStreak(activity);
+      final dueCards = (results[2]['flashcards'] as List<dynamic>).length;
+      // Reschedules the coming week's reminders with today's real numbers
+      // (no-op unless the student turned reminders on in Profile).
+      StudyReminders.instance.refresh(
+        dueCards: dueCards,
+        studiedToday: streak > 0,
+        streak: streak > 0 ? streak : computeStudyStreak(activity, endingYesterday: true),
+      );
+
       setState(() {
         _plan = results[0];
         _mastery = mastery;
         _dueFlashcards = results[2]['flashcards'] as List<dynamic>;
         _projects = results[3]['projects'] as List<dynamic>;
-        _streak = computeStudyStreak([...sessions, ...attempts.map((a) => {...a, '_timestamp': a['created_at']})]);
+        _streak = streak;
+        _exam = nextExam((results[6]['goals'] as List<dynamic>).cast<Map<String, dynamic>>(), DateTime.now());
         _answeredToday = answeredToday;
       });
     } on ApiException catch (e) {
@@ -218,6 +239,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 16),
                     child: _DailyGoalCard(answered: _answeredToday, goal: _dailyGoal, name: _firstName(), onPractice: widget.onOpenPractice),
                   ),
+                  if (_exam != null) ...[
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: ExamCountdownCard(
+                        title: _exam!.goal['title'] as String,
+                        daysLeft: _exam!.daysLeft,
+                        onOpen: widget.onOpenPlanner,
+                      ),
+                    ),
+                  ],
                   if (phases.isNotEmpty) ...[
                     const _SectionTitle('Continue learning'),
                     Padding(
