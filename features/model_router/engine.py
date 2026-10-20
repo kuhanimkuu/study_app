@@ -173,14 +173,13 @@ class AnthropicBackend:
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
             }
-        # Same defensive reasoning as OpenAIBackend's None-content guard —
-        # an empty `content` list (e.g. stop_reason="max_tokens" before any
-        # visible text was written) would otherwise raise IndexError here
-        # instead of cleanly producing an empty reply, which every caller
-        # already knows how to handle.
-        if not response.content:
-            return ""
-        return response.content[0].text.strip()
+        # Join the text blocks wherever they sit (2026-10-20). Current Claude
+        # models (the default claude-sonnet-5 included) think by default, so
+        # the reply can START with a `thinking` block, which has no `.text` —
+        # reading content[0].text crashed every such reply. An empty result
+        # (e.g. stop_reason="max_tokens" before any visible text) is a clean
+        # empty reply, which every caller already handles.
+        return "".join(block.text for block in response.content if block.type == "text").strip()
 
 
 class OpenAIBackend:

@@ -127,8 +127,19 @@ class _FakeAnthropicClient:
 
 
 class _FakeAnthropicTextBlock:
+    type = "text"
+
     def __init__(self, text: str) -> None:
         self.text = text
+
+
+class _FakeAnthropicThinkingBlock:
+    """Real SDK thinking blocks carry `thinking`, not `text`."""
+
+    type = "thinking"
+
+    def __init__(self) -> None:
+        self.thinking = ""
 
 
 def _anthropic_backend(content_blocks: list) -> model_router_engine.AnthropicBackend:
@@ -148,6 +159,13 @@ def test_anthropic_backend_still_returns_real_text_normally():
     assert backend.generate("hi", 50) == "a real reply"
     # See test_openai_backend_still_returns_real_text_normally's matching comment.
     assert backend.last_usage == {"input_tokens": 10, "output_tokens": 5}
+
+
+def test_anthropic_backend_skips_a_leading_thinking_block():
+    # Current Claude models think by default, so the reply can start with a
+    # thinking block — reading content[0].text crashed on it (2026-10-20).
+    backend = _anthropic_backend([_FakeAnthropicThinkingBlock(), _FakeAnthropicTextBlock(" the answer ")])
+    assert backend.generate("hi", 50) == "the answer"
 
 
 class _SlowFakeLocalBackend:
