@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 8+ adaptive icon: Sage (foreground, kept inside the 66dp safe
+     zone) over the app's light blue, masked to whatever shape the phone's
+     launcher uses. Generated 2026-10-20 from website/public/sage.svg. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@color/ic_launcher_background" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
+</adaptive-icon>

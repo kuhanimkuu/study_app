@@ -15,7 +15,7 @@ export const site = {
 
   /** The APK stays on the app's own server (Contabo) wherever the site is hosted. */
   apkUrl: env.VITE_APK_URL ?? '/download/study-os.apk',
-  appVersion: '1.0.1',
+  appVersion: '1.0.2',
   apkSizeMb: 59,
   /** Flutter's default minSdk 24. */
   minAndroid: 'Android 7.0 or newer',

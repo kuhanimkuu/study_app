@@ -21,6 +21,7 @@ import '../widgets/chat_sessions_drawer.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/pending_pdf_chip.dart';
 import '../widgets/server_settings_dialog.dart';
+import '../widgets/starter_card.dart';
 import '../widgets/web_url_dialog.dart';
 import '../widgets/working_indicator.dart';
 
@@ -512,21 +513,11 @@ class _ChatScreenState extends State<ChatScreen> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 22),
-            LayoutBuilder(
-              builder: (context, constraints) {
-                final width = (constraints.maxWidth - 10) / 2;
-                return Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final p in _suggestedPrompts)
-                      SizedBox(
-                        width: width,
-                        child: _StarterCard(label: p.label, icon: p.icon, color: p.color, onTap: () => _fillPrompt(p.prompt)),
-                      ),
-                  ],
-                );
-              },
+            StarterCardGrid(
+              children: [
+                for (final p in _suggestedPrompts)
+                  StarterCard(label: p.label, icon: p.icon, color: p.color, onTap: () => _fillPrompt(p.prompt)),
+              ],
             ),
           ],
         ),
@@ -639,51 +630,6 @@ class _ChatScreenState extends State<ChatScreen> {
             onMicTap: _startVoiceInput,
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// One of the four colourful "try asking…" cards on an empty chat.
-class _StarterCard extends StatelessWidget {
-  const _StarterCard({required this.label, required this.icon, required this.color, required this.onTap});
-
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final radius = BorderRadius.circular(18);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        borderRadius: radius,
-        boxShadow: [BoxShadow(color: theme.colorScheme.outline, offset: const Offset(0, 3))],
-      ),
-      child: Material(
-        color: theme.colorScheme.surface,
-        shape: RoundedRectangleBorder(borderRadius: radius, side: BorderSide(color: theme.colorScheme.outline, width: 1.5)),
-        child: InkWell(
-          borderRadius: radius,
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
-              children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(11)),
-                  child: Icon(icon, color: Colors.white, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Expanded(child: Text(label, style: theme.textTheme.titleSmall)),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }

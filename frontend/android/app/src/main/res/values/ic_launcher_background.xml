@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The app's primary-soft blue (theme.dart primaryLightOnLight). -->
+    <color name="ic_launcher_background">#E8F0FF</color>
+</resources>

@@ -9,9 +9,12 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/list_item_card.dart';
+import '../../../../core/widgets/project_accent.dart';
+import '../../../../core/widgets/sage_mascot.dart';
 import '../../../chat/models/chat_message.dart';
 import '../../../chat/presentation/widgets/chat_input_bar.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
+import '../../../chat/presentation/widgets/starter_card.dart';
 import '../../../chat/presentation/widgets/working_indicator.dart';
 import '../../../knowledge/notes/presentation/screens/notes_list_screen.dart';
 import '../../../knowledge/search/presentation/screens/knowledge_search_screen.dart';
@@ -539,10 +542,10 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   }
 
   static const _projectChatSuggestions = [
-    'Summarise the main ideas',
-    'What key terms should I know?',
-    'Explain the hardest part simply',
-    'What might come up in an exam?',
+    (question: 'Summarise the main ideas', label: 'Summarise it', icon: Icons.notes_rounded, color: StudyOsColors.primary),
+    (question: 'What key terms should I know?', label: 'Key terms', icon: Icons.translate_rounded, color: StudyOsColors.xp),
+    (question: 'Explain the hardest part simply', label: 'Explain the hard part', icon: Icons.lightbulb_rounded, color: StudyOsColors.streak),
+    (question: 'What might come up in an exam?', label: 'Likely exam questions', icon: Icons.quiz_rounded, color: Color(0xFFE2457A)),
   ];
 
   void _askSuggestion(String question) {
@@ -550,35 +553,39 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
     _sendQuery();
   }
 
+  /// Design v3: Sage greets you here too, by the subject's name, with
+  /// colourful starter cards — the same look as the main chat.
   Widget _buildChatWelcome(BuildContext context) {
     final theme = Theme.of(context);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 48, 24, 24),
+      padding: const EdgeInsets.fromLTRB(20, 32, 20, 24),
       children: [
-        Center(
-          child: Container(
-            width: 72,
-            height: 72,
-            decoration: const BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
-            child: const Icon(Icons.forum_rounded, color: Colors.white, size: 34),
-          ),
+        const Center(child: SageMascot(size: 110, mood: SageMood.cheer)),
+        const SizedBox(height: 14),
+        Text.rich(
+          TextSpan(children: [
+            const TextSpan(text: 'Ask Sage about '),
+            TextSpan(text: widget.displayName, style: TextStyle(color: projectAccentColor(widget.displayName))),
+          ]),
+          textAlign: TextAlign.center,
+          style: theme.textTheme.headlineSmall,
         ),
-        const SizedBox(height: 16),
-        Text('Ask your material', textAlign: TextAlign.center, style: theme.textTheme.titleMedium),
         const SizedBox(height: 6),
         Text(
-          'Answers come from this project\'s sources, with the passages they\'re based on.',
+          'Sage answers from this subject’s notes and shows you the passages he used.',
           textAlign: TextAlign.center,
-          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+          style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),
-        const SizedBox(height: 20),
-        Wrap(
-          alignment: WrapAlignment.center,
-          spacing: 8,
-          runSpacing: 8,
+        const SizedBox(height: 22),
+        StarterCardGrid(
           children: [
-            for (final q in _projectChatSuggestions)
-              ActionChip(label: Text(q), onPressed: _isAsking ? null : () => _askSuggestion(q)),
+            for (final s in _projectChatSuggestions)
+              StarterCard(
+                label: s.label,
+                icon: s.icon,
+                color: s.color,
+                onTap: _isAsking ? null : () => _askSuggestion(s.question),
+              ),
           ],
         ),
       ],
