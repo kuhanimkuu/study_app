@@ -211,37 +211,54 @@ class _StudyOsBottomNav extends StatelessWidget {
   ];
   static const _totalSlots = 5; // 2 left items + 1 gap slot (for the FAB) + 2 right items
   static const _fabSize = 62.0;
+  static const _barHeight = 72.0;
+
+  /// How far the Sage button rises above the bar.
+  static const _raise = 24.0;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
+    // The raised Sage button pokes [_raise] px above the bar. That strip is
+    // part of this widget's own height (transparent, so the page shows
+    // through) rather than drawn outside it (2026-10-20): drawn outside, it
+    // covered whatever the screen above put at its bottom edge — the chat's
+    // text field — and taps on the button's top part were lost, since
+    // Flutter doesn't hit-test outside a widget's bounds.
     return SafeArea(
       top: false,
-      child: Container(
-        height: 72,
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surface,
-          border: Border(top: BorderSide(color: theme.colorScheme.outline, width: 1.5)),
-        ),
+      child: SizedBox(
+        height: _barHeight + _raise,
         child: LayoutBuilder(
           builder: (context, constraints) {
             final slotWidth = constraints.maxWidth / _totalSlots;
             final fabCenterX = (_leftItems.length + 0.5) * slotWidth;
             return Stack(
-              clipBehavior: Clip.none,
               children: [
-                Row(
-                  children: [
-                    for (final item in _leftItems)
-                      SizedBox(key: keys[item.tab], width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
-                    SizedBox(width: slotWidth), // reserved slot under the raised Chat button
-                    for (final item in _rightItems)
-                      SizedBox(key: keys[item.tab], width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
-                  ],
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  height: _barHeight,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.surface,
+                      border: Border(top: BorderSide(color: theme.colorScheme.outline, width: 1.5)),
+                    ),
+                    child: Row(
+                      children: [
+                        for (final item in _leftItems)
+                          SizedBox(key: keys[item.tab], width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
+                        SizedBox(width: slotWidth), // reserved slot under the raised Chat button
+                        for (final item in _rightItems)
+                          SizedBox(key: keys[item.tab], width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
+                      ],
+                    ),
+                  ),
                 ),
                 Positioned(
-                  top: -24,
+                  top: 0,
                   left: fabCenterX - _fabSize / 2,
                   child: KeyedSubtree(
                     key: keys[_Tab.chat],
