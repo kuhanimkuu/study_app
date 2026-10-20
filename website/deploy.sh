@@ -1,46 +1,77 @@
 #!/usr/bin/env bash
-# Build the website and publish it to the Study OS server, optionally with a
-# new Android APK. The server has no Node, so the build happens here.
+# Publish the website, and optionally a new Android APK.
 #
-#   ./deploy.sh                                   # website only
-#   ./deploy.sh ../frontend/build/app/outputs/flutter-apk/app-release.apk
+# The website lives on HelioHost (https://studyos.helioho.st); the APK and the
+# app's API live on the Contabo server, which redirects its own website pages
+# to HelioHost (setup_server.sh, WEBSITE_URL).
 #
-# The new site is unpacked next to the live one and swapped in with a rename,
-# so visitors never see a half-uploaded site. The APK in download/ is kept
-# across site deploys. nginx serves /var/www/studyos (see setup_server.sh).
-# Override the target with STUDY_OS_SSH, STUDY_OS_SSH_PORT, STUDY_OS_SSH_KEY.
+#   ./deploy.sh                 build for HelioHost -> ~/Downloads/studyos-website.zip
+#                               (then upload it in Plesk, see the printed steps)
+#   ./deploy.sh path/to.apk     the same, plus upload the APK to Contabo
+#   ./deploy.sh --contabo [apk] publish the website to the Contabo server instead
+#                               (only if setup_server.sh has WEBSITE_URL="")
+#
+# Override the Contabo target with STUDY_OS_SSH, STUDY_OS_SSH_PORT, STUDY_OS_SSH_KEY.
 set -euo pipefail
 cd "$(dirname "$0")"
 
+HELIOHOST_URL=https://studyos.helioho.st
+CONTABO_URL=https://studytutor.duckdns.org
 HOST="${STUDY_OS_SSH:-root@62.171.182.123}"
 PORT="${STUDY_OS_SSH_PORT:-1257}"
 KEY="${STUDY_OS_SSH_KEY:-$HOME/.ssh/study_os_deploy}"
 SITE=/var/www/studyos
-APK="${1:-}"
 SSH=(ssh -i "$KEY" -p "$PORT" -o IdentitiesOnly=yes -o BatchMode=yes "$HOST")
 
+TARGET=heliohost
+if [[ "${1:-}" == "--contabo" ]]; then
+  TARGET=contabo
+  shift
+fi
+APK="${1:-}"
 if [[ -n "$APK" && ! -f "$APK" ]]; then
   echo "APK not found: $APK" >&2
   exit 1
 fi
 
-npm run build
-
-echo "Uploading the website..."
-tar -czf - -C dist . | "${SSH[@]}" "set -e
-  rm -rf $SITE.new && mkdir -p $SITE.new && tar -xzf - -C $SITE.new
-  mkdir -p $SITE.new/download
-  # keep the published APK; everything else in download/ comes from the new build
-  for f in $SITE/download/*.apk; do if [ -e \"\$f\" ]; then cp -a \"\$f\" $SITE.new/download/; fi; done
-  rm -rf $SITE.old
-  if [ -d $SITE ]; then mv $SITE $SITE.old; fi
-  mv $SITE.new $SITE
-  rm -rf $SITE.old
-  chmod -R a+rX $SITE"
-
 if [[ -n "$APK" ]]; then
-  echo "Uploading the APK ($(du -h "$APK" | cut -f1))..."
-  "${SSH[@]}" "cat > $SITE/download/study-os.apk.part && mv $SITE/download/study-os.apk.part $SITE/download/study-os.apk && chmod a+r $SITE/download/study-os.apk" < "$APK"
+  echo "Uploading the APK to Contabo ($(du -h "$APK" | cut -f1))..."
+  "${SSH[@]}" "mkdir -p $SITE/download && cat > $SITE/download/study-os.apk.part && mv $SITE/download/study-os.apk.part $SITE/download/study-os.apk && chmod a+r $SITE/download/study-os.apk" < "$APK"
 fi
 
-echo "Done. https://studytutor.duckdns.org/"
+if [[ "$TARGET" == heliohost ]]; then
+  VITE_SITE_URL=$HELIOHOST_URL VITE_APK_URL=$CONTABO_URL/download/study-os.apk npm run build
+  ZIP="$HOME/Downloads/studyos-website.zip"
+  rm -f "$ZIP"
+  python - "$ZIP" <<'PY'
+import os, sys, zipfile
+out = sys.argv[1]
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, _, files in os.walk("dist"):
+        for f in files:
+            full = os.path.join(root, f)
+            z.write(full, os.path.relpath(full, "dist").replace(os.sep, "/"))
+PY
+  cat <<EOF
+
+Built $ZIP. To publish it:
+  1. HelioHost -> Plesk -> Websites & Domains -> studyos.helioho.st -> Files
+  2. Open httpdocs, Upload the zip, tick it, Extract Files (replace existing)
+  3. Delete the zip from httpdocs
+Then check $HELIOHOST_URL/
+EOF
+else
+  npm run build
+  echo "Uploading the website to Contabo..."
+  tar -czf - -C dist . | "${SSH[@]}" "set -e
+    rm -rf $SITE.new && mkdir -p $SITE.new && tar -xzf - -C $SITE.new
+    mkdir -p $SITE.new/download
+    # keep the published APK; everything else in download/ comes from the new build
+    for f in $SITE/download/*.apk; do if [ -e \"\$f\" ]; then cp -a \"\$f\" $SITE.new/download/; fi; done
+    rm -rf $SITE.old
+    if [ -d $SITE ]; then mv $SITE $SITE.old; fi
+    mv $SITE.new $SITE
+    rm -rf $SITE.old
+    chmod -R a+rX $SITE"
+  echo "Done. $CONTABO_URL/"
+fi

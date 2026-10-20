@@ -213,6 +213,32 @@ SERVER_NAME="${DOMAIN:-_}"
 SITE_DIR=/var/www/studyos
 mkdir -p "$SITE_DIR/download"
 [[ -f "$SITE_DIR/index.html" ]] || echo '<!doctype html><title>Study OS</title><p>Study OS — website coming soon.</p>' > "$SITE_DIR/index.html"
+# Where the public website officially lives. Since 2026-10-20 it's on
+# HelioHost, so this server only redirects its website pages there and keeps
+# serving the API, chat files and the APK. Set it to "" to serve the website
+# from $SITE_DIR on this server instead (website/deploy.sh --contabo).
+WEBSITE_URL="https://studyos.helioho.st"
+if [[ -n "$WEBSITE_URL" ]]; then
+  WEBSITE_LOCATIONS="    # The website lives at $WEBSITE_URL — send its pages there.
+    location / {
+        return 301 $WEBSITE_URL\$request_uri;
+    }
+    # Let's Encrypt renewals still answer here.
+    location ^~ /.well-known/acme-challenge/ {
+    }"
+else
+  WEBSITE_LOCATIONS='    # The website: everything that isn'"'"'t the app'"'"'s API. Each page is a
+    # pre-rendered folder (/features/ -> features/index.html).
+    error_page 404 /404.html;
+    location / {
+        try_files $uri $uri/ =404;
+    }
+    # Vite'"'"'s built files have content hashes in their names — cache for good.
+    location /assets/ {
+        include snippets/study-os-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }'
+fi
 # Security headers for every response. A snippet, because nginx drops the
 # server-level add_header lines in any location that sets its own headers —
 # so each such location includes it again. The website runs no inline or
@@ -240,20 +266,10 @@ server {
     include snippets/study-os-headers.conf;
     server_tokens off;
 
-    # The website: everything that isn't the app's API. Each page is a
-    # pre-rendered folder (/features/ -> features/index.html).
     root $SITE_DIR;
     index index.html;
-    error_page 404 /404.html;
-    location / {
-        try_files \$uri \$uri/ =404;
-    }
-    # Vite's built files have content hashes in their names — cache for good.
-    location /assets/ {
-        include snippets/study-os-headers.conf;
-        add_header Cache-Control "public, max-age=31536000, immutable";
-    }
-    # The APK only — /download/ itself is the website's Download page.
+$WEBSITE_LOCATIONS
+    # The APK, served from here whichever host has the website.
     location ~* \.apk\$ {
         include snippets/study-os-headers.conf;
         # so Android recognises the file as an app to install

@@ -35,7 +35,7 @@ function head(route: Route): string {
       applicationCategory: 'EducationalApplication',
       description: route.description,
       url: site.url,
-      downloadUrl: site.url + site.apkUrl,
+      downloadUrl: site.apkUrl.startsWith('http') ? site.apkUrl : site.url + site.apkUrl,
       softwareVersion: site.appVersion,
       offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
     }

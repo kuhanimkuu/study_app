@@ -1119,3 +1119,20 @@ User asked to make the website "a multi page production level site".
 - The Anthropic fix and the app's new legal text aren't live yet: they need a commit, push and `study-os-update` (server), and a new APK.
 - The Anthropic thinking-vs-small-`max_tokens` risk is untested without a key: chat caps are 70-220 tokens, and thinking may consume them. Test with a real key; consider `claude-sonnet-5-5` (current, same price) as the default.
 - Not yet submitted to any search engine (Google Search Console wants the sitemap).
+
+### 2026-10-20 (later) — Website moved to HelioHost: https://studyos.helioho.st
+
+The user created a HelioHost account (`studyos.helioho.st`, Plesk) and chose a zip upload over sharing FTP credentials, and to redirect the Contabo copy to HelioHost.
+
+- `src/site.ts` takes `VITE_SITE_URL` and `VITE_APK_URL` at build time. The HelioHost build uses its own address for canonical links, sitemap, OG and JSON-LD, and points every download button at the APK on Contabo: free hosts generally don't allow 59 MB file downloads, and Contabo already serves it correctly. JSON-LD `downloadUrl` now handles an absolute APK address.
+- `public/.htaccess` mirrors the nginx behaviour: custom 404, HTTPS, security headers incl. CSP, caching, deflate, no directory listing.
+- `deploy.sh` now builds the HelioHost zip into Downloads and prints the Plesk steps; it uploads a given APK to Contabo, and `--contabo` keeps the old self-hosted path.
+- `setup_server.sh` gained `WEBSITE_URL` (set to HelioHost). Contabo 301s every website page there (path and query kept) and keeps serving `/api/`, `/generated/`, `*.apk` and the ACME challenge path. Set it to `""` to serve the site locally again.
+- Re-running the script on the server also pulled `7189cf7`, so **the Anthropic thinking-block fix is live**.
+
+**Verified live:**
+- HelioHost: every page, the sitemap/robots/OG/fonts/screens served with the right types; the custom 404 with a 404 status; every security header on pages; `.htaccess` returns 403.
+- Playwright on HelioHost, 7 pages × desktop and 390px: 0 console errors (incl. hydration), 0 failed requests, 0 overflow; menu and theme work.
+- Contabo: website paths 301 to HelioHost; `/api/health` 200; the APK is served as an Android package; `certbot renew --dry-run` succeeds with the redirect in place.
+
+**Known limit:** HelioHost's nginx serves `/assets/*` directly, bypassing `.htaccess`, so hashed JS/CSS lack the long-cache header (a small speed cost; pages keep every security header).
