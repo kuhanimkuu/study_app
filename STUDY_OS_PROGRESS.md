@@ -1162,6 +1162,5 @@ The user asked for a meter showing students their AI token use and its total pri
   - analyze clean; 40/40 Flutter tests.
   - Deployed to Contabo: migration ran, and the endpoint returns 401 without login.
   - APK 1.0.4 served byte-identical; site zip built with 1.0.4.
-- **Not yet done:**
-  - Installing on the phone: it wasn't connected to adb.
-  - Usage before this release was never logged for BYOK, so the meter starts from zero.
+  - Installed on the phone once it was connected (versionName 1.0.4, versionCode 5).
+- **Known limit:** usage before this release was never logged for BYOK, so the meter starts from zero.
