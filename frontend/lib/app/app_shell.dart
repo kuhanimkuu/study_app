@@ -7,6 +7,8 @@ import '../features/home/presentation/screens/home_screen.dart';
 import '../features/learning/concepts/presentation/screens/learn_hub_screen.dart';
 import '../features/planner/presentation/screens/planner_screen.dart';
 import '../features/projects/presentation/screens/projects_list_screen.dart';
+import '../core/widgets/sage_mascot.dart';
+import 'app_tour.dart';
 import 'theme.dart';
 
 /// Shown once the user is authenticated — bottom nav switching between the
@@ -50,6 +52,87 @@ class _AppShellState extends State<AppShell> {
   /// a constructor param.
   final _chatQuickAction = ValueNotifier<ChatQuickAction?>(null);
 
+  // Spotlight targets for the first-run tour (see app_tour.dart).
+  final _tabKeys = {for (final t in _Tab.values) t: GlobalKey()};
+  final _profileKey = GlobalKey();
+  bool _showTour = false;
+
+  @override
+  void initState() {
+    super.initState();
+    AppTour.replayRequested.addListener(_onReplayRequested);
+    AppTour.shouldShow().then((show) {
+      if (show && mounted) setState(() => _showTour = true);
+    });
+  }
+
+  void _onReplayRequested() {
+    if (!AppTour.replayRequested.value || !mounted) return;
+    AppTour.replayRequested.value = false;
+    setState(() {
+      _tab = _Tab.home; // the profile step points at Home's profile button
+      _showTour = true;
+    });
+  }
+
+  void _finishTour() {
+    AppTour.markSeen();
+    setState(() => _showTour = false);
+  }
+
+  List<AppTourStep> _tourSteps() => [
+        const AppTourStep(
+          title: 'Welcome to Study OS!',
+          body: "I'm Sage, your study buddy. Let me show you around — it only takes a minute.",
+          color: StudyOsColors.primary,
+          icon: Icons.waving_hand_rounded,
+          mood: SageMood.cheer,
+        ),
+        AppTourStep(
+          target: _tabKeys[_Tab.home],
+          title: 'Home',
+          body: 'Your daily goal, streak and cards due — plus what to study next. Start here every day.',
+          color: StudyOsColors.primary,
+          icon: Icons.home_rounded,
+        ),
+        AppTourStep(
+          target: _tabKeys[_Tab.projects],
+          title: 'Subjects',
+          body: 'Make one for each course. Add PDFs, notes or web links and I turn them into concepts, flashcards and quizzes.',
+          color: StudyOsColors.success,
+          icon: Icons.auto_stories_rounded,
+        ),
+        AppTourStep(
+          target: _tabKeys[_Tab.chat],
+          title: 'Chat with me',
+          body: 'Ask anything, or send me a photo, PDF, voice note or link. I answer using your own AI key — add it in Profile.',
+          color: StudyOsColors.primary,
+          icon: Icons.forum_rounded,
+        ),
+        AppTourStep(
+          target: _tabKeys[_Tab.learn],
+          title: 'Practice',
+          body: 'Flashcards, quizzes and practice questions on everything in your subjects. Your mastery grows as you go.',
+          color: StudyOsColors.xp,
+          icon: Icons.bolt_rounded,
+        ),
+        AppTourStep(
+          target: _tabKeys[_Tab.planner],
+          title: 'Plan',
+          body: 'Set goals with target dates, and get a study plan and sessions built around what you need most.',
+          color: StudyOsColors.streak,
+          icon: Icons.calendar_month_rounded,
+        ),
+        AppTourStep(
+          target: _profileKey,
+          title: 'Profile',
+          body: 'Your AI key, settings, progress and saved chat files live here. You can replay this tour from here too.',
+          color: StudyOsColors.primary,
+          icon: Icons.person_rounded,
+          mood: SageMood.cheer,
+        ),
+      ];
+
   void _select(_Tab tab) => setState(() => _tab = tab);
 
   void _runChatQuickAction(ChatQuickAction action) {
@@ -59,6 +142,7 @@ class _AppShellState extends State<AppShell> {
 
   @override
   void dispose() {
+    AppTour.replayRequested.removeListener(_onReplayRequested);
     _chatQuickAction.dispose();
     super.dispose();
   }
@@ -71,7 +155,9 @@ class _AppShellState extends State<AppShell> {
         authService: widget.authService,
         onOpenPlanner: () => _select(_Tab.planner),
         onOpenProjects: () => _select(_Tab.projects),
+        onOpenPractice: () => _select(_Tab.learn),
         onQuickAction: _runChatQuickAction,
+        profileButtonKey: _profileKey,
       ),
       _Tab.projects: ProjectsListScreen(apiClient: widget.authService.apiClient, authService: widget.authService),
       _Tab.learn: LearnHubScreen(apiClient: widget.authService.apiClient, authService: widget.authService),
@@ -79,12 +165,19 @@ class _AppShellState extends State<AppShell> {
       _Tab.planner: PlannerScreen(apiClient: widget.authService.apiClient, authService: widget.authService),
     };
 
-    return Scaffold(
+    final shell = Scaffold(
       body: IndexedStack(
         index: _Tab.values.indexOf(_tab),
         children: [for (final t in _Tab.values) screens[t]!],
       ),
-      bottomNavigationBar: _StudyOsBottomNav(active: _tab, onSelect: _select),
+      bottomNavigationBar: _StudyOsBottomNav(active: _tab, onSelect: _select, keys: _tabKeys),
+    );
+    if (!_showTour) return shell;
+    return Stack(
+      children: [
+        shell,
+        Positioned.fill(child: AppTourOverlay(steps: _tourSteps(), onDone: _finishTour)),
+      ],
     );
   }
 }
@@ -96,21 +189,28 @@ class _AppShellState extends State<AppShell> {
 /// than a hardcoded pixel gap (kept from the 5-tab version this replaced,
 /// since it's no more code and stays correct if a tab is ever added back).
 class _StudyOsBottomNav extends StatelessWidget {
-  const _StudyOsBottomNav({required this.active, required this.onSelect});
+  const _StudyOsBottomNav({required this.active, required this.onSelect, required this.keys});
 
   final _Tab active;
   final void Function(_Tab) onSelect;
 
+  /// Spotlight targets for the first-run tour, one per tab.
+  final Map<_Tab, GlobalKey> keys;
+
+  // Labels say what each tab is FOR (2026-10-19, design v3 — the user
+  // found things "hard to find"): a project is the student's *subject*
+  // (its notes, concepts, cards, chat), and the Learn hub is where they
+  // *practise*. Internal names (_Tab.projects/_Tab.learn) are unchanged.
   static const _leftItems = [
-    (tab: _Tab.home, label: 'Home', icon: Icons.home_outlined, iconFilled: Icons.home_rounded),
-    (tab: _Tab.projects, label: 'Projects', icon: Icons.folder_outlined, iconFilled: Icons.folder_rounded),
+    (tab: _Tab.home, label: 'Home', icon: Icons.home_outlined, iconFilled: Icons.home_rounded, color: StudyOsColors.primary),
+    (tab: _Tab.projects, label: 'Subjects', icon: Icons.auto_stories_outlined, iconFilled: Icons.auto_stories_rounded, color: StudyOsColors.success),
   ];
   static const _rightItems = [
-    (tab: _Tab.learn, label: 'Learn', icon: Icons.school_outlined, iconFilled: Icons.school_rounded),
-    (tab: _Tab.planner, label: 'Planner', icon: Icons.calendar_month_outlined, iconFilled: Icons.calendar_month_rounded),
+    (tab: _Tab.learn, label: 'Practice', icon: Icons.bolt_outlined, iconFilled: Icons.bolt_rounded, color: StudyOsColors.xp),
+    (tab: _Tab.planner, label: 'Plan', icon: Icons.calendar_month_outlined, iconFilled: Icons.calendar_month_rounded, color: StudyOsColors.streak),
   ];
   static const _totalSlots = 5; // 2 left items + 1 gap slot (for the FAB) + 2 right items
-  static const _fabSize = 56.0;
+  static const _fabSize = 62.0;
 
   @override
   Widget build(BuildContext context) {
@@ -119,10 +219,10 @@ class _StudyOsBottomNav extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Container(
-        height: 68,
+        height: 72,
         decoration: BoxDecoration(
           color: theme.colorScheme.surface,
-          border: Border(top: BorderSide(color: theme.colorScheme.outline)),
+          border: Border(top: BorderSide(color: theme.colorScheme.outline, width: 1.5)),
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
@@ -134,16 +234,19 @@ class _StudyOsBottomNav extends StatelessWidget {
                 Row(
                   children: [
                     for (final item in _leftItems)
-                      SizedBox(width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
+                      SizedBox(key: keys[item.tab], width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
                     SizedBox(width: slotWidth), // reserved slot under the raised Chat button
                     for (final item in _rightItems)
-                      SizedBox(width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
+                      SizedBox(key: keys[item.tab], width: slotWidth, child: _NavButton(item: item, active: active, onSelect: onSelect)),
                   ],
                 ),
                 Positioned(
-                  top: -20,
+                  top: -24,
                   left: fabCenterX - _fabSize / 2,
-                  child: _ChatFab(active: active == _Tab.chat, onTap: () => onSelect(_Tab.chat)),
+                  child: KeyedSubtree(
+                    key: keys[_Tab.chat],
+                    child: _ChatFab(active: active == _Tab.chat, onTap: () => onSelect(_Tab.chat)),
+                  ),
                 ),
               ],
             );
@@ -157,7 +260,7 @@ class _StudyOsBottomNav extends StatelessWidget {
 class _NavButton extends StatelessWidget {
   const _NavButton({required this.item, required this.active, required this.onSelect});
 
-  final ({_Tab tab, String label, IconData icon, IconData iconFilled}) item;
+  final ({_Tab tab, String label, IconData icon, IconData iconFilled, Color color}) item;
   final _Tab active;
   final void Function(_Tab) onSelect;
 
@@ -165,19 +268,32 @@ class _NavButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final selected = active == item.tab;
-    final color = selected ? theme.colorScheme.primary : theme.colorScheme.onSurfaceVariant;
-    return InkWell(
-      onTap: () => onSelect(item.tab),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(selected ? item.iconFilled : item.icon, color: color, size: 22),
-          const SizedBox(height: 3),
-          Text(
-            item.label,
-            style: theme.textTheme.labelSmall?.copyWith(color: color, fontWeight: selected ? FontWeight.w600 : FontWeight.w400),
-          ),
-        ],
+    final color = selected ? item.color : theme.colorScheme.onSurfaceVariant;
+    return Semantics(
+      selected: selected,
+      button: true,
+      child: InkWell(
+        onTap: () => onSelect(item.tab),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            // each tab has its own colour; the selected one sits in a pill
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 180),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+              decoration: BoxDecoration(
+                color: selected ? item.color.withValues(alpha: 0.15) : Colors.transparent,
+                borderRadius: BorderRadius.circular(99),
+              ),
+              child: Icon(selected ? item.iconFilled : item.icon, color: color, size: 25),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              item.label,
+              style: TextStyle(fontFamily: displayFontFamily, fontSize: 11.5, fontWeight: selected ? FontWeight.w900 : FontWeight.w700, color: color),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -191,23 +307,26 @@ class _ChatFab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 56,
-        height: 56,
-        decoration: BoxDecoration(
-          gradient: StudyOsColors.brandGradient,
-          shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: StudyOsColors.primary.withValues(alpha: active ? 0.5 : 0.35),
-              blurRadius: 20,
-              offset: const Offset(0, 4),
-            ),
-          ],
+    // Sage's face: Chat is where you talk to Sage (design v3).
+    return Semantics(
+      button: true,
+      selected: active,
+      label: 'Chat with Sage',
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          width: 62,
+          height: 62,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            shape: BoxShape.circle,
+            border: Border.all(color: active ? StudyOsColors.primary : const Color(0xFFDCE6FF), width: 3),
+            boxShadow: [
+              BoxShadow(color: StudyOsColors.primary.withValues(alpha: active ? 0.45 : 0.28), blurRadius: 16, offset: const Offset(0, 5)),
+            ],
+          ),
+          child: const Padding(padding: EdgeInsets.fromLTRB(5, 3, 5, 7), child: SageMascot(size: 48)),
         ),
-        child: const Icon(Icons.chat_bubble_rounded, color: Colors.white, size: 24),
       ),
     );
   }

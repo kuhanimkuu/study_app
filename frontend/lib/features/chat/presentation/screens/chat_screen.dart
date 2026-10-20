@@ -9,7 +9,7 @@ import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/storage/local_db.dart';
 import '../../../../core/voice/voice_input_sheet.dart';
-import '../../../../core/widgets/brand_wordmark.dart';
+import '../../../../core/widgets/sage_mascot.dart';
 import '../../../../core/widgets/profile_icon_button.dart';
 import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
@@ -479,10 +479,10 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   static const _suggestedPrompts = [
-    'Explain a concept to me',
-    'Help me plan a study session',
-    'Quiz me on what I studied recently',
-    'What have I been struggling with?',
+    (prompt: 'Explain a concept to me', label: 'Explain a concept', icon: Icons.lightbulb_rounded, color: StudyOsColors.streak),
+    (prompt: 'Help me plan a study session', label: 'Plan a session', icon: Icons.event_note_rounded, color: StudyOsColors.success),
+    (prompt: 'Quiz me on what I studied recently', label: 'Quiz me', icon: Icons.quiz_rounded, color: StudyOsColors.xp),
+    (prompt: 'What have I been struggling with?', label: 'My weak spots', icon: Icons.insights_rounded, color: Color(0xFFE2457A)),
   ];
 
   void _fillPrompt(String prompt) {
@@ -493,37 +493,40 @@ class _ChatScreenState extends State<ChatScreen> {
   /// Shown instead of the (otherwise blank) transcript on a session with
   /// no messages yet — an empty screen with nothing but an input bar at
   /// the bottom read as broken, not "ready", before this existed.
+  // Design v3: Sage greets you, with four colourful starter cards.
   Widget _buildEmptyState(BuildContext context) {
     final theme = Theme.of(context);
     return Center(
       child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 88,
-              height: 88,
-              decoration: BoxDecoration(gradient: StudyOsColors.brandGradient, shape: BoxShape.circle),
-              child: const Icon(Icons.forum_rounded, color: Colors.white, size: 40),
-            ),
-            const SizedBox(height: 20),
-            Text('Ask your AI study moderator', style: theme.textTheme.titleLarge, textAlign: TextAlign.center),
-            const SizedBox(height: 8),
+            const SageMascot(size: 120, mood: SageMood.cheer),
+            const SizedBox(height: 14),
+            Text("Hi, I'm Sage!", style: theme.textTheme.headlineMedium, textAlign: TextAlign.center),
+            const SizedBox(height: 6),
             Text(
-              'Ask a question, or send an image, PDF, audio, or web link.',
+              'Ask me anything about your studies — or send me a photo, PDF, voice note or web link.',
               style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 24),
-            Wrap(
-              alignment: WrapAlignment.center,
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final prompt in _suggestedPrompts)
-                  ActionChip(label: Text(prompt), onPressed: () => _fillPrompt(prompt)),
-              ],
+            const SizedBox(height: 22),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final width = (constraints.maxWidth - 10) / 2;
+                return Wrap(
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final p in _suggestedPrompts)
+                      SizedBox(
+                        width: width,
+                        child: _StarterCard(label: p.label, icon: p.icon, color: p.color, onTap: () => _fillPrompt(p.prompt)),
+                      ),
+                  ],
+                );
+              },
             ),
           ],
         ),
@@ -541,14 +544,57 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: BrandWordmark(style: Theme.of(context).appBarTheme.titleTextStyle),
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            SageAvatar(size: 38, mood: _isLoading ? SageMood.thinking : SageMood.happy),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Sage'),
+                Text(
+                  _isLoading ? 'thinking…' : 'your study buddy',
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: _isLoading ? StudyOsColors.primary : StudyOsColors.success,
+                      ),
+                ),
+              ],
+            ),
+          ],
+        ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.create_new_folder_outlined),
-            tooltip: 'Convert to project',
-            onPressed: _messages.isEmpty ? null : _convertToProject,
+          // "Save as subject" and the server address live in a menu (design
+          // v3) — two extra icons beside the title made the header busy.
+          PopupMenuButton<String>(
+            tooltip: 'More',
+            icon: const Icon(Icons.more_vert_rounded),
+            onSelected: (value) {
+              if (value == 'subject') _convertToProject();
+              if (value == 'server') _openSettings();
+            },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'subject',
+                enabled: _messages.isNotEmpty,
+                child: const ListTile(
+                  leading: Icon(Icons.create_new_folder_outlined),
+                  title: Text('Save chat as a subject'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: 'server',
+                child: ListTile(
+                  leading: const Icon(Icons.dns_outlined),
+                  title: const Text('Server'),
+                  subtitle: Text(_api.baseUrl),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
-          IconButton(icon: const Icon(Icons.settings_outlined), onPressed: _openSettings, tooltip: _api.baseUrl),
           ProfileIconButton(authService: widget.authService),
         ],
       ),
@@ -593,6 +639,51 @@ class _ChatScreenState extends State<ChatScreen> {
             onMicTap: _startVoiceInput,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// One of the four colourful "try asking…" cards on an empty chat.
+class _StarterCard extends StatelessWidget {
+  const _StarterCard({required this.label, required this.icon, required this.color, required this.onTap});
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final radius = BorderRadius.circular(18);
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: radius,
+        boxShadow: [BoxShadow(color: theme.colorScheme.outline, offset: const Offset(0, 3))],
+      ),
+      child: Material(
+        color: theme.colorScheme.surface,
+        shape: RoundedRectangleBorder(borderRadius: radius, side: BorderSide(color: theme.colorScheme.outline, width: 1.5)),
+        child: InkWell(
+          borderRadius: radius,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(11)),
+                  child: Icon(icon, color: Colors.white, size: 20),
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text(label, style: theme.textTheme.titleSmall)),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

@@ -76,16 +76,41 @@ flutter:
   # Bundled locally (not fetched via the google_fonts package at runtime —
   # see app/theme.dart's doc comment: a cold Google Fonts CDN fetch on
   # first launch was a real, measured contributor to "the app feels slow"
-  # independent of which backend it's pointed at). Both are single-file
-  # variable fonts (weight axis) straight from Google's own font repo, so
-  # one file per family covers every weight this app's TextTheme uses.
+  # independent of which backend it's pointed at).
+  #
+  # One static file per weight, NOT single variable fonts (2026-10-19):
+  # Flutter doesn't pick a weight out of a variable font from `fontWeight`
+  # alone, so with the old variable Inter.ttf every "bold" heading and
+  # button actually rendered at the file's default weight (400; Nunito's
+  # default is an extra-light 200). These were cut from Google's variable
+  # files with fontTools' instancer (Inter at opsz 14). Licences:
+  # assets/fonts/*-OFL.txt.
   fonts:
+    # Body copy.
     - family: Inter
       fonts:
-        - asset: assets/fonts/Inter.ttf
-    - family: JetBrains Mono
+        - asset: assets/fonts/Inter-400.ttf
+          weight: 400
+        - asset: assets/fonts/Inter-500.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-600.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-700.ttf
+          weight: 700
+    # Rounded, friendly face for the v3 "playful study app" look (2026-10-19):
+    # headings, buttons, stats and the nav.
+    - family: Nunito
       fonts:
-        - asset: assets/fonts/JetBrainsMono.ttf
+        - asset: assets/fonts/Nunito-400.ttf
+          weight: 400
+        - asset: assets/fonts/Nunito-600.ttf
+          weight: 600
+        - asset: assets/fonts/Nunito-700.ttf
+          weight: 700
+        - asset: assets/fonts/Nunito-800.ttf
+          weight: 800
+        - asset: assets/fonts/Nunito-900.ttf
+          weight: 900
 
   # To add assets to your application, add an assets section, like this:
   # assets:

@@ -110,7 +110,7 @@ class _LearnHubScreenState extends State<LearnHubScreen> {
   Future<void> _pickConceptThen(bool examMode) async {
     final concepts = _mastery ?? [];
     if (concepts.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No concepts yet — add one from a study space first.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No concepts yet — add notes to a subject first.')));
       return;
     }
     final chosen = await showModalBottomSheet<Map<String, dynamic>>(
@@ -207,7 +207,7 @@ class _LearnHubScreenState extends State<LearnHubScreen> {
                   children: const [
                     EmptyState(
                       icon: Icons.school_outlined,
-                      message: 'No concepts yet. Add one from inside a study space, then come back here to practice.',
+                      message: 'No concepts yet. Add notes to a subject, then come back here to practise.',
                     ),
                   ],
                 );
@@ -225,7 +225,7 @@ class _LearnHubScreenState extends State<LearnHubScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text('Learn', style: theme.textTheme.headlineLarge),
+                              Text('Practice', style: theme.textTheme.headlineLarge),
                               const SizedBox(height: 4),
                               Text(
                                 '$dueCount flashcard${dueCount == 1 ? '' : 's'} due · ${mastery.length} concept${mastery.length == 1 ? '' : 's'}',

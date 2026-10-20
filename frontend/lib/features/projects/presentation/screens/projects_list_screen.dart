@@ -59,11 +59,11 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('New project'),
+        title: const Text('New subject'),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Thermodynamics'),
+          decoration: const InputDecoration(labelText: 'Name', hintText: 'e.g. Cell Biology'),
           onSubmitted: (value) => Navigator.of(context).pop(value),
         ),
         actions: [
@@ -88,7 +88,7 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete project?'),
+        title: const Text('Delete subject?'),
         content: Text('This permanently deletes "$displayName" and all of its stored material.'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancel')),
@@ -116,7 +116,7 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Study spaces'),
+        title: const Text('Subjects'),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
@@ -159,7 +159,7 @@ class _ProjectsListScreenState extends State<ProjectsListScreen> {
                           Icon(Icons.folder_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
                           const SizedBox(height: 16),
                           Text(
-                            'No projects yet. Tap + to create one and add material to it.',
+                            'No subjects yet. Tap + to create one, then add your notes to it.',
                             textAlign: TextAlign.center,
                             style: Theme.of(context)
                                 .textTheme

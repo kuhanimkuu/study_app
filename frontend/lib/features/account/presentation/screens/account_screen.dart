@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../../app/app_tour.dart';
 import '../../../../app/theme.dart';
 import '../../../../core/analytics/streak.dart';
 import '../../../../core/api/api_client.dart';
@@ -417,7 +418,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   ),
                 ),
                 if (widget.onOpenProjects != null)
-                  _ProfileRow(icon: Icons.folder_outlined, label: 'Study spaces', onTap: widget.onOpenProjects),
+                  _ProfileRow(icon: Icons.auto_stories_outlined, label: 'Subjects', onTap: widget.onOpenProjects),
                 const SizedBox(height: 24),
 
                 _sectionHeader(context, 'AI model'),
@@ -626,6 +627,15 @@ class _AccountScreenState extends State<AccountScreen> {
                 const SizedBox(height: 28),
                 _sectionHeader(context, 'Data & privacy'),
                 const ChatMediaSettingsCard(),
+                _ProfileRow(
+                  icon: Icons.tour_rounded,
+                  label: 'Take the app tour',
+                  sublabel: 'Sage shows you what each part of the app does',
+                  onTap: () {
+                    AppTour.requestReplay();
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                  },
+                ),
                 _ProfileRow(
                   icon: Icons.history_rounded,
                   label: 'Activity history',

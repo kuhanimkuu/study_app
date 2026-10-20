@@ -26,7 +26,7 @@ class PlannerScreen extends StatelessWidget {
       length: 4,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Planner'),
+          title: const Text('Plan'),
           actions: [ProfileIconButton(authService: authService)],
           bottom: const TabBar(
             tabs: [Tab(text: 'Plan'), Tab(text: 'Goals'), Tab(text: 'Progress'), Tab(text: 'Calendar')],

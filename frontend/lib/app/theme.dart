@@ -1,139 +1,182 @@
 import 'package:flutter/material.dart';
 
-/// Study OS design system, v2 — re-tokenized to match the approved visual
-/// reference (`kuhanimkuu/DesignStudyOSMobileApp`, a Figma-Make React
-/// prototype covering Splash/Onboarding/Auth/Home/Learn/Chat/Planner/
-/// Profile/Projects/Notes/Progress). Colors below are copied verbatim from
-/// that prototype's `src/utils/colors.ts` (not re-derived/approximated),
-/// so anything that looked "off-brand" against the reference before this
-/// pass was a genuine token mismatch, not a rendering difference.
+/// Study OS design system, v3 — "playful study app" (2026-10-19).
 ///
-/// Typography: the reference uses plain Inter everywhere for prose/UI text
-/// and JetBrains Mono specifically for numeric/data readouts (percentages,
-/// timers, stat values, equation values) — see [monoTextStyle]. This
-/// replaces v1's Space Grotesk-for-headings choice (the earlier Nexora-
-/// inspired direction); Inter now carries headings too, matching the new
-/// reference exactly rather than approximating it.
+/// The user's verdict on v2 (a near-literal match of the
+/// `kuhanimkuu/DesignStudyOSMobileApp` prototype): "dull and too plain",
+/// "looks generic", "home isn't inviting", "hard to find things". The
+/// requested direction is Duolingo's energy + Quizlet/Anki's card-first
+/// study modes + Khan Academy/Coursera's subject-and-progress structure,
+/// with something of its own on top. What changes from v2:
+///
+/// - **Colour with a job.** v2 was one blue on grey. v3 keeps Focus Blue as
+///   the brand, but gives every subject its own vivid colour
+///   ([subjectPalette]) and gives motivation its own colours — orange for
+///   streaks, green for success/correct, violet for XP-style stats — so a
+///   screen reads at a glance instead of as a list of grey rows.
+/// - **A rounded, friendly typeface.** Nunito (bundled, OFL — see
+///   `assets/fonts/Nunito-OFL.txt`) at heavy weights for headings, buttons,
+///   stats and nav; Inter stays for body copy, where its readability wins.
+/// - **Chunky, tactile controls.** The primary button ([GradientButton])
+///   is a solid face sitting on a darker "ledge" that presses down —
+///   Duolingo's signature affordance. Cards get bigger radii and thicker
+///   borders.
+///
+/// Every existing token name is kept (screens built against v2 still
+/// compile and pick the new look up through the theme); new ones are added.
 class StudyOsColors {
-  // Primary — Focus Blue (identical value in both themes in the reference)
+  // Primary — Focus Blue, slightly brighter than v2 for more energy.
   static const primary = Color(0xFF2F6FED);
-  static const primaryDark = Color(0xFF1D4FBF);
+  static const primaryDark = Color(0xFF1C4FC4);
 
-  // Per-theme "primary light" tint used for containers/badges/selected
-  // states — NOT the same value in both themes (light uses a near-white
-  // tint, dark uses a deep navy tint), per colors.ts.
-  static const primaryLightOnLight = Color(0xFFEEF4FF);
-  static const primaryLightOnDark = Color(0xFF162040);
+  /// The darker "ledge" under chunky primary-blue buttons and cards.
+  static const primaryLedge = Color(0xFF1A44A8);
 
-  // Accent — Growth Amber (streaks, mastery, review completion)
+  static const primaryLightOnLight = Color(0xFFE8F0FF);
+  static const primaryLightOnDark = Color(0xFF17244A);
+
+  // Accent — Growth Amber (kept for v2 call sites: mastery highlights).
   static const amber = Color(0xFFF5A623);
-  static const amberLightOnLight = Color(0xFFFFF8EB);
-  static const amberLightOnDark = Color(0xFF271B08);
+  static const amberLightOnLight = Color(0xFFFFF6E5);
+  static const amberLightOnDark = Color(0xFF2B1E08);
   static const amberFgOnLight = Color(0xFF7C4A00);
-  static const amberFgOnDark = Color(0xFF0C0E16);
+  static const amberFgOnDark = Color(0xFFFFD58A);
+
+  // Motivation colours (v3)
+  /// Streak flame.
+  static const streak = Color(0xFFFF8A00);
+  static const streakLedge = Color(0xFFD96F00);
+
+  /// Correct answers, completed goals, "mastered".
+  static const success = Color(0xFF22C55E);
+  static const successLedge = Color(0xFF15A34A);
+
+  /// XP-style stats (answers today, cards reviewed).
+  static const xp = Color(0xFF8B5CF6);
+  static const xpLedge = Color(0xFF6D3FD9);
 
   // Status
-  static const greenOnLight = Color(0xFF059669);
-  static const greenOnDark = Color(0xFF34D399);
-  static const redOnLight = Color(0xFFDC2626);
-  static const redOnDark = Color(0xFFF87171);
+  static const greenOnLight = Color(0xFF16A34A);
+  static const greenOnDark = Color(0xFF4ADE80);
+  static const redOnLight = Color(0xFFE5484D);
+  static const redOnDark = Color(0xFFFF7A7F);
 
-  // Light theme surfaces/text/borders
-  static const bgLight = Color(0xFFFAFBFD);
+  // Light theme surfaces/text/borders — a touch cooler and brighter than v2.
+  static const bgLight = Color(0xFFF5F7FC);
   static const surfaceLight = Color(0xFFFFFFFF);
-  static const subtleLight = Color(0xFFEEF1F8);
-  static const subtle2Light = Color(0xFFE4EAF8);
-  static const fgLight = Color(0xFF0F172A);
+  static const subtleLight = Color(0xFFEDF1FA);
+  static const subtle2Light = Color(0xFFE2E8F6);
+  static const fgLight = Color(0xFF111A33);
   static const fg2Light = Color(0xFF334155);
   static const fgMutedLight = Color(0xFF64748B);
-  static const borderLight = Color(0xFFE2E8F0);
+  static const borderLight = Color(0xFFE0E6F2);
 
   // Dark theme surfaces/text/borders
-  static const bgDark = Color(0xFF0C0E16);
-  static const surfaceDark = Color(0xFF141824);
-  static const subtleDark = Color(0xFF1C2132);
-  static const subtle2Dark = Color(0xFF232840);
-  static const fgDark = Color(0xFFF1F5F9);
+  static const bgDark = Color(0xFF0B0F1C);
+  static const surfaceDark = Color(0xFF141A2B);
+  static const subtleDark = Color(0xFF1C2338);
+  static const subtle2Dark = Color(0xFF252D47);
+  static const fgDark = Color(0xFFF2F5FB);
   static const fg2Dark = Color(0xFFCBD5E1);
-  static const fgMutedDark = Color(0xFF8892A4);
-  static const borderDark = Color(0xFF272D44);
+  static const fgMutedDark = Color(0xFF8D97AE);
+  static const borderDark = Color(0xFF283152);
 
-  /// The one gradient in the system — primary action buttons, the raised
-  /// center Chat tab, the app wordmark, streak/mastery highlights.
-  /// Everywhere else stays flat, theme-aware color — restraint is what
-  /// keeps a gradient feeling special instead of decorative.
+  /// Each subject (Knowledge Space) gets one of these, picked stably from
+  /// its name (see `core/widgets/project_accent.dart`) — the
+  /// Khan-Academy-style "every course has its colour" cue. Saturated
+  /// enough to carry white text, distinct enough to tell apart at a glance.
+  static const subjectPalette = [
+    Color(0xFF2F6FED), // blue
+    Color(0xFF8B5CF6), // violet
+    Color(0xFF16A34A), // green
+    Color(0xFFFF8A00), // orange
+    Color(0xFFE2457A), // pink
+    Color(0xFF0EA5A4), // teal
+    Color(0xFFDC2F2F), // red
+    Color(0xFF4F46E5), // indigo
+  ];
+
+  /// The brand gradient — the raised Chat button, the wordmark, the
+  /// splash. Buttons themselves are now solid-with-a-ledge ([GradientButton]).
   static const brandGradient = LinearGradient(
-    colors: [Color(0xFF3D7EFF), Color(0xFF1D4FBF)],
+    colors: [Color(0xFF4A86FF), Color(0xFF1C4FC4)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
-  /// The hero-panel gradient behind Splash/Auth/Profile-header content —
-  /// a soft near-white-to-primary-tint wash in light mode, a near-black
-  /// navy-to-primary-tint wash in dark mode (both lifted from the
-  /// reference's inline panel gradients).
+  /// Home's daily-goal hero card.
+  static const heroGradient = LinearGradient(
+    colors: [Color(0xFF3B7BFF), Color(0xFF7A4DF5)],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
   static LinearGradient heroPanel(Brightness brightness) {
     return brightness == Brightness.dark
-        ? const LinearGradient(
-            colors: [Color(0xFF162040), Color(0xFF0C0E16)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          )
-        : const LinearGradient(
-            colors: [Color(0xFFEEF4FF), Color(0xFFFAFBFD)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          );
+        ? const LinearGradient(colors: [Color(0xFF17244A), Color(0xFF0B0F1C)], begin: Alignment.topLeft, end: Alignment.bottomRight)
+        : const LinearGradient(colors: [Color(0xFFE8F0FF), Color(0xFFF5F7FC)], begin: Alignment.topLeft, end: Alignment.bottomRight);
   }
+
+  /// A darker shade of [color] for its chunky "ledge" (bottom edge).
+  static Color ledgeOf(Color color) => Color.lerp(color, Colors.black, 0.22)!;
 }
 
-/// Bundled locally as app assets (`pubspec.yaml`'s `fonts:` section, both
-/// single-file variable fonts straight from Google's own font repo) —
-/// deliberately NOT fetched at runtime via the `google_fonts` package.
-/// That package's default behavior downloads font files from Google's CDN
-/// the first time each is used, which was a real, measured contributor to
-/// "the app feels slow" independent of which API backend it's pointed at
-/// (found 2026-09-19 investigating a user report — see
-/// STUDY_OS_PROGRESS.md's matching dated entry). Bundling trades ~1MB of
-/// APK size for a startup that can never be network-bound on fonts.
-const _interFontFamily = 'Inter';
-const _monoFontFamily = 'JetBrains Mono';
+/// Bundled locally as app assets (`pubspec.yaml`'s `fonts:` section) —
+/// deliberately NOT fetched at runtime via the `google_fonts` package,
+/// whose first-use CDN download was a measured contributor to "the app
+/// feels slow" (2026-09-19).
+const _bodyFontFamily = 'Inter';
+const displayFontFamily = 'Nunito';
 
-/// JetBrains Mono, for numeric/data readouts only (percentages, timers,
-/// stat tiles, equation values) — never for prose or UI labels. Matches
-/// the reference's `font-mono` utility class usage exactly.
+/// Numbers and stats (percentages, counts, timers). v2 used JetBrains Mono
+/// here; v3 uses heavy Nunito with tabular figures — still aligned digits,
+/// but in the app's friendly voice instead of a code font. The name is kept
+/// so every v2 call site picks up the new style.
 TextStyle monoTextStyle(
   BuildContext context, {
   double? fontSize,
-  FontWeight fontWeight = FontWeight.w600,
+  FontWeight fontWeight = FontWeight.w800,
   Color? color,
 }) {
   return TextStyle(
-    fontFamily: _monoFontFamily,
+    fontFamily: displayFontFamily,
     fontSize: fontSize ?? 14,
     fontWeight: fontWeight,
+    fontFeatures: const [FontFeature.tabularFigures()],
     color: color ?? Theme.of(context).colorScheme.onSurface,
   );
 }
 
 TextTheme _textTheme(Color primaryText, Color secondaryText, Color tertiaryText) {
+  TextStyle display(double size, {FontWeight weight = FontWeight.w800, double spacing = -0.3}) => TextStyle(
+        fontFamily: displayFontFamily,
+        fontSize: size,
+        fontWeight: weight,
+        color: primaryText,
+        letterSpacing: spacing,
+        height: 1.15,
+      );
+  TextStyle body(double size, {FontWeight weight = FontWeight.w400, Color? color, double height = 1.5}) =>
+      TextStyle(fontFamily: _bodyFontFamily, fontSize: size, fontWeight: weight, color: color ?? primaryText, height: height);
+
   return TextTheme(
-    displayLarge: TextStyle(fontSize: 32, fontWeight: FontWeight.w700, color: primaryText, letterSpacing: -0.5, height: 1.2),
-    displayMedium: TextStyle(fontSize: 28, fontWeight: FontWeight.w700, color: primaryText, letterSpacing: -0.4, height: 1.2),
-    displaySmall: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: primaryText, letterSpacing: -0.3, height: 1.2),
-    headlineLarge: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: primaryText, letterSpacing: -0.3),
-    headlineMedium: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: primaryText, letterSpacing: -0.2),
-    headlineSmall: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: primaryText, letterSpacing: -0.1),
-    titleLarge: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: primaryText),
-    titleMedium: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: primaryText),
-    titleSmall: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: primaryText),
-    bodyLarge: TextStyle(fontSize: 16, fontWeight: FontWeight.w400, color: primaryText, height: 1.5),
-    bodyMedium: TextStyle(fontSize: 14, fontWeight: FontWeight.w400, color: primaryText, height: 1.5),
-    bodySmall: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, color: secondaryText, height: 1.5),
-    labelLarge: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: primaryText),
-    labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: secondaryText),
-    labelSmall: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: tertiaryText, letterSpacing: 0.4),
-  ).apply(fontFamily: _interFontFamily);
+    displayLarge: display(34),
+    displayMedium: display(30),
+    displaySmall: display(26),
+    headlineLarge: display(24),
+    headlineMedium: display(22),
+    headlineSmall: display(20, spacing: -0.2),
+    titleLarge: display(19, spacing: -0.1),
+    titleMedium: display(16, weight: FontWeight.w800, spacing: 0),
+    titleSmall: display(14, weight: FontWeight.w800, spacing: 0),
+    bodyLarge: body(16),
+    bodyMedium: body(14),
+    bodySmall: body(12.5, color: secondaryText),
+    labelLarge: const TextStyle(fontFamily: displayFontFamily, fontSize: 15, fontWeight: FontWeight.w800, letterSpacing: 0.2)
+        .copyWith(color: primaryText),
+    labelMedium: TextStyle(fontFamily: displayFontFamily, fontSize: 13, fontWeight: FontWeight.w700, color: secondaryText),
+    labelSmall: TextStyle(fontFamily: displayFontFamily, fontSize: 11.5, fontWeight: FontWeight.w700, color: tertiaryText, letterSpacing: 0.3),
+  );
 }
 
 ThemeData _buildTheme({
@@ -158,13 +201,15 @@ ThemeData _buildTheme({
     primary: StudyOsColors.primary,
     onPrimary: Colors.white,
     primaryContainer: primaryLight,
-    onPrimaryContainer: StudyOsColors.primary,
+    onPrimaryContainer: isDark ? const Color(0xFF9DBBFF) : StudyOsColors.primaryDark,
     secondary: StudyOsColors.amber,
-    onSecondary: isDark ? StudyOsColors.amberFgOnDark : Colors.white,
+    onSecondary: isDark ? const Color(0xFF1A1205) : Colors.white,
     secondaryContainer: amberLight,
     onSecondaryContainer: amberFg,
-    tertiary: StudyOsColors.amber,
+    tertiary: StudyOsColors.xp,
     onTertiary: Colors.white,
+    tertiaryContainer: isDark ? const Color(0xFF2A1F4D) : const Color(0xFFF1EBFF),
+    onTertiaryContainer: isDark ? const Color(0xFFCDB8FF) : const Color(0xFF5B2FC4),
     error: red,
     onError: Colors.white,
     errorContainer: red.withValues(alpha: 0.12),
@@ -173,76 +218,88 @@ ThemeData _buildTheme({
     onSurface: fg,
     onSurfaceVariant: fgMuted,
     surfaceContainerHighest: subtle,
+    surfaceContainerHigh: subtle2,
     outline: border,
     outlineVariant: border,
     shadow: Colors.black,
   );
 
+  const buttonText = TextStyle(fontFamily: displayFontFamily, fontSize: 16, fontWeight: FontWeight.w800, letterSpacing: 0.2);
+  final buttonShape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(16));
+  const buttonPadding = EdgeInsets.symmetric(horizontal: 22, vertical: 15);
+
   return ThemeData(
     useMaterial3: true,
     brightness: brightness,
+    fontFamily: _bodyFontFamily,
     scaffoldBackgroundColor: bg,
     colorScheme: colorScheme,
     textTheme: _textTheme(fg, fg2, fgMuted),
     appBarTheme: AppBarTheme(
       elevation: 0,
+      scrolledUnderElevation: 0,
       centerTitle: false,
       backgroundColor: bg,
       surfaceTintColor: Colors.transparent,
       iconTheme: IconThemeData(color: fg),
-      titleTextStyle: TextStyle(fontFamily: _interFontFamily, color: fg, fontSize: 18, fontWeight: FontWeight.w700, letterSpacing: -0.2),
+      titleTextStyle: TextStyle(fontFamily: displayFontFamily, color: fg, fontSize: 21, fontWeight: FontWeight.w800, letterSpacing: -0.2),
     ),
     cardTheme: CardThemeData(
       elevation: 0,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: border)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: border, width: 1.5)),
       color: surface,
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+    ),
+    listTileTheme: ListTileThemeData(
+      titleTextStyle: TextStyle(fontFamily: displayFontFamily, fontSize: 15.5, fontWeight: FontWeight.w700, color: fg),
+      subtitleTextStyle: TextStyle(fontFamily: _bodyFontFamily, fontSize: 12.5, color: fgMuted, height: 1.4),
+      iconColor: fgMuted,
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
       fillColor: subtle,
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: border)),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: border)),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: StudyOsColors.primary, width: 1.5)),
-      errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: red)),
-      focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide(color: red, width: 1.5)),
-      contentPadding: const EdgeInsets.fromLTRB(14, 16, 14, 12),
+      border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: border, width: 1.5)),
+      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: border, width: 1.5)),
+      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: StudyOsColors.primary, width: 2)),
+      errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: red, width: 1.5)),
+      focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: red, width: 2)),
+      contentPadding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
       hintStyle: TextStyle(color: fgMuted, fontSize: 14),
-      labelStyle: TextStyle(color: fg2, fontSize: 13),
+      labelStyle: TextStyle(color: fg2, fontSize: 13.5, fontWeight: FontWeight.w500),
     ),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: StudyOsColors.primary,
         foregroundColor: Colors.white,
         elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        padding: buttonPadding,
+        shape: buttonShape,
+        textStyle: buttonText,
       ),
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: StudyOsColors.primary,
         foregroundColor: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        padding: buttonPadding,
+        shape: buttonShape,
+        textStyle: buttonText,
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: fg,
-        side: BorderSide(color: border, width: 1.5),
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        side: BorderSide(color: border, width: 2),
+        padding: buttonPadding,
+        shape: buttonShape,
+        textStyle: buttonText,
       ),
     ),
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
-        foregroundColor: StudyOsColors.primary,
+        foregroundColor: isDark ? const Color(0xFF7FA6FF) : StudyOsColors.primary,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9999)),
-        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(fontFamily: displayFontFamily, fontSize: 14, fontWeight: FontWeight.w800),
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(
@@ -253,8 +310,9 @@ ThemeData _buildTheme({
       labelTextStyle: WidgetStateProperty.resolveWith((states) {
         final selected = states.contains(WidgetState.selected);
         return TextStyle(
-          fontSize: 10,
-          fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
+          fontFamily: displayFontFamily,
+          fontSize: 11,
+          fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
           color: selected ? StudyOsColors.primary : fgMuted,
         );
       }),
@@ -263,20 +321,53 @@ ThemeData _buildTheme({
         return IconThemeData(color: selected ? StudyOsColors.primary : fgMuted);
       }),
     ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+    tabBarTheme: TabBarThemeData(
+      labelStyle: const TextStyle(fontFamily: displayFontFamily, fontSize: 14, fontWeight: FontWeight.w800),
+      unselectedLabelStyle: const TextStyle(fontFamily: displayFontFamily, fontSize: 14, fontWeight: FontWeight.w700),
+      labelColor: isDark ? const Color(0xFF7FA6FF) : StudyOsColors.primary,
+      unselectedLabelColor: fgMuted,
+      indicatorColor: StudyOsColors.primary,
+      dividerColor: border,
+    ),
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
       backgroundColor: StudyOsColors.primary,
       foregroundColor: Colors.white,
-      elevation: 4,
-      highlightElevation: 8,
+      elevation: 3,
+      highlightElevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      extendedTextStyle: buttonText,
     ),
-    dividerTheme: DividerThemeData(color: border, thickness: 1, space: 1),
+    dividerTheme: DividerThemeData(color: border, thickness: 1.5, space: 1.5),
     chipTheme: ChipThemeData(
       backgroundColor: subtle,
-      selectedColor: StudyOsColors.primary.withValues(alpha: isDark ? 0.22 : 0.1),
-      labelStyle: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg),
-      side: BorderSide(color: border),
+      selectedColor: StudyOsColors.primary.withValues(alpha: isDark ? 0.28 : 0.12),
+      labelStyle: TextStyle(fontFamily: displayFontFamily, fontSize: 13, fontWeight: FontWeight.w700, color: fg),
+      side: BorderSide(color: border, width: 1.5),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9999)),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    ),
+    progressIndicatorTheme: ProgressIndicatorThemeData(
+      color: StudyOsColors.primary,
+      linearTrackColor: subtle2,
+      circularTrackColor: subtle2,
+      linearMinHeight: 8,
+      borderRadius: BorderRadius.circular(99),
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      contentTextStyle: const TextStyle(fontFamily: _bodyFontFamily, fontSize: 14, fontWeight: FontWeight.w500, color: Colors.white),
+    ),
+    dialogTheme: DialogThemeData(
+      backgroundColor: surface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      titleTextStyle: TextStyle(fontFamily: displayFontFamily, fontSize: 20, fontWeight: FontWeight.w800, color: fg),
+    ),
+    bottomSheetTheme: BottomSheetThemeData(
+      backgroundColor: surface,
+      surfaceTintColor: Colors.transparent,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      showDragHandle: true,
     ),
   );
 }
