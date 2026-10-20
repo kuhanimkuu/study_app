@@ -101,6 +101,11 @@ printf '[sshd]\nenabled = true\nport = %s\n' "$(echo "$SSH_PORTS" | xargs | tr '
 systemctl enable fail2ban >/dev/null 2>&1 || true
 systemctl restart fail2ban >/dev/null 2>&1 || warn "fail2ban did not start - not critical, continuing."
 systemctl enable --now unattended-upgrades >/dev/null 2>&1 || true
+# The app's log (journald) records visitors' IP addresses; keep it at most 30
+# days so the Privacy Policy can say so (nginx's own logs rotate after 14).
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nMaxRetentionSec=30day\n' > /etc/systemd/journald.conf.d/study-os.conf
+systemctl restart systemd-journald
 
 # ---------------------------------------------------------------------------
 step "4/11  App user and code ($APP_DIR)"
@@ -200,8 +205,27 @@ systemctl enable "$SERVICE" >/dev/null
 systemctl restart "$SERVICE"
 
 # ---------------------------------------------------------------------------
-step "9/11  nginx (public entrance, upload limit, long AI timeouts)"
+step "9/11  nginx (website, API, upload limit, long AI timeouts)"
 SERVER_NAME="${DOMAIN:-_}"
+# The public website (website/, React + Vite) is built on a dev machine and
+# uploaded here by website/deploy.sh, along with the APK in download/. A
+# placeholder keeps "/" from erroring before the first upload.
+SITE_DIR=/var/www/studyos
+mkdir -p "$SITE_DIR/download"
+[[ -f "$SITE_DIR/index.html" ]] || echo '<!doctype html><title>Study OS</title><p>Study OS — website coming soon.</p>' > "$SITE_DIR/index.html"
+# Security headers for every response. A snippet, because nginx drops the
+# server-level add_header lines in any location that sets its own headers —
+# so each such location includes it again. The website runs no inline or
+# third-party scripts, which is what lets script-src be 'self' only.
+mkdir -p /etc/nginx/snippets
+cat > /etc/nginx/snippets/study-os-headers.conf <<'EOF'
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+add_header Strict-Transport-Security "max-age=31536000" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+EOF
 cat > /etc/nginx/sites-available/$SERVICE <<EOF
 server {
     listen 80;
@@ -210,7 +234,35 @@ server {
     # Uploads are capped at 25 MB by the app; leave room for form overhead.
     client_max_body_size 30m;
 
+    gzip on;
+    gzip_types text/css application/javascript image/svg+xml application/json application/xml text/plain;
+
+    include snippets/study-os-headers.conf;
+    server_tokens off;
+
+    # The website: everything that isn't the app's API. Each page is a
+    # pre-rendered folder (/features/ -> features/index.html).
+    root $SITE_DIR;
+    index index.html;
+    error_page 404 /404.html;
     location / {
+        try_files \$uri \$uri/ =404;
+    }
+    # Vite's built files have content hashes in their names — cache for good.
+    location /assets/ {
+        include snippets/study-os-headers.conf;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    # The APK only — /download/ itself is the website's Download page.
+    location ~* \.apk\$ {
+        include snippets/study-os-headers.conf;
+        # so Android recognises the file as an app to install
+        types { application/vnd.android.package-archive apk; }
+        add_header Content-Disposition "attachment";
+    }
+
+    # The app (FastAPI): its API and the files chats generate.
+    location ~ ^/(api|generated)/ {
         proxy_pass http://127.0.0.1:$APP_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;

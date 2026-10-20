@@ -1003,3 +1003,119 @@ Studio PDFs and real users' project indexes are never touched. On this dev machi
 - Password login over SSH is still on (guide step 8 explains switching to keys only).
 - Render is still running the old code; shut it down once the new server is confirmed on the phone.
 - Pip pins only direct dependencies, so other indirect packages differ from the dev PC (protobuf 5→7, filelock 3→4, and others). Everything works today, but a lock file generated from the verified server (`pip freeze`) would make future installs reproducible.
+
+### 2026-10-19 (later) — UI v3, slices 1-2: playful study-app redesign (theme, Sage mascot, Home, nav, Chat) + first-run tour
+
+The user said the v2 UI was "dull and too plain", "looks generic", Home "isn't inviting", things are "hard to find" and the chat "feels plain". Asked for references, they picked **Duolingo + Quizlet/Anki + Khan Academy/Coursera + "something spontaneous"**, and said "just build it". After slice 1: "i like the current ui". They then asked for the chat in the same style with "the icon thingie" (Sage), and for new users to be shown what each feature does.
+
+**Found: bold text never rendered.** `Inter.ttf` was a *variable* font, and Flutter doesn't pick a weight out of one from `fontWeight` alone. Every heading and button the app marked bold drew at the file's default weight: 400 for Inter, and the newly added Nunito defaults to an extra-light 200. Seen in a rendered preview. Fixed by cutting static per-weight files with fontTools' instancer (Inter 400/500/600/700 at opsz 14; Nunito 400/600/700/800/900), each registered with `weight:` in pubspec. JetBrains Mono was dropped (unused); OFL licences added.
+
+**Shipped:**
+- **Theme v3** (`app/theme.dart`, every v2 token name kept):
+  - Nunito heavy for headings, buttons, stats and nav; Inter for body.
+  - Motivation colours: streak orange, success green, XP violet. An 8-colour `subjectPalette`.
+  - Bigger radii, 1.5-2px borders; dialog, sheet, snackbar, tab and progress themes.
+- **Chunky buttons:** `GradientButton` is now a solid face on a darker "ledge" that presses down, Duolingo-style. Same API, plus `color` and `expand`.
+- **Subjects:** `project_accent.dart` gives a stable colour per subject (hashed from code units, since `String.hashCode` isn't guaranteed stable across releases) plus `subjectIcon(name)`, matched on word starts so "art" doesn't fire on "particle".
+- **Sage** (`core/widgets/sage_mascot.dart`): an original code-drawn mascot (blue blob, graduation cap with a light rim so it reads on dark backgrounds) in happy, cheer and thinking moods.
+- **Home rebuilt; every number is still real:**
+  - streak and cards-due chips
+  - a daily-goal hero (questions answered today out of 10, from attempts since local midnight) with Sage
+  - a Continue card with a green Start button
+  - subject tiles with mastery bars (average of practised concepts) and a New subject tile
+  - a flashcard deck card (shows "20+" at the request cap)
+  - round study-tool buttons
+  - "Needs a little love"
+  - a three-step welcome for new accounts
+- **Nav:** Home · Subjects · Sage · Practice · Plan. Projects → Subjects and Learn → Practice in labels and titles only (internal names unchanged). Each tab has its own colour and the selected one sits in a pill; the centre button is Sage's face.
+- **Chat:**
+  - header: Sage's avatar with "your study buddy", switching to "thinking…" while working
+  - "Save chat as a subject" and the server address moved to a ⋮ menu
+  - empty state: "Hi, I'm Sage!" with four colourful starter cards
+  - Sage's replies: his avatar beside clean white cards
+  - user bubbles: solid blue with a ledge
+  - waiting: Sage thinking, with bouncing typing dots
+  - input bar: pill field with the mic inside, chunky round send button
+- **First-run tour** (`app/app_tour.dart`): the first time AppShell appears on a device (right after signup and the profile questions), the screen dims and a spotlight walks through Home, Subjects, the Sage chat button, Practice, Plan and the Profile button, with Sage explaining each in a speech card (Next, Back, Skip tour, "Let's go!"). Stored per device. Profile → "Take the app tour" replays it. If a target isn't on screen, the card shows centred after a few frames rather than re-checking every frame.
+
+**Verified:**
+- `flutter analyze` 0 issues. `flutter test` **38/38**, including new `app_tour_test.dart`: step order, Back, Skip, the last step, a missing target not looping, and the seen flag.
+- Every screen above was rendered to PNG with the real fonts (light, dark, new account, tour spotlight on Subjects and Profile) and checked by eye. The preview harness is kept outside the repo.
+- Release APK installed on the phone. **Not yet looked at on the device itself** (the phone was in use), notably the real bottom nav, which couldn't be rendered in tests because ChatScreen needs the on-device DB.
+
+**Next slices:** Practice/flashcards/quiz screens and the Subject workspace. They already pick up v3 fonts, colours and buttons, but not the new layouts.
+**Found, not fixed:** `GET /api/projects` parses every subject's full index JSON on the event loop (`_chunk_count`) on every Home load. Fine now, slower as material grows.
+
+### 2026-10-20 — DONE: new public website at https://studytutor.duckdns.org (React + Vite), with APK download
+
+User asked for a website built with React + Vite, after checking whether one already existed. It did: a September site in `website/` (React 18 / Vite 5). It still built, but it advertised a **free built-in local model** (the opposite of today's BYOK), had the old v2 look and no way to get the app, and wasn't hosted. Offered a refresh; the user chose **rebuild from scratch**, **same server, main address**, and a **Download APK button**.
+
+**Built** (`website/`, React 19.3 + Vite 8.3 + TypeScript 5.9; TS 7 skipped as too new):
+- One page: hero, highlights, four feature rows, how it works, AI/BYOK, download with install steps, FAQ.
+- Design v3 shared with the app: tokens, chunky ledge buttons, light/dark with a remembered toggle.
+- Fonts self-hosted as Latin-subset WOFF2 cut from the app's own files: 108 KB total, no Google Fonts requests.
+- Sage ported to SVG (`Sage.tsx`, also the favicon).
+- **Screenshots are real app renders:** Flutter golden-file harness, real fonts, demo student "Amani", WebP 49-80 KB each.
+- **Every claim checked against code:** 10 `GRADABLE_TYPES`; FSRS with Again/Hard/Good/Easy; exam mode; account deletion; Android 7.0+ (minSdk 24); BYOK key encrypted on device and never persisted server-side; markup only on the hosted tier; goals with `target_date` ("exam dates" was dropped, here and in the app's tour text); chat media kept ~2 weeks.
+- npm 10 crashed resolving `@vitejs/plugin-react`'s optional peers ("reading 'edgesOut'"), so `.npmrc` sets `legacy-peer-deps`. 0 vulnerabilities.
+
+**Hosting:**
+- `setup_server.sh` step 9 now has nginx serve `/var/www/studyos` at `/` (gzip on; hashed `/assets/` immutable) and proxy `^/(api|generated)/` to the app. `/download/` serves the APK as `application/vnd.android.package-archive` with `Content-Disposition: attachment`.
+- A placeholder page covers `/` before the first upload.
+- Re-ran the script on the server: exit 0, HTTPS reinstalled, SSH 1257 kept.
+- `website/deploy.sh` builds locally (the server has no Node), tars over SSH, swaps the site in atomically, keeps `download/` across site deploys, and optionally uploads a new APK.
+
+**Verified live:**
+- `/` 200 with the right title; JS gzipped and cached immutable; fonts and screenshots 200.
+- APK: 200, 62,217,746 bytes, sha256 identical to the build, Android MIME type.
+- `/api/health` 200; `/generated/` still reaches the app; HTTP→HTTPS 301; unknown paths 404.
+- Playwright on the live URL: 0 failed requests and 0 console errors.
+- Local captures: desktop light/dark, and true 390px phone width with **0px horizontal overflow** in both themes. Headless Chrome's minimum window width (~500px) made its own "mobile" screenshots misleading, so Playwright was used for those.
+- Fixed while verifying: the phone notch hid the app's stat chips (added a status-bar strip); Sage overlapped the download steps; highlight cards were cramped at 390px; the hero Sage covered the screenshot on narrow screens.
+
+**Open:**
+- The APK is signed with the debug key, which is fine for sideloading. A Play Store release needs a release keystore.
+- The site has no standalone privacy policy or terms page. The app has them in-app; a store listing will need a public URL.
+- The phone still runs the 2026-10-19 build (differs only in the tour's Plan wording).
+
+### 2026-10-20 (later) — DONE: production multi-page website; legal text rewritten; Anthropic reply bug fixed
+
+User asked to make the website "a multi page production level site".
+
+**Pages:** Home, Features, AI & keys, Download, FAQ, Privacy Policy, Terms of Service, and a 404 page.
+- **Home:** hero, highlights, teasers linking to Features, how it works, AI teaser.
+- **Features:** five anchored sections, every bullet traced to code, with AI-dependent items marked "AI". Includes the full 10 question types, the eight Studio PDF types, photo OCR kinds, maths, Sage personalisation and memory.
+- **AI & keys:** what a key is, cost, safety; per-provider steps using the same key pages the app links to, with pricing links but no prices; how to add a key in the app; a key-hygiene note; the "in development" card.
+- **Download:** version, size and requirements; install steps; updating; troubleshooting (allow-source, Play Protect, "App not installed").
+- **FAQ:** grouped by topic.
+
+**Architecture:**
+- Static pre-rendering (SSG): `scripts/prerender.mjs` runs a Vite client build, then an SSR build, then `renderToString` for each route into `dist/<path>/index.html`, plus `404.html`, `sitemap.xml` and `robots.txt`. `entry-client.tsx` hydrates.
+- Each page has its own title, description, canonical link, OG/Twitter tags and a 1200×630 `og.png` (rendered with Playwright from real fonts, Sage and a real screenshot). Home has `MobileApplication` JSON-LD; the 404 page is `noindex`.
+- Header with an active page and a mobile menu; four-column footer; skip link; anchor offsets.
+- `useTheme` renders `null` on the server and the first client render, so they match, then reads the real theme. `public/theme-init.js` applies a saved choice before first paint. It isn't inline, so the CSP can be `script-src 'self'`.
+
+**Server** (`setup_server.sh`):
+- `error_page 404 /404.html`.
+- `snippets/study-os-headers.conf` (CSP, HSTS, X-Frame-Options DENY, nosniff, Referrer-Policy, Permissions-Policy), included in the server block and in every location that sets its own headers, since nginx drops inherited `add_header` there.
+- `server_tokens off`; gzip extended to XML and text.
+- journald `MaxRetentionSec=30day`, so the policy's log-retention promise is true. Applied live too.
+
+**Legal text rewritten**, the same in the app (`legal_screen.dart`) and on the site (`website/src/content/legal.ts`), dated 20 October 2026. The old text still said "free to use with a built-in local model" and predated on-device chat history, chat-file cleanup (1 day / ~14 days), nightly backups (14 days, which bounds post-deletion residue), server log retention, and Contabo hosting. Contact: davidmurunga27@gmail.com (user's choice). Verified first that both chats keep their history on the device (LocalDb).
+
+**Found and fixed while building:**
+- **Anthropic BYOK replies crashed.** `AnthropicBackend.generate` returned `response.content[0].text`, but current Claude models (the default `claude-sonnet-5` included) think by default, so the first block can be `thinking`, which has no `.text`. It now joins the `text` blocks. A regression test fails without the fix (AttributeError) and passes with it.
+- **Live check: `/download/` served the HTML page as a file download.** The `location /download/` attachment rule also covered the Download page. Narrowed to `location ~* \.apk$`.
+- **`deploy.sh` would have overwritten the freshly built Download page with the previous one.** It now carries over only `*.apk` from the old `download/` folder.
+- Removed an unprovable cost claim ("usually a small amount") and the "exam dates" wording (goals have `target_date`).
+
+**Verified:**
+- `tsc` clean; prerender writes 7 pages + 404 + sitemap + robots.
+- Playwright on the **live** site, all 7 pages at 1280px and 390px: 0 console errors (incl. hydration), 0 failed requests, 0px horizontal overflow, under the strict CSP. The mobile menu opens and marks the current page; the theme toggle persists across pages.
+- Headers present on pages and assets. Unknown path → 404 with the custom page. `sitemap.xml`/`robots.txt` served. The APK kept across deploys (62,217,746 bytes, Android MIME, attachment). `/api/health` 200.
+- pytest 179/179. `flutter analyze` clean.
+
+**Open:**
+- The Anthropic fix and the app's new legal text aren't live yet: they need a commit, push and `study-os-update` (server), and a new APK.
+- The Anthropic thinking-vs-small-`max_tokens` risk is untested without a key: chat caps are 70-220 tokens, and thinking may consume them. Test with a real key; consider `claude-sonnet-5-5` (current, same price) as the default.
+- Not yet submitted to any search engine (Google Search Console wants the sitemap).
