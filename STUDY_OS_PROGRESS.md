@@ -1136,3 +1136,13 @@ The user created a HelioHost account (`studyos.helioho.st`, Plesk) and chose a z
 - Contabo: website paths 301 to HelioHost; `/api/health` 200; the APK is served as an Android package; `certbot renew --dry-run` succeeds with the redirect in place.
 
 **Known limit:** HelioHost's nginx serves `/assets/*` directly, bypassing `.htaccess`, so hashed JS/CSS lack the long-cache header (a small speed cost; pages keep every security header).
+
+### 2026-10-20 (later) — Releases 1.0.1 and 1.0.2: Sage app icon, "Study OS" name, Sage in subject chats
+
+- **1.0.1:** the new in-app Terms/Privacy text (plus the server-side Anthropic fix, already live). Published to `/download/study-os.apk` and installed on the phone.
+- **1.0.2:**
+  - **Launcher icon:** Sage on #E8F0FF, rendered from `website/public/sage.svg` at 1024px. Android 8+ gets an adaptive icon (`mipmap-anydpi-v26`, background colour plus a 108dp foreground with Sage inside the 66dp safe zone); older launchers get legacy square and round PNGs at all five densities. Checked under circle, squircle and rounded-square masks: nothing cropped.
+  - **App name:** the name under the icon was the project name `study_os_frontend` and is now **Study OS**.
+  - **Subject chat:** the welcome now matches the main chat — Sage greets you by the subject's name (in its colour), with colourful starter cards. `StarterCard`/`StarterCardGrid` are now shared widgets. Bubbles, the thinking indicator and the input bar were already shared.
+  - **Verified:** `aapt` reads label "Study OS" and the adaptive icon from the APK. analyze clean; 38/38 tests. Installed on the phone (versionName 1.0.2). The APK is served byte-identical. The site zip is built with version 1.0.2.
+- **Pending:** the user re-uploads `studyos-website.zip` to HelioHost so the site shows 1.0.2.
