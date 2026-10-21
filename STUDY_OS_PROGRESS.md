@@ -1338,3 +1338,9 @@ The user asked for full text features (copy, paste, edit, emoji, reactions) that
 - App: `AppVersionText` (`core/widgets/app_version_text.dart`, read from the installed package via package_info_plus) shows "Study OS 1.0.10 (build 11)" at the bottom of Profile and the login screen. The licences page shows it too.
 - Website: the download buttons say "v1.0.10" (hero) and "v1.0.10 · 62 MB" (call-to-action band), in addition to the footer and the Download page details that already had it. `site.appVersion` is the one place to bump.
 - Tests: 85/85 Flutter (new `app_version_test.dart`).
+
+### 2026-10-21 — Firefox for Android crashed downloading the APK
+
+- The server sent `Content-Disposition: attachment` with no file name, and the site's buttons used `download` on a link to another domain (site on helioho.st, APK on duckdns.org), which browsers ignore anyway.
+- Now `attachment; filename=study-os.apk` (`setup_server.sh`; `ops/apk-download-name.sh` applied it live, with a backup of the site file) and plain links. The Download page's "Trouble installing?" suggests Chrome or Samsung Internet if a browser still closes.
+- Not yet confirmed on the user's phone. Ops scripts must have LF line endings (a CRLF one failed with `set: pipefail: invalid option name`).
