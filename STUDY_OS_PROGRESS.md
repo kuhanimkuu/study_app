@@ -1201,3 +1201,27 @@ The user asked to implement the suggested features. On inspection, two already e
   - APK 1.0.5 (versionCode 6) served byte-identical and installed on the phone.
   - Site zip rebuilt with 1.0.5 and 62 MB.
 - **Not done:** Google Play Store. It needs the user's developer account, and the release build is still signed with the debug key; a real upload key is needed first.
+
+### 2026-10-21 — Release 1.0.6: real users get in during a login/signup bot flood
+
+The user asked whether 100 bots hitting login/signup would make 2 real users wait in a queue. They would have.
+
+- **Measured locally first** (scratchpad flood script; the local server runs one worker, like production):
+
+  | 100 bots | Real login | Health check |
+  |---|---|---|
+  | One address | ~4 s | ~3.8 s |
+  | Many addresses | 16–21 s | ~14 s |
+
+  bcrypt (~0.3 s by design) ran inline on the single uvicorn worker's event loop, so every hash froze the whole app.
+- **Fixes** (`server/core/security.py`):
+  - bcrypt moved to its own threads in separate **login** (2 threads, up to 12 waiting) and **signup** (1 thread, up to 6 waiting) lanes. A full lane answers 503 with Retry-After at once instead of queueing, so the worst wait is about 2 s.
+  - One password check at a time **per account** (503 while one is running), so bots guessing one account's password hold a single slot.
+  - App: `ApiClient` retries a 503 from login/signup after 1, 2 and 3 s before showing it; 401 and the per-address 429 are never retried. `ApiClient` now takes an optional `httpClient` for tests.
+  - Per-address app limits loosened (login 60 per 5 minutes, signup 30 per hour; were 10 and 5). A whole class on one school Wi-Fi shares an address and would have been blocked, and the lanes now do the protecting.
+  - nginx `location ^~ /api/auth/` with `limit_req` (60 per minute, burst 60) returning a JSON 429. It is in `setup_server.sh` for new servers; `ops/nginx-auth-limit.sh` applied it to the live server (idempotent, backs up the site file).
+- **After, locally:** both real users in within 0.3–1.7 s and health 0.25 s. With 300 bots from many addresses: 2–3 s and 1.8 s.
+- **Live check:** 150 wrong-password logins on one account, fired from the server itself through the public URL, while this PC logged in to that same account. The real user got 200 in 1.0 s on the first try; health was 0.58 s. Bots: 90 refused by nginx, 57 got "busy", 3 were actually checked. The test account was deleted afterwards.
+- **Tests:** `server/tests/test_auth_under_load.py` (hashing doesn't block other requests; full lane answers 503 at once; per-account fairness; a signup flood doesn't block logins; the account slot is released). 198/198 backend tests; Flutter `auth_busy_retry_test.dart`, 59/59.
+- **Known limit:** a large botnet with a fresh address per request still gets 503s for **new signups** during the flood. Existing users' logins are protected, and new signups get "busy, try again" rather than a long wait. Telling bots from people beyond that needs a CAPTCHA or proof-of-work, which isn't warranted at this size.
+- **Pending:** APK 1.0.6 is published (byte-identical) and the site zip is rebuilt, but the phone wasn't connected, so 1.0.6 is not yet installed there.
