@@ -243,3 +243,16 @@ async def test_future_or_ancient_review_times_fall_back_to_now(client, student):
         assert resp.status_code == 200, resp.text
         last_review = datetime.datetime.fromisoformat(resp.json()["last_review"])
         assert abs((last_review - now).total_seconds()) < 60, when
+
+
+async def test_a_resent_offline_review_is_not_counted_twice(client, student):
+    import datetime
+
+    card_id = await _new_card(client, student)
+    when = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)).isoformat()
+    review = {"rating": "good", "reviewed_at": when}
+    first = await client.post(f"/api/v1/flashcards/{card_id}/review", json=review, headers=student["headers"])
+    # The app's answer was lost, so its offline queue sends the same rating again.
+    again = await client.post(f"/api/v1/flashcards/{card_id}/review", json=review, headers=student["headers"])
+    assert first.status_code == again.status_code == 200
+    assert again.json() == first.json()

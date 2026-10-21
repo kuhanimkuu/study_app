@@ -1225,3 +1225,52 @@ The user asked whether 100 bots hitting login/signup would make 2 real users wai
 - **Tests:** `server/tests/test_auth_under_load.py` (hashing doesn't block other requests; full lane answers 503 at once; per-account fairness; a signup flood doesn't block logins; the account slot is released). 198/198 backend tests; Flutter `auth_busy_retry_test.dart`, 59/59.
 - **Known limit:** a large botnet with a fresh address per request still gets 503s for **new signups** during the flood. Existing users' logins are protected, and new signups get "busy, try again" rather than a long wait. Telling bots from people beyond that needs a CAPTCHA or proof-of-work, which isn't warranted at this size.
 - **Pending:** APK 1.0.6 is published (byte-identical) and the site zip is rebuilt, but the phone wasn't connected, so 1.0.6 is not yet installed there.
+
+### 2026-10-21 — Release 1.0.7: audit fixes, and the project chat as a full tutor
+
+The user had me check the 245-item engineering checklist in `me.md` against the app (report: https://claude.ai/artifact/VYxFq7MbyttgAdgms1ULEd), then asked for every necessary fix. Mid-way they also asked for the project chat to work like the general chat.
+
+- **SSRF (#5):** `features/input_pipeline/web_input` now allows only http/https on ports 80/443. It resolves the host once and refuses any address that isn't public (loopback, private, link-local/metadata, CGNAT...), connects to that checked address (no second DNS lookup, so no rebinding) with TLS still verified against the host name, re-checks each redirect by hand, and caps the body at 5 MB.
+- **Cross-user pending questions (#6):** the moderator's `_pending` is keyed by (user_id, session_id). The project screen's `project_<slug>` session id was shared by every student with a same-named project. Entries also expire after 30 minutes (cap 2,000), fixing the slow memory growth (#166).
+- **Accounts (#24, #31, #32):**
+  - `users.token_version` (migration `a1d5f3c97e20`): tokens carry it and stop working once it changes.
+  - `POST /api/account/password` (changes the password, or sets a first one for Google-only accounts) and `POST /api/account/sign-out-everywhere`. Both return a fresh token for this device.
+  - Login with an unknown email now runs a dummy bcrypt check, so timing no longer reveals which emails exist. Signup still answers 409 for a taken email; hiding that needs email verification.
+  - The app signs out when the server says this device was signed out.
+- **bcrypt 5 crash:** a password over 72 bytes raised and returned a 500 on signup and login. Now 400 at signup and password change, 401 at login.
+- **Input caps (#12):** profile fields capped to their column sizes (422 instead of a 500); passwords capped at 1024 characters.
+- **Wallet race (#53, #90):** wallet balance changes and top-up confirmation take row locks (`with_for_update`). A test with two overlapping charges loses one on the old code (610 left of 1000) and keeps both on the new (220).
+- **Offline review replays (#109):** a review dated at or before the card's last review returns the card unchanged instead of counting again.
+- **AI meter (#217):** "today" uses the phone's day (the app sends `tz_offset_minutes`); the month stays UTC, matching the spending limit.
+- **Data export (#232):** `GET /api/account/export` (`identity/export.py`) walks every table by foreign key, so new tables are included automatically. It leaves out secrets, file bytes and the search index. In the app: Profile → Download my data, saved with `FilePicker.saveFile`. The privacy policy (app and site) mentions it; dated 21 October.
+- **Prompt injection (#244):** student answers to graded questions are fenced in `<student_answer>` tags (tag look-alikes stripped), and the grader is told to ignore instructions in them. Material in generation prompts and RAG sources in chat prompts are fenced too.
+- **Dependencies (#38):** pip-audit found known vulnerabilities, fixed by upgrading PyJWT 2.15.1, cryptography 50.0.2, python-dotenv 1.2.4, requests 2.34.2, lxml 6.1.3 and Pillow 12.3.0.
+  - 8 Pillow CVEs are fixed only in 13.0, which fastembed doesn't allow yet. They are all in the TIFF/GIF/EPS/PPM decoders.
+  - Uploads must now match their type's file signature (#33), so a TIFF or EPS renamed `.png` never reaches Pillow.
+  - The website's npm audit is clean.
+- **CI (#20, #202, #198):** `.github/workflows/ci.yml` runs on every push:
+  - pytest against Postgres 16 on Python 3.12, as on the server;
+  - `flutter test`;
+  - pip-audit;
+  - gitleaks.
+- **Ops (#17, #141):**
+  - Nightly backups no longer include `.env`; keep a copy in a password manager.
+  - New `GET /api/health/ready` also checks Postgres, and `study-os-update` waits on it.
+  - `ops/server-scripts-1.0.7.sh` applies both changes to the live server.
+- **Smaller:**
+  - Busy-retry delays get up to 50% jitter (#94).
+  - The bundled Inter and Nunito OFL licences ship and show under Profile → Open-source licences (#239).
+- **Project chat as a full tutor (user request):**
+  - Before, it answered only from the uploaded notes; greetings, other topics and empty projects got "No relevant material found".
+  - Now, if the top passage scores ≥ 0.4 (on-topic questions measured 0.47–0.80; greetings and other subjects ≤ 0.11), or the question refers to the notes ("summarise", "my notes", "key terms", "exam questions"...), it answers from the passages with citations. It may add general knowledge, said plainly.
+  - Otherwise the question goes through the general chat's routing (greetings, explanations, diagrams, flashcards, math, web search), with "This isn't covered in your X notes" when the project has material.
+  - Explanations end with a new `links` block ("Learn more"): Wikipedia, Khan Academy and YouTube search pages for the topic, plus live web results when the student asks for links or sources. The model is told not to write URLs, so links can't 404 from being made up.
+  - App: `LinksBlockView`, tappable web-result sources (http/https only), and the `https` VIEW intent query.
+- **Tests:** 228/228 backend (new: `test_account_security.py`, `test_project_chat.py`, `test_prompt_fencing.py`, plus wallet race, meter day and review replay tests). 68/68 Flutter (new: `account_security_test.dart`, `links_block_test.dart`).
+- **Not done (needs the user or a decision):**
+  - Forgot-password needs an email service.
+  - MFA.
+  - Uptime alerts need an outside monitor such as UptimeRobot on `/api/health/ready`.
+  - Point-in-time recovery.
+  - Branch protection (would block direct pushes to main).
+  - A staging server.

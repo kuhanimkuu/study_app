@@ -11,23 +11,37 @@ import datetime
 
 from fastapi import HTTPException
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from . import pricing
 from .models import AiSpendLimit, AiUsage, LedgerEntry, WalletBalance
 
 
-async def get_or_create_wallet(db: AsyncSession, user_id: int) -> WalletBalance:
-    wallet = await db.scalar(select(WalletBalance).where(WalletBalance.user_id == user_id))
+async def get_or_create_wallet(db: AsyncSession, user_id: int, for_update: bool = False) -> WalletBalance:
+    """`for_update` locks the row until the transaction ends. Every change
+    to balance_cents must use it: the change is read-then-write, so two
+    requests finishing together (two hosted answers, or a double-tapped
+    top-up confirm) used to both read the same balance and one of the two
+    changes was lost."""
+    query = select(WalletBalance).where(WalletBalance.user_id == user_id)
+    if for_update:
+        query = query.with_for_update()
+    wallet = await db.scalar(query)
     if wallet is None:
         wallet = WalletBalance(user_id=user_id, balance_cents=0)
         db.add(wallet)
-        await db.flush()
+        try:
+            async with db.begin_nested():
+                await db.flush()
+        except IntegrityError:
+            # Another request created it first (user_id is unique).
+            wallet = await db.scalar(query)
     return wallet
 
 
 async def credit_topup(db: AsyncSession, user_id: int, amount_cents: int, reference: str) -> LedgerEntry:
-    wallet = await get_or_create_wallet(db, user_id)
+    wallet = await get_or_create_wallet(db, user_id, for_update=True)
     wallet.balance_cents += amount_cents
     entry = LedgerEntry(
         user_id=user_id, kind="topup", amount_cents=amount_cents,
@@ -60,7 +74,7 @@ async def charge_for_usage(
     output_tokens = usage.get("output_tokens") or 0
     charge = pricing.compute_charge(provider, model_name, input_tokens, output_tokens)
 
-    wallet = await get_or_create_wallet(db, user_id)
+    wallet = await get_or_create_wallet(db, user_id, for_update=True)
     wallet.balance_cents -= charge["total_cents"]
     entry = LedgerEntry(
         user_id=user_id, kind="usage", amount_cents=-charge["total_cents"],

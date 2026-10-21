@@ -25,7 +25,7 @@ class LegalScreen extends StatelessWidget {
         padding: const EdgeInsets.all(20),
         children: [
           Text(
-            'Last updated 20 October 2026. Study OS is a student project. This describes, in plain language, what '
+            'Last updated 21 October 2026. Study OS is a student project. This describes, in plain language, what '
             'the app actually does — it hasn’t been reviewed by a lawyer.',
             style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant, fontStyle: FontStyle.italic),
           ),
@@ -165,8 +165,9 @@ const _privacySections = <(String, List<String>)>[
     ['Our website uses no cookies. If you switch between light and dark mode there, that choice is saved in your own browser only.'],
   ),
   (
-    'Deleting your data',
+    'Getting or deleting your data',
     [
+      'Profile → Download my data saves a copy of everything your account stores on our server, as one file.',
       'Profile → Delete account removes your account and study data from our database straight away, and it '
           'disappears from backups within 14 days as they expire. Uninstalling the app removes what it kept on your '
           'phone.',

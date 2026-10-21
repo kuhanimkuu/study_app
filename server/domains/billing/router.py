@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,12 +72,14 @@ async def confirm_topup(
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    # Locked so two confirms of one top-up can't both see confirmed=False
+    # and credit the wallet twice.
     entry = await db.scalar(
         select(LedgerEntry).where(
             LedgerEntry.payment_reference == reference,
             LedgerEntry.user_id == current_user["id"],
             LedgerEntry.kind == "topup",
-        )
+        ).with_for_update()
     )
     if entry is None:
         raise HTTPException(status_code=404, detail=f"no pending topup with reference {reference!r}")
@@ -88,7 +90,7 @@ async def confirm_topup(
     if not provider.confirm_topup(reference):
         raise HTTPException(status_code=409, detail="payment not yet confirmed by the provider")
 
-    wallet = await service.get_or_create_wallet(db, current_user["id"])
+    wallet = await service.get_or_create_wallet(db, current_user["id"], for_update=True)
     wallet.balance_cents += entry.amount_cents
     entry.confirmed = True
     await db.commit()
@@ -117,6 +119,7 @@ async def list_usage(
 
 @router.get("/ai-usage")
 async def ai_usage_summary(
+    tz_offset_minutes: int = Query(default=0, ge=-14 * 60, le=14 * 60),
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -128,7 +131,11 @@ async def ai_usage_summary(
     (a BYOK model the price table doesn't know), so the app can say the
     total is partial instead of passing it off as complete."""
     now = datetime.datetime.now(datetime.timezone.utc)
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # "Today" is the student's own day: the app sends its UTC offset
+    # (Kenya +180), so it no longer rolls over at 03:00 local time. The
+    # month stays a UTC month, the same one the spending limit counts.
+    offset = datetime.timedelta(minutes=tz_offset_minutes)
+    day_start = (now + offset).replace(hour=0, minute=0, second=0, microsecond=0) - offset
     periods = {
         "today": day_start,
         "this_month": service.month_start(now),

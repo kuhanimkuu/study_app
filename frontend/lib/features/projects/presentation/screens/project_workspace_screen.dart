@@ -572,7 +572,8 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         ),
         const SizedBox(height: 6),
         Text(
-          'Sage answers from this subject’s notes and shows you the passages he used.',
+          'Ask about this subject’s notes, or anything else you want to learn. Sage shows the passages he '
+          'used and links to good places to read more.',
           textAlign: TextAlign.center,
           style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),

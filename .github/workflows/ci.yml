@@ -1,0 +1,74 @@
+# Runs on every push and pull request (added 2026-10-21 after the audit:
+# tests only ran when someone remembered to run them).
+#   server   — the pytest suite against a real Postgres, Python as on the server
+#   app      — flutter test
+#   security — known-vulnerable Python packages (pip-audit) and committed secrets (gitleaks)
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: study_os_app
+          POSTGRES_PASSWORD: study_os_app
+          POSTGRES_DB: study_os
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U study_os_app" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://study_os_app:study_os_app@localhost:5432/study_os
+      JWT_SECRET: ci-only-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"  # Ubuntu 24.04's, as on the Contabo server
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: System packages (OCR, audio)
+        run: sudo apt-get update -q && sudo apt-get install -y -q tesseract-ocr ffmpeg
+      - run: pip install -r requirements-dev.txt
+      - run: alembic upgrade head
+      - run: python -m pytest -q
+
+  app:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.35.6"
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test
+
+  security:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # gitleaks scans the whole history
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pip-audit
+      - name: Known vulnerabilities in Python packages
+        run: pip-audit -r requirements.txt
+      - name: Secrets committed to git
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

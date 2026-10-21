@@ -416,3 +416,60 @@ async def test_spend_limit_rejects_zero_and_absurd_values(client, student):
             "/api/v1/billing/ai-usage/limit", json={"monthly_limit_cents": bad}, headers=student["headers"]
         )
         assert resp.status_code == 422, bad
+
+
+async def test_two_charges_finishing_together_are_both_kept(student):
+    """charge_for_usage reads the balance and writes it back; without the
+    row lock two requests finishing at once both read the same balance and
+    one charge was lost."""
+    import asyncio
+
+    from sqlalchemy import select
+
+    from server.domains.billing.models import WalletBalance
+
+    async with async_session() as db:
+        await billing_service.credit_topup(db, student["user_id"], 1_000, "test-race")
+        await db.commit()
+
+    usage = {"input_tokens": 1_000_000, "output_tokens": 0}  # 300 cents before markup
+    one_charge = pricing.compute_charge("anthropic", "claude-sonnet-5", 1_000_000, 0)["total_cents"]
+
+    async def charge():
+        async with async_session() as db:
+            await billing_service.charge_for_usage(db, student["user_id"], "anthropic", "claude-sonnet-5", usage)
+            await asyncio.sleep(0.5)  # keep the transaction open so the two overlap
+            await db.commit()
+
+    await asyncio.gather(charge(), charge())
+    async with async_session() as db:
+        balance = await db.scalar(
+            select(WalletBalance.balance_cents).where(WalletBalance.user_id == student["user_id"])
+        )
+    assert balance == 1_000 - 2 * one_charge
+
+
+async def test_meter_today_is_the_students_own_day(client, student):
+    import datetime
+
+    from server.domains.billing.models import AiUsage
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # An offset that puts the student's local midnight 30 minutes ago.
+    offset = (30 - (now.hour * 60 + now.minute)) % (24 * 60)
+    if offset > 14 * 60:
+        offset -= 24 * 60
+    async with async_session() as db:
+        for minutes_ago in (60, 1):  # local yesterday, then local today
+            db.add(AiUsage(
+                user_id=student["user_id"], provider="openai", model_name="gpt-4o-mini", source="ask",
+                hosted=False, input_tokens=10, output_tokens=10, cost_micro_usd=1,
+                created_at=now - datetime.timedelta(minutes=minutes_ago),
+            ))
+        await db.commit()
+
+    meter = (await client.get(
+        f"/api/v1/billing/ai-usage?tz_offset_minutes={offset}", headers=student["headers"]
+    )).json()
+    assert meter["today"]["calls"] == 1
+    assert meter["all_time"]["calls"] == 2

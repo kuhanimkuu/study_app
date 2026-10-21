@@ -40,6 +40,11 @@ class User(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False
     )
+    # Goes up on a password change or "sign out everywhere"; every login
+    # token carries the value it was issued with and stops working once
+    # they differ (core/security.py). Tokens from before this column carry
+    # none and count as 0, so nobody was logged out by its introduction.
+    token_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     # Optional student profile (blueprint Section 5) — every field nullable,
     # none mandatory to use the app ("sign in and immediately start
@@ -66,6 +71,9 @@ class User(Base):
             "institution": self.institution,
             "preferred_language": self.preferred_language,
             "daily_study_target_minutes": self.daily_study_target_minutes,
+            # So the app knows whether "change password" must ask for the
+            # current one (a Google-only account sets its first instead).
+            "has_password": self.password_hash is not None,
         }
 
     def auth_response(self) -> dict:

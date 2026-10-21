@@ -35,6 +35,12 @@ class AuthService extends ChangeNotifier {
     // local model even with a BYOK/hosted backend configured, which on the
     // Render deploy (no local model) meant they always failed.
     apiClient.modelConfigProvider = modelConfigForRequest;
+    // The password was changed or "sign out everywhere" was used on another
+    // device: go back to the login screen. Only when signed in, so a 401
+    // while restoring a session is left to restoreSession.
+    apiClient.onSignedOut = () {
+      if (_user != null) logout();
+    };
   }
 
   /// Builds the per-request BYOK/hosted config — see UserCrypto and
@@ -228,6 +234,28 @@ class AuthService extends ChangeNotifier {
   Future<void> deleteAccount({required String password}) async {
     await apiClient.deleteAccount(password: password);
     await logout();
+  }
+
+  /// See ApiClient.changePassword. Keeps this device signed in with the
+  /// new token; every other device is signed out.
+  Future<void> changePassword({String? currentPassword, required String newPassword}) async {
+    await _replaceToken(await apiClient.changePassword(currentPassword: currentPassword, newPassword: newPassword));
+  }
+
+  Future<void> signOutEverywhere() async {
+    await _replaceToken(await apiClient.signOutEverywhere());
+  }
+
+  /// Re-reads the profile from the server (e.g. has_password after a
+  /// Google-only account sets its first password).
+  Future<void> refreshUser() async {
+    _user = {...?_user, ...await apiClient.me()};
+    notifyListeners();
+  }
+
+  Future<void> _replaceToken(String token) async {
+    apiClient.token = token;
+    await _storage.write(key: _tokenKey, value: token);
   }
 
   Future<void> updateDisplayName(String displayName) async {

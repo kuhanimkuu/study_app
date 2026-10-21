@@ -467,10 +467,18 @@ class ReviewFlashcard(BaseModel):
 _MAX_OFFLINE_REVIEW_AGE = datetime.timedelta(days=30)
 
 
+class _AlreadyCounted(Exception):
+    """An offline review dated at or before the card's last review."""
+
+
 def _review_time(flashcard: Flashcard, reviewed_at: datetime.datetime | None) -> datetime.datetime | None:
     """A trustworthy review time, or None (= now): naive times are taken
-    as UTC; future times, ones over 30 days old, and ones before the card's
-    last review (a queue replayed out of order) fall back to now."""
+    as UTC; future times and ones over 30 days old fall back to now.
+
+    Raises _AlreadyCounted for a time at or before the card's last review.
+    The app resends its offline queue until the server answers, so when an
+    answer is lost the same rating arrives twice; it used to be counted
+    again (2026-10-21). The card is returned unchanged instead."""
     if reviewed_at is None:
         return None
     if reviewed_at.tzinfo is None:
@@ -478,8 +486,8 @@ def _review_time(flashcard: Flashcard, reviewed_at: datetime.datetime | None) ->
     now = datetime.datetime.now(datetime.timezone.utc)
     if reviewed_at > now or now - reviewed_at > _MAX_OFFLINE_REVIEW_AGE:
         return None
-    if flashcard.fsrs_last_review is not None and reviewed_at < flashcard.fsrs_last_review:
-        return None
+    if flashcard.fsrs_last_review is not None and reviewed_at <= flashcard.fsrs_last_review:
+        raise _AlreadyCounted
     return reviewed_at
 
 
@@ -493,7 +501,10 @@ async def review_flashcard_endpoint(
     if payload.rating not in RATINGS:
         raise HTTPException(status_code=400, detail=f"rating must be one of {sorted(RATINGS)}")
     flashcard = await get_flashcard_or_404(db, current_user["id"], flashcard_id)
-    review_flashcard(flashcard, payload.rating, _review_time(flashcard, payload.reviewed_at))
+    try:
+        review_flashcard(flashcard, payload.rating, _review_time(flashcard, payload.reviewed_at))
+    except _AlreadyCounted:
+        return flashcard.public()
     await db.commit()
     await db.refresh(flashcard)
     return flashcard.public()

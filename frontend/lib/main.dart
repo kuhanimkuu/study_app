@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'app/auth_gate.dart';
 import 'app/theme.dart';
@@ -15,6 +17,13 @@ Future<void> main() async {
   // before the first frame so the chat never flashes the question to
   // someone who already answered. SharedPreferences needs the binding.
   WidgetsFlutterBinding.ensureInitialized();
+  // The bundled fonts' licences, for Profile → Open-source licences (the
+  // OFL asks for it to ship with the fonts).
+  LicenseRegistry.addLicense(() async* {
+    for (final family in const ['Inter', 'Nunito']) {
+      yield LicenseEntryWithLineBreaks([family], await rootBundle.loadString('assets/fonts/$family-OFL.txt'));
+    }
+  });
   await ChatMediaStore.instance.load();
   // Whether study reminders are on, so Home's first load can reschedule them.
   await StudyReminders.instance.load();

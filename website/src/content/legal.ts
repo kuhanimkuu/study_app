@@ -10,7 +10,7 @@
 
 import { site } from '../site'
 
-export const legalUpdated = '20 October 2026'
+export const legalUpdated = '21 October 2026'
 
 export const legalNote =
   'Study OS is a student project. These pages describe, in plain language, what the app actually does — they haven’t been reviewed by a lawyer.'
@@ -115,8 +115,9 @@ export const privacy: LegalSection[] = [
     body: ['This website uses no cookies. If you switch between light and dark mode, that choice is saved in your own browser only.'],
   },
   {
-    title: 'Deleting your data',
+    title: 'Getting or deleting your data',
     body: [
+      'Profile → Download my data saves a copy of everything your account stores on our server, as one file.',
       'Profile → Delete account removes your account and study data from our database straight away, and it disappears from backups within 14 days as they expire. Uninstalling the app removes what it kept on your phone.',
       `You can also ask us to delete your data, or ask what we hold about you, by emailing ${site.contactEmail}.`,
     ],

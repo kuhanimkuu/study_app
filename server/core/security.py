@@ -60,8 +60,18 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
+# bcrypt only reads the first 72 bytes, and bcrypt 5 raises on anything
+# longer (that was a 500 on login/signup). Signup and password change
+# refuse longer passwords (identity/router.py); a longer one at login can't
+# be anyone's password, so it's simply wrong.
+MAX_PASSWORD_BYTES = 72
+
+
 def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
+    encoded = password.encode()
+    if len(encoded) > MAX_PASSWORD_BYTES:
+        return False
+    return bcrypt.checkpw(encoded, password_hash.encode())
 
 
 # --- bcrypt off the event loop, in bounded lanes (2026-10-21) ---
@@ -115,6 +125,17 @@ async def hash_password_async(password: str) -> str:
     return await signup_lane.run(hash_password, password)
 
 
+# A real bcrypt hash of a random password nobody knows: login checks it
+# when the email has no account (or no password), so that answer takes as
+# long as a wrong password does — otherwise the faster reply tells anyone
+# which emails are registered.
+_DUMMY_HASH = hash_password(secrets.token_hex(16))
+
+
+async def burn_password_check(password: str) -> None:
+    await login_lane.run(verify_password, password, _DUMMY_HASH)
+
+
 async def verify_password_async(password: str, password_hash: str, user_id: int | None = None) -> bool:
     """With `user_id`, refuses (503) while another check for the same
     account is still running — see _verifying_accounts."""
@@ -135,20 +156,21 @@ async def verify_password_async(password: str, password_hash: str, user_id: int 
         _verifying_accounts.discard(user_id)
 
 
-def create_token(user_id: int) -> str:
+def create_token(user_id: int, token_version: int = 0) -> str:
     # "sub" must be a string per the JWT spec (RFC 7519) — recent PyJWT
     # versions enforce this on decode(), rejecting a raw int even though
-    # encode() accepts it silently.
-    payload = {"sub": str(user_id), "exp": int(time.time()) + _TOKEN_TTL_SECONDS}
+    # encode() accepts it silently. "ver" is the user's token_version at
+    # issue time (see get_current_user).
+    payload = {"sub": str(user_id), "ver": token_version, "exp": int(time.time()) + _TOKEN_TTL_SECONDS}
     return jwt.encode(payload, _SECRET, algorithm=_ALGORITHM)
 
 
-def _decode_token(token: str) -> int:
+def _decode_token(token: str) -> tuple[int, int]:
     try:
         payload = jwt.decode(token, _SECRET, algorithms=[_ALGORITHM])
     except jwt.PyJWTError as exc:
         raise HTTPException(status_code=401, detail=f"invalid or expired token: {exc}") from exc
-    return int(payload["sub"])
+    return int(payload["sub"]), int(payload.get("ver", 0))
 
 
 async def get_current_user(
@@ -164,11 +186,14 @@ async def get_current_user(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
     token = authorization.removeprefix("Bearer ").strip()
-    user_id = _decode_token(token)
+    user_id, token_version = _decode_token(token)
 
     user = await db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="user no longer exists")
+    if token_version != user.token_version:
+        # The password was changed, or "sign out everywhere" was used.
+        raise HTTPException(status_code=401, detail="you were signed out — please log in again")
     return {
         "id": user.id,
         "email": user.email,

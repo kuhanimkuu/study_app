@@ -303,7 +303,9 @@ async def test_project_chat_writes_a_grounded_answer_with_sources(client, space,
     )
     blocks = r.json()["blocks"]
     assert blocks[0] == {"type": "text", "content": "Mitochondria produce ATP through cellular respiration [Source 1].", "source": "moderator"}
-    assert [b["type"] for b in blocks[1:]] and all(b["type"] == "source" for b in blocks[1:])
+    # The passages, then the "Learn more" links card (2026-10-21).
+    assert [b["type"] for b in blocks[1:-1]] and all(b["type"] == "source" for b in blocks[1:-1])
+    assert blocks[-1]["type"] == "links"
     # Grounded: the retrieved passage and the question are in the prompt.
     assert "powerhouse of the cell" in captured[0]["prompt"] and "what makes ATP?" in captured[0]["prompt"]
 

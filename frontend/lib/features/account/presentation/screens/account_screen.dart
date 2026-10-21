@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../app/app_tour.dart';
@@ -58,6 +59,7 @@ class _AccountScreenState extends State<AccountScreen> {
   bool _isSaving = false;
   bool _isSavingProfile = false;
   bool _isDeleting = false;
+  bool _isExporting = false;
   bool _apiKeyVisible = false;
   String? _error;
   String? _savedMessage;
@@ -298,6 +300,148 @@ class _AccountScreenState extends State<AccountScreen> {
           _isDeleting = false;
         });
       }
+    }
+  }
+
+  Future<void> _changePassword() async {
+    final hasPassword = widget.authService.user?['has_password'] != false;
+    final current = TextEditingController();
+    final next = TextEditingController();
+    final repeat = TextEditingController();
+    String? dialogError;
+    var saving = false;
+
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(hasPassword ? 'Change password' : 'Set a password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                hasPassword
+                    ? 'Your other devices will be signed out. This one stays signed in.'
+                    : 'You sign in with Google. A password lets you sign in with your email too.',
+              ),
+              const SizedBox(height: 12),
+              if (hasPassword)
+                TextField(
+                  controller: current,
+                  obscureText: true,
+                  autofocus: true,
+                  decoration: const InputDecoration(labelText: 'Current password'),
+                ),
+              TextField(
+                controller: next,
+                obscureText: true,
+                autofocus: !hasPassword,
+                decoration: const InputDecoration(labelText: 'New password', helperText: '8 to 72 characters'),
+              ),
+              TextField(
+                controller: repeat,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: 'New password again'),
+              ),
+              if (dialogError != null) ...[
+                const SizedBox(height: 8),
+                Text(dialogError!, style: TextStyle(color: Theme.of(dialogContext).colorScheme.error)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: saving ? null : () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      String? problem;
+                      if (hasPassword && current.text.isEmpty) problem = 'Enter your current password.';
+                      if (next.text.length < 8) problem ??= 'The new password needs at least 8 characters.';
+                      if (next.text != repeat.text) problem ??= "The two new passwords don't match.";
+                      if (problem != null) {
+                        setDialogState(() => dialogError = problem);
+                        return;
+                      }
+                      setDialogState(() {
+                        saving = true;
+                        dialogError = null;
+                      });
+                      try {
+                        await widget.authService.changePassword(
+                          currentPassword: hasPassword ? current.text : null,
+                          newPassword: next.text,
+                        );
+                        if (dialogContext.mounted) Navigator.of(dialogContext).pop(true);
+                      } on ApiException catch (e) {
+                        setDialogState(() {
+                          saving = false;
+                          dialogError = e.statusCode == 401 ? 'Your current password is incorrect.' : e.message;
+                        });
+                      }
+                    },
+              child: Text(saving ? 'Saving…' : 'Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (changed == true && mounted) {
+      if (!hasPassword) await widget.authService.refreshUser();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(hasPassword ? 'Password changed. Other devices are signed out.' : 'Password set.')),
+        );
+      }
+    }
+  }
+
+  Future<void> _signOutEverywhere() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign out other devices?'),
+        content: const Text(
+          'Every other phone or computer signed in to this account will be signed out. '
+          'Use this if you lost a phone or signed in on a shared computer. This device stays signed in.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: const Text('Sign them out')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await widget.authService.signOutEverywhere();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Other devices are signed out.')));
+      }
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    }
+  }
+
+  Future<void> _downloadMyData() async {
+    setState(() => _isExporting = true);
+    try {
+      final bytes = await _apiClient.exportAccountData();
+      final stamp = DateTime.now().toIso8601String().substring(0, 10);
+      final saved = await FilePicker.saveFile(
+        dialogTitle: 'Save your Study OS data',
+        fileName: 'study-os-data-$stamp.json',
+        type: FileType.custom,
+        allowedExtensions: ['json'],
+        bytes: bytes,
+      );
+      if (saved != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Your data was saved.')));
+      }
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
     }
   }
 
@@ -647,6 +791,33 @@ class _AccountScreenState extends State<AccountScreen> {
                   label: 'Activity history',
                   sublabel: 'Ask questions about your own study history',
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (context) => HistoryScreen(apiClient: _apiClient))),
+                ),
+                _ProfileRow(
+                  icon: Icons.password_rounded,
+                  label: widget.authService.user?['has_password'] == false ? 'Set a password' : 'Change password',
+                  sublabel: 'Also signs out your other devices',
+                  onTap: _changePassword,
+                ),
+                _ProfileRow(
+                  icon: Icons.devices_other_rounded,
+                  label: 'Sign out other devices',
+                  sublabel: 'For a lost phone or a shared computer',
+                  onTap: _signOutEverywhere,
+                ),
+                _ProfileRow(
+                  icon: Icons.download_rounded,
+                  label: 'Download my data',
+                  sublabel: 'Everything your account stores, as one file',
+                  trailing: _isExporting
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : null,
+                  onTap: _isExporting ? null : _downloadMyData,
+                ),
+                _ProfileRow(
+                  icon: Icons.article_outlined,
+                  label: 'Open-source licences',
+                  sublabel: 'The libraries and fonts Study OS is built with',
+                  onTap: () => showLicensePage(context: context, applicationName: 'Study OS'),
                 ),
                 _ProfileRow(
                   icon: Icons.delete_forever_outlined,

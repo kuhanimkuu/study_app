@@ -343,8 +343,11 @@ fi
 step "11/11  Nightly backups and the update command"
 cat > /usr/local/bin/study-os-backup <<EOF
 #!/usr/bin/env bash
-# Nightly Study OS backup: database dump + uploaded/generated files + .env.
+# Nightly Study OS backup: database dump + uploaded/generated files.
 # Keeps 14 days in /var/backups/study_os. Download copies off the server now and then.
+# .env is left out on purpose: it holds the login-token secret, the database
+# password and the hosted AI keys, and backups get copied around (to the PC,
+# for one). Keep one copy of .env in a password manager instead.
 set -euo pipefail
 umask 077
 DEST=/var/backups/study_os
@@ -355,7 +358,7 @@ cd /
 # shellcheck disable=SC2024
 sudo -u postgres pg_dump -Fc $DB_NAME > "\$DEST/db-\$STAMP.dump"
 PATHS=()
-for p in .env server/uploads features/rag/projects/projects features/moderator/generated; do
+for p in server/uploads features/rag/projects/projects features/moderator/generated; do
   [[ -e "$APP_DIR/\$p" ]] && PATHS+=("\$p")
 done
 tar -czf "\$DEST/files-\$STAMP.tar.gz" -C "$APP_DIR" "\${PATHS[@]}"
@@ -377,7 +380,7 @@ sudo -u $APP_USER -H $APP_DIR/.venv/bin/pip install -q -r $APP_DIR/requirements.
 sudo -u $APP_USER -H bash -c "cd $APP_DIR && set -a && . ./.env && set +a && .venv/bin/alembic upgrade head"
 systemctl restart $SERVICE
 for _ in \$(seq 1 60); do
-  if curl -fsS http://127.0.0.1:$APP_PORT/api/health >/dev/null 2>&1; then
+  if curl -fsS http://127.0.0.1:$APP_PORT/api/health/ready >/dev/null 2>&1; then
     echo "Updated and running: \$(sudo -u $APP_USER -H git -C $APP_DIR log -1 --format='%h %s')"; exit 0
   fi
   sleep 2

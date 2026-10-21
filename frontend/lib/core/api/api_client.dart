@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 /// Thin wrapper around Study OS's HTTP server (see ../../server/README.md
@@ -128,17 +130,23 @@ class ApiClient {
   /// seconds later usually gets in, so do that quietly instead of showing an
   /// error straight away. Any other error (wrong password, the per-address
   /// 429 limit) is returned at once.
+  ///
+  /// Each wait gets up to 50% random extra (jitter), so phones that were
+  /// all turned away at the same moment don't all come back at the same
+  /// moment too.
   Future<Map<String, dynamic>> _retryWhenBusy(Future<Map<String, dynamic>> Function() call) async {
     for (final delay in busyRetryDelays) {
       try {
         return await call();
       } on ApiException catch (e) {
         if (e.statusCode != 503) rethrow;
-        await Future<void>.delayed(delay);
+        await Future<void>.delayed(delay + delay * (_random.nextDouble() * 0.5));
       }
     }
     return call();
   }
+
+  static final _random = Random();
 
   Future<Map<String, dynamic>> signup({
     required String email,
@@ -251,6 +259,42 @@ class ApiClient {
         )
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     _decode(res);
+  }
+
+  /// Changes the password (or sets a first one on a Google-only account,
+  /// where [currentPassword] is null). Every other device is signed out;
+  /// the returned token keeps this one signed in.
+  Future<String> changePassword({String? currentPassword, required String newPassword}) async {
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/account/password'),
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            if (currentPassword != null) 'current_password': currentPassword,
+            'new_password': newPassword,
+          }),
+        )
+        .timeout(_authRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res)['token'] as String;
+  }
+
+  /// Signs out every device (a lost phone, a shared computer); the returned
+  /// token keeps this one signed in.
+  Future<String> signOutEverywhere() async {
+    final res = await _http
+        .post(Uri.parse('$baseUrl/api/account/sign-out-everywhere'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res)['token'] as String;
+  }
+
+  /// "Download my data": everything the account has stored, as the JSON
+  /// file's bytes — see server/domains/identity/export.py.
+  Future<Uint8List> exportAccountData() async {
+    final res = await _http
+        .get(Uri.parse('$baseUrl/api/account/export'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    _decodeError(res);
+    return res.bodyBytes;
   }
 
   // --- projects ---
@@ -1028,9 +1072,11 @@ class ApiClient {
   /// The token meter: this student's own AI usage (today / last 30 days /
   /// all time, plus per model) — see billing/router.py's ai_usage_summary.
   /// Costs are integer micro-USD (millionths of a dollar).
+  /// "Today" is the phone's own day: the server is told its UTC offset.
   Future<Map<String, dynamic>> getAiUsage() async {
+    final offset = DateTime.now().timeZoneOffset.inMinutes;
     final res = await _http
-        .get(Uri.parse('$baseUrl/api/v1/billing/ai-usage'), headers: _authHeaders)
+        .get(Uri.parse('$baseUrl/api/v1/billing/ai-usage?tz_offset_minutes=$offset'), headers: _authHeaders)
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);
   }
@@ -1064,7 +1110,25 @@ class ApiClient {
         .timeout(_requestTimeout, onTimeout: _timeoutError);
   }
 
+  /// Called when the server says this device's sign-in is no longer valid
+  /// (the password was changed or "sign out everywhere" was used on another
+  /// device, or the token expired). AuthService signs out, which takes the
+  /// student back to the login screen instead of leaving every screen
+  /// failing with "you were signed out".
+  void Function()? onSignedOut;
+
+  static bool _isSignedOutDetail(String detail) =>
+      detail.startsWith('you were signed out') ||
+      detail.startsWith('invalid or expired token') ||
+      detail == 'user no longer exists';
+
   Map<String, dynamic> _decode(http.Response res) {
+    _decodeError(res);
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
+  /// Throws [ApiException] for a non-2xx answer; returns quietly otherwise.
+  void _decodeError(http.Response res) {
     if (res.statusCode < 200 || res.statusCode >= 300) {
       String detail = res.body;
       try {
@@ -1091,9 +1155,9 @@ class ApiClient {
           detail = 'The server returned an unexpected response (not the app\'s API) — try again in a moment.';
         }
       }
+      if (res.statusCode == 401 && token != null && _isSignedOutDetail(detail)) onSignedOut?.call();
       throw ApiException(res.statusCode, detail);
     }
-    return jsonDecode(res.body) as Map<String, dynamic>;
   }
 }
 

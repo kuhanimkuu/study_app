@@ -3,8 +3,9 @@
 # own disk at 02:30 UTC by /usr/local/bin/study-os-backup — setup_server.sh).
 #
 # Each night's backup is two files: db-<stamp>.dump (pg_dump -Fc) and
-# files-<stamp>.tar.gz (uploads, generated files, and the server's .env —
-# so keep the destination folder private). Only files not already here are
+# files-<stamp>.tar.gz (uploads and generated files: students' data, so keep
+# the destination folder private; since 1.0.7 the server's .env is no longer
+# in them, and older ones age out after 14 days). Only files not already here are
 # downloaded. Copies are deleted once the backup itself (the date in its
 # name) is $KeepDays days old — 14, matching the privacy policy's promise
 # that backups are kept for 14 days (and that deleted accounts leave them

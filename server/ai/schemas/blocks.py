@@ -131,6 +131,22 @@ class ModelUnavailableBlock(BaseModel):
     suggested_model: str | None = None
 
 
+class Link(BaseModel):
+    label: str
+    url: str
+
+
+class LinksBlock(BaseModel):
+    """A "Learn more" card of real links under a project-chat explanation
+    (2026-10-21): search pages on trusted learning sites, plus live web
+    results when the student asked for sources. The model is told never
+    to write addresses itself, so these are the only links shown."""
+
+    type: Literal["links"] = "links"
+    title: str
+    links: list[Link]
+
+
 Block = Annotated[
     Union[
         TextBlock,
@@ -146,6 +162,7 @@ Block = Annotated[
         AnimationBlock,
         ThreeDBlock,
         ModelUnavailableBlock,
+        LinksBlock,
     ],
     Field(discriminator="type"),
 ]

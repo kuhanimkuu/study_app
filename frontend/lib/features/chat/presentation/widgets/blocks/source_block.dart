@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'links_block.dart';
+
 /// Renders a `{"type": "source", "content": "...", "source": "..."}` block
 /// — a quoted excerpt (from document_engine/searchable_knowledge's search
 /// results, or input_pipeline/web_input's fetched page content via
@@ -22,7 +24,13 @@ class SourceBlockView extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(block['content']?.toString() ?? '', style: Theme.of(context).textTheme.bodySmall),
-          if (source != null)
+          // A web search result's source is its address: tappable.
+          if (source != null && isWebLink(source))
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: LinkRow(label: 'Open page', url: source),
+            )
+          else if (source != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(source, style: Theme.of(context).textTheme.labelSmall),

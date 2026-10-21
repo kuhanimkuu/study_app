@@ -29,8 +29,8 @@ uvicorn==0.52.4
 python-multipart==0.0.32
 pydantic==2.12.5
 bcrypt==5.0.0
-PyJWT==2.10.1
-cryptography==46.0.3
+PyJWT==2.15.1
+cryptography==50.0.2
 
 # --- server/domains/identity (Google Sign-In ID token verification,
 # blueprint Section 4) — was already present transitively (pulled in by
@@ -44,7 +44,7 @@ sqlalchemy[asyncio]==2.0.52
 asyncpg==0.31.0
 alembic==1.20.0
 pydantic-settings==2.15.0
-python-dotenv==1.2.1
+python-dotenv==1.2.4
 email-validator==2.3.0
 
 # --- server/domains/learning (spaced repetition) — the official
@@ -65,7 +65,7 @@ pygltflib==1.16.5
 
 # --- ocr / image_processing ---
 opencv-python-headless==5.0.0.93
-pillow==12.1.0
+pillow==12.3.0
 pytesseract==0.3.13
 
 # --- document_engine (PDF processing) ---
@@ -77,12 +77,12 @@ faster-whisper==1.2.1
 # install got av 19, which dropped the `metadata_errors` argument
 # faster-whisper 1.2.1 passes to av.open() — every audio upload failed.
 av==18.1.0
-requests==2.32.5
+requests==2.34.2
 beautifulsoup4==4.15.0
 # The parser web_input and research_engine/search_pipeline ask BeautifulSoup
 # for ("lxml"). It was only installed on the dev machine by chance, so on a
 # fresh server (2026-10-19) every web link and web search failed.
-lxml==6.0.2
+lxml==6.1.3
 
 # --- rag (embeddings for project search) ---
 fastembed==0.8.0

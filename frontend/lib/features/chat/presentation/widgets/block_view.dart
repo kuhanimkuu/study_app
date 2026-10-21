@@ -6,6 +6,7 @@ import 'blocks/diagram_block.dart';
 import 'blocks/equation_block.dart';
 import 'blocks/error_block.dart';
 import 'blocks/graph_block.dart';
+import 'blocks/links_block.dart';
 import 'blocks/model3d_block.dart';
 import 'blocks/model_unavailable_block.dart';
 import 'blocks/pdf_block.dart';
@@ -58,6 +59,7 @@ class BlockView extends StatelessWidget {
     '3d': (b, url, __) => Model3dBlockView(block: b, baseUrl: url),
     'pdf': (b, url, __) => PdfBlockView(block: b, baseUrl: url),
     'diagram': (b, _, __) => DiagramBlockView(block: b),
+    'links': (b, _, __) => LinksBlockView(block: b),
   };
 
   @override

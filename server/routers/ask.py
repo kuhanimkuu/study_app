@@ -81,6 +81,36 @@ _ALLOWED_EXTENSIONS: dict[str, set[str]] = {
 _MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB
 _READ_CHUNK_BYTES = 1024 * 1024
 
+# What each allowed format's first bytes look like (2026-10-21). The
+# extension alone proved nothing: Pillow and ffmpeg pick their decoder from
+# the content, so a TIFF or EPS renamed "notes.png" reached decoders with
+# known holes (Pillow's TIFF/EPS/PPM CVEs fixed only in 13.0, which
+# fastembed doesn't allow yet). Now the bytes have to match the kind.
+_SIGNATURES: dict[str, tuple] = {
+    "image": (
+        lambda h: h.startswith(b"\xff\xd8\xff"),  # JPEG
+        lambda h: h.startswith(b"\x89PNG\r\n\x1a\n"),
+        lambda h: h[:4] == b"RIFF" and h[8:12] == b"WEBP",
+        lambda h: h[:6] in (b"GIF87a", b"GIF89a"),
+        lambda h: h.startswith(b"BM"),
+    ),
+    "pdf": (lambda h: b"%PDF-" in h[:16],),
+    "audio": (
+        lambda h: h.startswith(b"ID3") or (h[0] == 0xFF and h[1] & 0xE0 == 0xE0),  # MP3
+        lambda h: h[:4] == b"RIFF" and h[8:12] == b"WAVE",
+        lambda h: h[4:8] == b"ftyp",  # M4A
+        lambda h: h.startswith(b"OggS"),
+        lambda h: h.startswith(b"\x1a\x45\xdf\xa3"),  # WebM
+        lambda h: h.startswith(b"fLaC"),
+    ),
+}
+
+
+def _content_matches(path: Path, kind: str) -> bool:
+    with path.open("rb") as f:
+        head = f.read(16)
+    return len(head) >= 4 and any(check(head) for check in _SIGNATURES[kind])
+
 
 def _validate_session_id(session_id: str) -> str:
     if not _SAFE_SESSION_ID_RE.match(session_id):
@@ -122,6 +152,12 @@ def _save_upload(file: UploadFile, session_id: str, kind: str) -> Path:
     except HTTPException:
         dest.unlink(missing_ok=True)
         raise
+    if not _content_matches(dest, kind):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=f"that file isn't a real {kind} file (its contents don't match {extension})",
+        )
     return dest
 
 

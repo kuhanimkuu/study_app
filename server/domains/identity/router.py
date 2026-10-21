@@ -18,9 +18,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +31,7 @@ from ...core import security
 from ...core.config import get_settings
 from ...core.rate_limit import check_rate_limit
 from ...db.session import get_db
+from .export import export_user_data
 from .models import User
 
 router = APIRouter()
@@ -56,10 +58,17 @@ _LOGIN_MAX_ATTEMPTS, _LOGIN_WINDOW_SECONDS = 60, 5 * 60
 _SIGNUP_MAX_ATTEMPTS, _SIGNUP_WINDOW_SECONDS = 30, 60 * 60
 
 
+def _check_new_password(password: str) -> None:
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    if len(password.encode()) > security.MAX_PASSWORD_BYTES:
+        raise HTTPException(status_code=400, detail="password must be at most 72 characters")
+
+
 class SignupRequest(BaseModel):
     email: EmailStr
-    password: str
-    display_name: str | None = None
+    password: str = Field(max_length=1024)
+    display_name: str | None = Field(default=None, max_length=255)
 
     @field_validator("email")
     @classmethod
@@ -72,7 +81,7 @@ class SignupRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=1024)
 
     @field_validator("email")
     @classmethod
@@ -81,19 +90,28 @@ class LoginRequest(BaseModel):
 
 
 class AccountUpdate(BaseModel):
-    display_name: str | None = None
-    education_level: str | None = None
-    course: str | None = None
-    institution: str | None = None
-    preferred_language: str | None = None
-    daily_study_target_minutes: int | None = None
+    # Caps match the column sizes in models.py: longer text used to reach
+    # Postgres and come back as a 500 instead of a clear 422.
+    display_name: str | None = Field(default=None, max_length=255)
+    education_level: str | None = Field(default=None, max_length=100)
+    course: str | None = Field(default=None, max_length=255)
+    institution: str | None = Field(default=None, max_length=255)
+    preferred_language: str | None = Field(default=None, max_length=50)
+    daily_study_target_minutes: int | None = Field(default=None, ge=0, le=24 * 60)
+
+
+class PasswordChangeRequest(BaseModel):
+    # Required when the account has a password; a Google-only account
+    # (no password yet) can set its first one without it.
+    current_password: str | None = Field(default=None, max_length=1024)
+    new_password: str = Field(max_length=1024)
 
 
 class AccountDeleteRequest(BaseModel):
     # Optional: a Google-only account (see User.password_hash's docstring)
     # has no password to confirm — see delete_account below for how that's
     # handled instead.
-    password: str | None = None
+    password: str | None = Field(default=None, max_length=1024)
 
 
 _DELETE_MAX_ATTEMPTS, _DELETE_WINDOW_SECONDS = 10, 5 * 60
@@ -131,8 +149,7 @@ async def _verify_google_id_token(token: str) -> dict:
 async def signup(payload: SignupRequest, request: Request, db: AsyncSession = Depends(get_db)) -> dict:
     check_rate_limit(request, "signup", _SIGNUP_MAX_ATTEMPTS, _SIGNUP_WINDOW_SECONDS)
 
-    if len(payload.password) < 8:
-        raise HTTPException(status_code=400, detail="password must be at least 8 characters")
+    _check_new_password(payload.password)
 
     existing = await db.scalar(select(User).where(User.email == payload.email))
     if existing is not None:
@@ -152,7 +169,7 @@ async def signup(payload: SignupRequest, request: Request, db: AsyncSession = De
         raise HTTPException(status_code=409, detail="an account with this email already exists")
     await db.refresh(user)
 
-    token = security.create_token(user.id)
+    token = security.create_token(user.id, user.token_version)
     return {"token": token, "user": user.auth_response()}
 
 
@@ -164,12 +181,15 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
     # user.password_hash is None for a Google-only account (never set one)
     # — checked explicitly rather than letting it reach verify_password,
     # which would raise on a None hash instead of cleanly rejecting.
-    if user is None or user.password_hash is None or not await security.verify_password_async(
-        payload.password, user.password_hash, user_id=user.id
-    ):
+    if user is None or user.password_hash is None:
+        # Same ~0.3 s as a wrong password, so timing doesn't reveal which
+        # emails have accounts (core/security.py's _DUMMY_HASH).
+        await security.burn_password_check(payload.password)
+        raise HTTPException(status_code=401, detail="invalid email or password")
+    if not await security.verify_password_async(payload.password, user.password_hash, user_id=user.id):
         raise HTTPException(status_code=401, detail="invalid email or password")
 
-    token = security.create_token(user.id)
+    token = security.create_token(user.id, user.token_version)
     # Returning the key again here (not just at signup) lets a reinstalled
     # app / new device recover it via a normal login, rather than losing
     # access to previously-encrypted local data if secure storage was wiped.
@@ -218,7 +238,7 @@ async def google_sign_in(
         raise HTTPException(status_code=409, detail="this Google account is already linked to a different user")
     await db.refresh(user)
 
-    token = security.create_token(user.id)
+    token = security.create_token(user.id, user.token_version)
     return {"token": token, "user": user.auth_response()}
 
 
@@ -273,6 +293,71 @@ async def update_account(
         await db.commit()
         await db.refresh(user)
     return user.public()
+
+
+_EXPORT_MAX_ATTEMPTS, _EXPORT_WINDOW_SECONDS = 5, 60 * 60
+
+
+@router.get("/api/account/export")
+async def export_account(
+    request: Request,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Everything this account has stored, as one JSON file — see export.py."""
+    check_rate_limit(request, "account_export", _EXPORT_MAX_ATTEMPTS, _EXPORT_WINDOW_SECONDS)
+    user = await db.get(User, current_user["id"])
+    if user is None:
+        raise HTTPException(status_code=401, detail="user no longer exists")
+    data = await export_user_data(db, user)
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return JSONResponse(
+        data, headers={"Content-Disposition": f'attachment; filename="study-os-data-{stamp}.json"'}
+    )
+
+
+_PASSWORD_CHANGE_MAX_ATTEMPTS, _PASSWORD_CHANGE_WINDOW_SECONDS = 10, 5 * 60
+
+
+@router.post("/api/account/password")
+async def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    current_user: dict = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Changes (or, for a Google-only account, sets) the password and signs
+    out every other device: their tokens carry the old token_version. This
+    device gets a fresh token in the reply so it stays signed in."""
+    check_rate_limit(request, "password_change", _PASSWORD_CHANGE_MAX_ATTEMPTS, _PASSWORD_CHANGE_WINDOW_SECONDS)
+    user = await db.get(User, current_user["id"])
+    if user is None:
+        raise HTTPException(status_code=401, detail="user no longer exists")
+    if user.password_hash is not None:
+        if payload.current_password is None or not await security.verify_password_async(
+            payload.current_password, user.password_hash, user_id=user.id
+        ):
+            raise HTTPException(status_code=401, detail="current password is incorrect")
+    _check_new_password(payload.new_password)
+
+    user.password_hash = await security.hash_password_async(payload.new_password)
+    user.token_version += 1
+    await db.commit()
+    return {"token": security.create_token(user.id, user.token_version)}
+
+
+@router.post("/api/account/sign-out-everywhere")
+async def sign_out_everywhere(
+    current_user: dict = Depends(security.get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """For a lost phone or a shared computer: every existing token stops
+    working. This device gets a fresh token so it stays signed in."""
+    user = await db.get(User, current_user["id"])
+    if user is None:
+        raise HTTPException(status_code=401, detail="user no longer exists")
+    user.token_version += 1
+    await db.commit()
+    return {"token": security.create_token(user.id, user.token_version)}
 
 
 @router.delete("/api/account")
