@@ -1332,3 +1332,9 @@ The user asked for full text features (copy, paste, edit, emoji, reactions) that
   - scrolling to the latest message when the field gets focus;
   - SafeArea on the bottom only.
 - **Tests:** 243/243 backend (new `test_conversation.py`), 84/84 Flutter (new `chat_conversation_test.dart` and `chat_text_features_test.dart`).
+
+### 2026-10-21 — Release 1.0.10: version number shown in the app and on the site
+
+- App: `AppVersionText` (`core/widgets/app_version_text.dart`, read from the installed package via package_info_plus) shows "Study OS 1.0.10 (build 11)" at the bottom of Profile and the login screen. The licences page shows it too.
+- Website: the download buttons say "v1.0.10" (hero) and "v1.0.10 · 62 MB" (call-to-action band), in addition to the footer and the Download page details that already had it. `site.appVersion` is the one place to bump.
+- Tests: 85/85 Flutter (new `app_version_test.dart`).

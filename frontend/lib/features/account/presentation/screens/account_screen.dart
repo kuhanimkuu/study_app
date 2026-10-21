@@ -7,6 +7,7 @@ import '../../../../core/analytics/streak.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
 import '../../../../core/settings/model_settings_service.dart';
+import '../../../../core/widgets/app_version_text.dart';
 import '../../../history/presentation/screens/history_screen.dart';
 import '../../../profile/presentation/screens/memory_screen.dart';
 import '../../../profile/presentation/screens/personality_settings_screen.dart';
@@ -817,7 +818,10 @@ class _AccountScreenState extends State<AccountScreen> {
                   icon: Icons.article_outlined,
                   label: 'Open-source licences',
                   sublabel: 'The libraries and fonts Study OS is built with',
-                  onTap: () => showLicensePage(context: context, applicationName: 'Study OS'),
+                  onTap: () async {
+                    final version = await AppVersionText.label();
+                    if (context.mounted) showLicensePage(context: context, applicationName: 'Study OS', applicationVersion: version);
+                  },
                 ),
                 _ProfileRow(
                   icon: Icons.delete_forever_outlined,
@@ -841,7 +845,9 @@ class _AccountScreenState extends State<AccountScreen> {
                     style: OutlinedButton.styleFrom(shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
                   ),
                 ),
-                const SizedBox(height: 32),
+                const SizedBox(height: 20),
+                const AppVersionText(),
+                const SizedBox(height: 24),
               ],
             ),
           ),

@@ -67,7 +67,7 @@ export default function Home() {
             </p>
             <div className="hero-ctas">
               <a className="btn btn-success" href={site.apkUrl} download>
-                <Icon name="download" /> Download for Android
+                <Icon name="download" /> Download for Android <small>v{site.appVersion}</small>
               </a>
               <a className="btn btn-ghost" href="/features/">
                 See what it does

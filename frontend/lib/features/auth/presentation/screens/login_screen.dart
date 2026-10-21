@@ -5,6 +5,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/auth/auth_service.dart';
+import '../../../../core/widgets/app_version_text.dart';
 import '../../../../core/widgets/cold_start_hint.dart';
 import '../../../../core/widgets/gradient_button.dart';
 import '../../../chat/presentation/widgets/server_settings_dialog.dart';
@@ -225,6 +226,8 @@ class _LoginScreenState extends State<LoginScreen> with ColdStartHintMixin {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  const AppVersionText(),
                 ],
               ),
             ),

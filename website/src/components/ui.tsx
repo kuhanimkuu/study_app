@@ -83,7 +83,7 @@ export function CtaBand({ title = 'Ready to study smarter?', text = 'Download St
           </div>
           <div className="cta-actions">
             <a className="btn" href={site.apkUrl} download>
-              <Icon name="download" /> Download APK <small>{site.apkSizeMb} MB</small>
+              <Icon name="download" /> Download APK <small>v{site.appVersion} · {site.apkSizeMb} MB</small>
             </a>
             <a className="cta-link" href="/download/">
               Install help →
