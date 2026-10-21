@@ -21,7 +21,7 @@ const TROUBLE = [
   },
   {
     q: 'Nothing happens when I tap the downloaded file',
-    a: 'Open your Downloads folder (or the Files app) and tap study-os.apk from there.',
+    a: `Open your Downloads folder (or the Files app) and tap study-os-${site.appVersion}.apk from there. The version is in the name, so an older download can't be mixed up with it.`,
   },
   {
     q: 'The app can’t connect',
@@ -77,7 +77,7 @@ export default function Download() {
             </li>
             <li>
               <strong>Open it</strong>
-              <span>Tap the download notification, or find study-os.apk in your Downloads folder.</span>
+              <span>Tap the download notification, or find study-os-{site.appVersion}.apk in your Downloads folder.</span>
             </li>
             <li>
               <strong>Allow the install</strong>

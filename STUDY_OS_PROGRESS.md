@@ -1344,3 +1344,8 @@ The user asked for full text features (copy, paste, edit, emoji, reactions) that
 - The server sent `Content-Disposition: attachment` with no file name, and the site's buttons used `download` on a link to another domain (site on helioho.st, APK on duckdns.org), which browsers ignore anyway.
 - Now `attachment; filename=study-os.apk` (`setup_server.sh`; `ops/apk-download-name.sh` applied it live, with a backup of the site file) and plain links. The Download page's "Trouble installing?" suggests Chrome or Samsung Internet if a browser still closes.
 - Not yet confirmed on the user's phone. Ops scripts must have LF line endings (a CRLF one failed with `set: pipefail: invalid option name`).
+- **Follow-up:** the user's retry downloaded fine (`study-os(1).apk`, hash matching the build). The crash buffer stayed empty while recording; Firefox only reported an earlier crash on restart, then finished the download. The user then asked that the name can't be changed on download.
+  - A browser or file manager can always rename a file, so that part isn't possible. The installed app's name is in the APK and can't change, and Android refuses an update signed by anyone else.
+  - What was fixable: each release is now `download/study-os-<version>.apk`, saved under that name (nginx `filename=$1` from the requested path), so versions don't become "(1)". `study-os.apk` stays as "latest" for old links.
+  - `website/deploy.sh` takes the version from `pubspec.yaml`, refuses to run if `site.ts` disagrees, uploads the versioned file, refreshes `study-os.apk` and deletes older versioned copies.
+  - The Download page names the versioned file. `ops/apk-download-name.sh` updated the live nginx.

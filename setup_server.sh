@@ -275,13 +275,16 @@ server {
     index index.html;
 $WEBSITE_LOCATIONS
     # The APK, served from here whichever host has the website.
-    location ~* \.apk\$ {
+    # Each release is download/study-os-<version>.apk (website/deploy.sh),
+    # saved under that same name, so a phone keeps versions apart instead of
+    # making "study-os(1).apk". study-os.apk is the latest, for old links.
+    location ~* /([^/]+\.apk)\$ {
         include snippets/study-os-headers.conf;
         # so Android recognises the file as an app to install
         types { application/vnd.android.package-archive apk; }
         # With a file name: Firefox for Android crashed on the bare
         # "attachment" (2026-10-21). ops/apk-download-name.sh fixes old servers.
-        add_header Content-Disposition "attachment; filename=study-os.apk";
+        add_header Content-Disposition "attachment; filename=\$1";
     }
 
     # Login/signup: per-address limit, answered in JSON like the app's own

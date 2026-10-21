@@ -34,13 +34,27 @@ if [[ -n "$APK" && ! -f "$APK" ]]; then
   exit 1
 fi
 
+# The app's version (frontend/pubspec.yaml, "1.0.10+11" -> "1.0.10") names
+# the download: study-os-1.0.10.apk. The site shows src/site.ts's
+# appVersion, so the two must agree.
+VERSION=$(sed -n 's/^version: *\([0-9.]*\)+.*/\1/p' ../frontend/pubspec.yaml)
+if ! grep -q "appVersion: '$VERSION'" src/site.ts; then
+  echo "src/site.ts appVersion doesn't match the app's version $VERSION — update it first." >&2
+  exit 1
+fi
+APK_NAME="study-os-$VERSION.apk"
+
 if [[ -n "$APK" ]]; then
-  echo "Uploading the APK to Contabo ($(du -h "$APK" | cut -f1))..."
-  "${SSH[@]}" "mkdir -p $SITE/download && cat > $SITE/download/study-os.apk.part && mv $SITE/download/study-os.apk.part $SITE/download/study-os.apk && chmod a+r $SITE/download/study-os.apk" < "$APK"
+  echo "Uploading the APK to Contabo as $APK_NAME ($(du -h "$APK" | cut -f1))..."
+  # Older versioned files go; study-os.apk stays as "the latest" for old links.
+  "${SSH[@]}" "set -e; cd $SITE/download 2>/dev/null || mkdir -p $SITE/download && cd $SITE/download; \
+    cat > $APK_NAME.part && mv $APK_NAME.part $APK_NAME && chmod a+r $APK_NAME; \
+    cp $APK_NAME study-os.apk.part && mv study-os.apk.part study-os.apk && chmod a+r study-os.apk; \
+    find . -maxdepth 1 -name 'study-os-*.apk' ! -name '$APK_NAME' -delete" < "$APK"
 fi
 
 if [[ "$TARGET" == heliohost ]]; then
-  VITE_SITE_URL=$HELIOHOST_URL VITE_APK_URL=$CONTABO_URL/download/study-os.apk npm run build
+  VITE_SITE_URL=$HELIOHOST_URL VITE_APK_URL=$CONTABO_URL/download/$APK_NAME npm run build
   ZIP="$HOME/Downloads/studyos-website.zip"
   rm -f "$ZIP"
   python - "$ZIP" <<'PY'
@@ -61,7 +75,7 @@ Built $ZIP. To publish it:
 Then check $HELIOHOST_URL/
 EOF
 else
-  npm run build
+  VITE_APK_URL=/download/$APK_NAME npm run build
   echo "Uploading the website to Contabo..."
   tar -czf - -C dist . | "${SSH[@]}" "set -e
     rm -rf $SITE.new && mkdir -p $SITE.new && tar -xzf - -C $SITE.new
