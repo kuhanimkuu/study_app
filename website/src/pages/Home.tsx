@@ -66,7 +66,7 @@ export default function Home() {
               Turn your notes into flashcards, quizzes and a study plan — and ask Sage, your AI study buddy, about anything. Snap a photo, drop in a PDF, or just talk.
             </p>
             <div className="hero-ctas">
-              <a className="btn btn-success" href={site.apkUrl} download>
+              <a className="btn btn-success" href={site.apkUrl}>
                 <Icon name="download" /> Download for Android <small>v{site.appVersion}</small>
               </a>
               <a className="btn btn-ghost" href="/features/">

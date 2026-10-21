@@ -53,7 +53,7 @@ function Header({ path }: { path: string }) {
               {item.label}
             </a>
           ))}
-          <a className="btn btn-success" href={site.apkUrl} download>
+          <a className="btn btn-success" href={site.apkUrl}>
             <Icon name="download" /> Download for Android
           </a>
         </div>

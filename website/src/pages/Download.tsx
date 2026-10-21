@@ -16,6 +16,10 @@ const TROUBLE = [
     a: 'Usually the download didn’t finish, or your phone is low on storage. Free up some space, download the APK again, and retry.',
   },
   {
+    q: 'My browser closes or crashes while downloading',
+    a: 'Some versions of Firefox for Android do this with app downloads. Open this page in Chrome or Samsung Internet instead and tap Download APK there. If it got part-way, delete the unfinished file from Downloads first.',
+  },
+  {
     q: 'Nothing happens when I tap the downloaded file',
     a: 'Open your Downloads folder (or the Files app) and tap study-os.apk from there.',
   },
@@ -38,7 +42,7 @@ export default function Download() {
               Get Study OS <span className="accent">for Android</span>
             </h1>
             <p className="page-lead">Free to download. Install it in a minute, sign up, and Sage will show you around.</p>
-            <a className="btn btn-success btn-big" href={site.apkUrl} download>
+            <a className="btn btn-success btn-big" href={site.apkUrl}>
               <Icon name="download" /> Download APK
             </a>
             <dl className="release-facts">

@@ -279,7 +279,9 @@ $WEBSITE_LOCATIONS
         include snippets/study-os-headers.conf;
         # so Android recognises the file as an app to install
         types { application/vnd.android.package-archive apk; }
-        add_header Content-Disposition "attachment";
+        # With a file name: Firefox for Android crashed on the bare
+        # "attachment" (2026-10-21). ops/apk-download-name.sh fixes old servers.
+        add_header Content-Disposition "attachment; filename=study-os.apk";
     }
 
     # Login/signup: per-address limit, answered in JSON like the app's own
