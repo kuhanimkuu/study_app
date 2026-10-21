@@ -19,6 +19,19 @@ from server.db.session import async_session
 from server.domains.identity.models import User
 
 
+@pytest.fixture(autouse=True)
+def _google_client_id_configured(monkeypatch):
+    """The tests used to pass only where .env happened to set a client id
+    (they failed in CI, which has none). Any value works: Google's token
+    check is mocked in every test."""
+    from server.core.config import get_settings
+
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 def _unique_email() -> str:
     return f"pytest_google_{uuid.uuid4().hex[:12]}@example.com"
 
