@@ -8,6 +8,7 @@ import '../../../../core/auth/auth_service.dart';
 import '../../../../core/widgets/cold_start_hint.dart';
 import '../../../../core/widgets/gradient_button.dart';
 import '../../../chat/presentation/widgets/server_settings_dialog.dart';
+import 'forgot_password_screen.dart';
 import 'signup_screen.dart';
 
 /// Matches the approved visual reference's `Auth.tsx`: a soft gradient
@@ -159,8 +160,22 @@ class _LoginScreenState extends State<LoginScreen> with ColdStartHintMixin {
                       ),
                     ),
                   ),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ForgotPasswordScreen(
+                            authService: widget.authService,
+                            initialEmail: _emailController.text.trim(),
+                          ),
+                        ),
+                      ),
+                      child: const Text('Forgot password?'),
+                    ),
+                  ),
                   if (_error != null) ...[
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 4),
                     Text(_error!, style: TextStyle(color: theme.colorScheme.error)),
                   ],
                   buildColdStartHint(context),

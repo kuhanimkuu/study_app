@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...db.base import Base
@@ -80,3 +80,20 @@ class User(Base):
         """Signup/login response shape — includes encryption_key so the
         device can persist it. Mirrors the old db.py's auth_user()."""
         return {**self.public(), "encryption_key": self.encryption_key}
+
+
+class PasswordResetCode(Base):
+    """A 6-digit code emailed for "forgot password" (2026-10-21). Only an
+    HMAC of the code is stored, so a database leak doesn't hand out live
+    codes. Valid 15 minutes and for 5 tries; a new request replaces it."""
+
+    __tablename__ = "password_reset_codes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, unique=True, index=True
+    )
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

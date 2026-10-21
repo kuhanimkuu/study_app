@@ -187,6 +187,35 @@ class ApiClient {
     return _decode(res);
   }
 
+  /// "Forgot password?": emails a 6-digit code if the email has an account.
+  /// Returns the server's message, which is the same either way.
+  Future<String> requestPasswordReset(String email) async {
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/auth/password-reset/request'),
+          headers: {'Content-Type': 'application/json', ..._baseHeaders},
+          body: jsonEncode({'email': email}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res)['message'] as String;
+  }
+
+  /// Sets a new password with the emailed code; answers like login.
+  Future<Map<String, dynamic>> confirmPasswordReset({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) async {
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/auth/password-reset/confirm'),
+          headers: {'Content-Type': 'application/json', ..._baseHeaders},
+          body: jsonEncode({'email': email, 'code': code, 'new_password': newPassword}),
+        )
+        .timeout(_authRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
   /// Blueprint Section 4's required Google Sign-In — same response shape
   /// as signup/login (token + auth_response including encryption_key),
   /// so AuthService applies it through the exact same path.

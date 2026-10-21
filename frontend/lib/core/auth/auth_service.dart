@@ -193,6 +193,11 @@ class AuthService extends ChangeNotifier {
     await _applyAuthResult(result);
   }
 
+  /// "Forgot password?" with the emailed code: signs in on success.
+  Future<void> resetPassword({required String email, required String code, required String newPassword}) async {
+    await _applyAuthResult(await apiClient.confirmPasswordReset(email: email, code: code, newPassword: newPassword));
+  }
+
   Future<void> _applyAuthResult(Map<String, dynamic> result) async {
     final token = result['token'] as String;
     apiClient.token = token;

@@ -209,6 +209,8 @@ async def get_current_user(
 # so a file token can never be accepted as a login token, and scoped to one
 # file id.
 _FILE_TOKEN_SECRET = _SECRET + ":file-links"
+# Keys the stored HMAC of password-reset codes (identity/router.py).
+RESET_CODE_KEY = (_SECRET + ":password-reset").encode()
 FILE_TOKEN_TTL_SECONDS = 15 * 60
 
 

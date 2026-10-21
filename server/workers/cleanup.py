@@ -123,6 +123,18 @@ def clean_files(live_user_ids: set[int], *, upload_hours: float, generated_days:
     return result
 
 
+async def delete_expired_reset_codes() -> int:
+    """Forgot-password codes past their 15 minutes (identity/router.py)."""
+    from ..domains.identity.models import PasswordResetCode
+
+    async with async_session() as db:
+        result = await db.execute(
+            delete(PasswordResetCode).where(PasswordResetCode.expires_at < datetime.datetime.now(datetime.timezone.utc))
+        )
+        await db.commit()
+    return result.rowcount or 0
+
+
 async def delete_old_client_errors() -> int:
     """App crash reports are kept 30 days after they were last seen, as the
     privacy policy says. Returns how many were deleted."""
@@ -137,6 +149,7 @@ async def run_cleanup_once() -> CleanupResult:
     async with async_session() as db:
         live_user_ids = set((await db.scalars(select(User.id))).all())
     await delete_old_client_errors()
+    await delete_expired_reset_codes()
     result = await asyncio.to_thread(
         clean_files,
         live_user_ids,

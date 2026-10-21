@@ -34,6 +34,11 @@ class StudyReminders {
   final enabled = ValueNotifier<bool>(false);
   final time = ValueNotifier<TimeOfDay>(defaultTime);
 
+  /// Whether Android lets reminders fire at the exact minute ("Alarms &
+  /// reminders" allowed). False means they're scheduled inexactly: Android
+  /// may hold them back by several minutes to save battery.
+  final exact = ValueNotifier<bool>(false);
+
   final _plugin = FlutterLocalNotificationsPlugin();
   bool _initialised = false;
 
@@ -61,11 +66,25 @@ class StudyReminders {
     final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
     final granted = await android?.requestNotificationsPermission() ?? true;
     if (!granted) return false;
+    await requestExactTiming();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_enabledKey, true);
     enabled.value = true;
     await refresh();
     return true;
+  }
+
+  /// Opens Android's "Alarms & reminders" switch for Study OS when it's off
+  /// (Android 12+; older versions allow exact timing already). Declining is
+  /// fine: reminders fall back to inexact timing.
+  Future<void> requestExactTiming() async {
+    if (!supported) return;
+    await _init();
+    final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    if (await android?.canScheduleExactNotifications() != true) {
+      await android?.requestExactAlarmsPermission();
+    }
+    await refresh();
   }
 
   Future<void> disable() async {
@@ -84,18 +103,38 @@ class StudyReminders {
     await refresh();
   }
 
+  /// Re-checks exact timing (e.g. back from the "Alarms & reminders"
+  /// settings page) and reschedules if it changed.
+  Future<void> recheckExactTiming() async {
+    if (!supported || !_initialised) return;
+    final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    final now = await android?.canScheduleExactNotifications() ?? false;
+    if (now != exact.value) await refresh();
+  }
+
+  // Home's latest numbers, reused when a settings change reschedules.
+  int _dueCards = 0;
+  int _streak = 0;
+  bool _studiedToday = false;
+
   /// Reschedules the coming week. Called by Home after each load with real
-  /// numbers; also after a settings change, without them.
-  Future<void> refresh({int dueCards = 0, int streak = 0, bool studiedToday = false}) async {
-    if (!supported || !enabled.value) return;
+  /// numbers; after a settings change, without them (the last ones are kept).
+  Future<void> refresh({int? dueCards, int? streak, bool? studiedToday}) async {
+    _dueCards = dueCards ?? _dueCards;
+    _streak = streak ?? _streak;
+    _studiedToday = studiedToday ?? _studiedToday;
+    if (!supported) return;
     await _init();
+    final android = _plugin.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+    exact.value = await android?.canScheduleExactNotifications() ?? false;
+    if (!enabled.value) return;
     await _cancelAll();
     final slots = planReminders(
       now: DateTime.now(),
       time: time.value,
-      dueCards: dueCards,
-      streak: streak,
-      studiedToday: studiedToday,
+      dueCards: _dueCards,
+      streak: _streak,
+      studiedToday: _studiedToday,
       days: _days,
     );
     const details = NotificationDetails(
@@ -113,7 +152,7 @@ class StudyReminders {
         // A local DateTime is an absolute instant, so UTC is exact here.
         scheduledDate: tz.TZDateTime.from(slots[i].at, tz.UTC),
         notificationDetails: details,
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+        androidScheduleMode: exact.value ? AndroidScheduleMode.exactAllowWhileIdle : AndroidScheduleMode.inexactAllowWhileIdle,
         title: slots[i].title,
         body: slots[i].body,
       );

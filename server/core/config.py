@@ -89,6 +89,14 @@ class Settings(BaseSettings):
     hosted_openai_api_key: str = ""
     hosted_deepseek_api_key: str = ""
 
+    # "Forgot password" emails go through Resend (2026-10-21). Empty key =
+    # the feature answers "not set up on this server" instead of pretending
+    # to send. EMAIL_FROM must be on a domain verified in Resend; Resend's
+    # own onboarding@resend.dev only delivers to the Resend account owner,
+    # which is enough for testing.
+    resend_api_key: str = ""
+    email_from: str = "Study OS <onboarding@resend.dev>"
+
 
 @lru_cache
 def get_settings() -> Settings:

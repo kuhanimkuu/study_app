@@ -13,26 +13,29 @@ locally; routine calls like /me don't re-expose it).
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import secrets
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import crypto
-from ...core import security
+from ...core import email, rate_limit, security
 from ...core.config import get_settings
 from ...core.rate_limit import check_rate_limit
 from ...db.session import get_db
 from .export import export_user_data
-from .models import User
+from .models import PasswordResetCode, User
 
 router = APIRouter()
 
@@ -314,6 +317,118 @@ async def export_account(
     return JSONResponse(
         data, headers={"Content-Disposition": f'attachment; filename="study-os-data-{stamp}.json"'}
     )
+
+
+# --- forgot password (2026-10-21) ---
+# 1. POST /api/auth/password-reset/request {email}: emails a 6-digit code.
+#    The answer is the same whether or not the email has an account, and
+#    the email is sent after the answer, so neither the words nor the time
+#    taken tell anyone which emails are registered.
+# 2. POST /api/auth/password-reset/confirm {email, code, new_password}:
+#    sets the password, signs out every other device and signs this one in.
+_RESET_CODE_TTL = timedelta(minutes=15)
+_RESET_MAX_TRIES = 5
+_RESET_REQUESTS_PER_IP, _RESET_REQUESTS_IP_WINDOW = 20, 60 * 60
+_RESET_REQUESTS_PER_EMAIL, _RESET_REQUESTS_EMAIL_WINDOW = 3, 60 * 60
+_RESET_CONFIRMS_PER_IP, _RESET_CONFIRMS_IP_WINDOW = 30, 60 * 60
+_RESET_SENT = "If an account uses that email, we've sent it a 6-digit code. It works for 15 minutes."
+
+
+class PasswordResetRequest(BaseModel):
+    email: EmailStr
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class PasswordResetConfirm(PasswordResetRequest):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_password: str = Field(max_length=1024)
+
+
+def _reset_code_hash(user_id: int, code: str) -> str:
+    return hmac.new(security.RESET_CODE_KEY, f"{user_id}:{code}".encode(), hashlib.sha256).hexdigest()
+
+
+def _send_reset_code(to: str, code: str) -> None:
+    try:
+        email.send_email(
+            to,
+            subject=f"Your Study OS code: {code}",
+            text=(
+                f"Your code to reset your Study OS password is {code}.\n\n"
+                "Enter it in the app within 15 minutes. If you didn't ask for this, ignore this email: "
+                "your password stays the same."
+            ),
+            html=(
+                "<p>Your code to reset your Study OS password is:</p>"
+                f"<p style=\"font-size:28px;font-weight:700;letter-spacing:4px\">{code}</p>"
+                "<p>Enter it in the app within 15 minutes. If you didn't ask for this, ignore this email: "
+                "your password stays the same.</p>"
+            ),
+        )
+    except Exception:
+        pass  # logged in email.send_email; the student can ask for another code
+
+
+@router.post("/api/auth/password-reset/request")
+async def request_password_reset(
+    payload: PasswordResetRequest, request: Request, background: BackgroundTasks, db: AsyncSession = Depends(get_db)
+) -> dict:
+    if not email.email_configured():
+        raise HTTPException(status_code=503, detail="Password reset by email isn't set up on this server yet.")
+    check_rate_limit(request, "reset_request", _RESET_REQUESTS_PER_IP, _RESET_REQUESTS_IP_WINDOW)
+    try:
+        # Per address being reset too, so nobody can flood one inbox.
+        rate_limit.check_key(f"reset_email:{payload.email}", _RESET_REQUESTS_PER_EMAIL, _RESET_REQUESTS_EMAIL_WINDOW)
+    except HTTPException:
+        return {"message": _RESET_SENT}
+
+    user = await db.scalar(select(User).where(User.email == payload.email))
+    if user is not None:
+        code = f"{secrets.randbelow(10**6):06d}"
+        await db.execute(delete(PasswordResetCode).where(PasswordResetCode.user_id == user.id))
+        db.add(PasswordResetCode(
+            user_id=user.id, code_hash=_reset_code_hash(user.id, code),
+            expires_at=datetime.now(timezone.utc) + _RESET_CODE_TTL,
+        ))
+        await db.commit()
+        background.add_task(asyncio.to_thread, _send_reset_code, user.email, code)
+    return {"message": _RESET_SENT}
+
+
+@router.post("/api/auth/password-reset/confirm")
+async def confirm_password_reset(
+    payload: PasswordResetConfirm, request: Request, db: AsyncSession = Depends(get_db)
+) -> dict:
+    check_rate_limit(request, "reset_confirm", _RESET_CONFIRMS_PER_IP, _RESET_CONFIRMS_IP_WINDOW)
+    wrong = HTTPException(status_code=400, detail="That code is wrong or has expired. Check it, or ask for a new one.")
+    user = await db.scalar(select(User).where(User.email == payload.email))
+    if user is None:
+        raise wrong
+    entry = await db.scalar(
+        select(PasswordResetCode).where(PasswordResetCode.user_id == user.id).with_for_update()
+    )
+    if entry is None or entry.expires_at <= datetime.now(timezone.utc):
+        raise wrong
+    entry.attempts += 1
+    if not hmac.compare_digest(entry.code_hash, _reset_code_hash(user.id, payload.code)):
+        if entry.attempts >= _RESET_MAX_TRIES:
+            await db.delete(entry)
+            await db.commit()
+            raise HTTPException(status_code=400, detail="Too many wrong codes. Ask for a new one.")
+        await db.commit()
+        raise wrong
+    _check_new_password(payload.new_password)
+
+    user.password_hash = await security.hash_password_async(payload.new_password)
+    user.token_version += 1
+    await db.delete(entry)
+    await db.commit()
+    await db.refresh(user)
+    return {"token": security.create_token(user.id, user.token_version), "user": user.auth_response()}
 
 
 _PASSWORD_CHANGE_MAX_ATTEMPTS, _PASSWORD_CHANGE_WINDOW_SECONDS = 10, 5 * 60

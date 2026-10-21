@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...db.base import Base
 
-_SKIP_TABLES = {"users"}  # exported separately, without its secrets
+_SKIP_TABLES = {"users", "password_reset_codes"}  # users: exported separately, without its secrets
 _SKIP_COLUMNS = {
     "stored_files": {"data"},
     "project_indexes": {"data"},

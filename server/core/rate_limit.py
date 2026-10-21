@@ -50,10 +50,10 @@ def check_rate_limit(request: Request, key_prefix: str, max_attempts: int, windo
     hit more than `max_attempts` times from this client IP within the last
     `window_seconds`. Call BEFORE doing the actual work, so a rejected
     request never reaches password verification / DB writes."""
-    _check_key(f"{key_prefix}:{_client_ip(request)}", max_attempts, window_seconds)
+    check_key(f"{key_prefix}:{_client_ip(request)}", max_attempts, window_seconds)
 
 
-def _check_key(key: str, max_attempts: int, window_seconds: int) -> None:
+def check_key(key: str, max_attempts: int, window_seconds: int) -> None:
     now = time.monotonic()
     cutoff = now - window_seconds
 
@@ -76,7 +76,7 @@ def per_user_limit(key_prefix: str, max_attempts: int, window_seconds: int):
     requests would have slowed everyone else's answers and uploads."""
 
     async def dependency(current_user: dict = Depends(security.get_current_user)) -> dict:
-        _check_key(f"{key_prefix}:user:{current_user['id']}", max_attempts, window_seconds)
+        check_key(f"{key_prefix}:user:{current_user['id']}", max_attempts, window_seconds)
         return current_user
 
     return dependency

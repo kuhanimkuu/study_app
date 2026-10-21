@@ -13,9 +13,27 @@ class StudyRemindersCard extends StatefulWidget {
   State<StudyRemindersCard> createState() => _StudyRemindersCardState();
 }
 
-class _StudyRemindersCardState extends State<StudyRemindersCard> {
+class _StudyRemindersCardState extends State<StudyRemindersCard> with WidgetsBindingObserver {
   StudyReminders get _reminders => widget._reminders ?? StudyReminders.instance;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // Back from Android's "Alarms & reminders" page: pick up the new setting.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _reminders.recheckExactTiming();
+  }
 
   Future<void> _toggle(bool on) async {
     setState(() => _busy = true);
@@ -68,6 +86,23 @@ class _StudyRemindersCardState extends State<StudyRemindersCard> {
                   title: const Text('Remind me at'),
                   trailing: Text(time.format(context), style: theme.textTheme.titleSmall),
                   onTap: _pickTime,
+                ),
+              if (enabled)
+                ValueListenableBuilder<bool>(
+                  valueListenable: _reminders.exact,
+                  builder: (context, exact, _) => exact
+                      ? const SizedBox.shrink()
+                      : ListTile(
+                          leading: const SizedBox(width: 24),
+                          title: const Text('Arrive at the exact minute'),
+                          subtitle: const Text(
+                            'Android may delay reminders by a few minutes. Allow "Alarms & reminders" to get them on time.',
+                          ),
+                          trailing: TextButton(
+                            onPressed: _busy ? null : _reminders.requestExactTiming,
+                            child: const Text('Allow'),
+                          ),
+                        ),
                 ),
             ],
           ),

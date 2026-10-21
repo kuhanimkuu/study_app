@@ -107,6 +107,7 @@ export const privacy: LegalSection[] = [
       'Google, if you sign in with Google, to confirm who you are.',
       'Your AI provider (Anthropic, OpenAI or DeepSeek), for the questions you send with your key.',
       'Contabo, the company we rent our server from.',
+      'Resend, which delivers the code email when you use “Forgot password?”. It receives your email address and the code, nothing else.',
       'We don’t sell your data, show ads, or use analytics or tracking in the app or on this website.',
     ],
   },

@@ -1286,3 +1286,24 @@ The user had me check the 245-item engineering checklist in `me.md` against the 
     - Live DB: `/api/health/ready` is OK at head `a1d5f3c97e20`.
     - Webhooks: none exist (payments are mocked).
   - **CI:** 8 accepted Pillow CVEs ignored by ID; failing test names are posted as annotations.
+
+### 2026-10-21 — Release 1.0.8: forgot password (Resend) and exact-time reminders
+
+The user chose Resend for email and asked for exact-time reminders. Play Store and a real domain wait (they want a second developer first; the domain is being looked into).
+
+- **Forgot password:**
+  - `POST /api/auth/password-reset/request` emails a 6-digit code through Resend (`server/core/email.py`, settings `RESEND_API_KEY` and `EMAIL_FROM`). The answer is the same for unknown emails, and the email goes out as a background task after the reply, so neither the wording nor the timing reveals which emails have accounts.
+  - Limits: 20 requests per hour per address, 3 per hour per email (an inbox can't be flooded).
+  - `password_reset_codes` (migration `b7e3d9a41c58`): one row per user, holding only an HMAC of the code (keyed from the JWT secret). Valid 15 minutes and 5 tries; expired rows are removed by the cleanup job; left out of the data export.
+  - `POST /api/auth/password-reset/confirm` sets the password, bumps `token_version` (signs out other devices) and returns a login.
+  - App: "Forgot password?" on the login screen opens `ForgotPasswordScreen` (email, then code plus new password twice).
+  - Privacy policy (app and site) names Resend.
+  - Without `RESEND_API_KEY` the request answers 503 "isn't set up on this server yet".
+  - **Domain caveat:** Resend only delivers to any recipient from a verified domain. `duckdns.org` can't hold its DNS records, so until there's a real domain, `onboarding@resend.dev` only reaches the Resend account owner.
+- **Exact reminders:**
+  - `SCHEDULE_EXACT_ALARM` (not `USE_EXACT_ALARM`, which Play limits to alarm and calendar apps).
+  - Turning reminders on also opens Android's "Alarms & reminders" switch. If it's off, Profile shows "Arrive at the exact minute → Allow", and the setting is re-checked when the app returns to the foreground.
+  - Scheduling uses `exactAllowWhileIdle` when allowed, inexact otherwise.
+  - `refresh()` keeps Home's last streak and due counts, so rescheduling after a settings change keeps the personal wording.
+- **CI:** the Google sign-in tests set their own client id (they had depended on the local `.env`). CI is green.
+- **Tests:** 237/237 backend (new `test_password_reset.py`), 70/70 Flutter (new `forgot_password_test.dart`).

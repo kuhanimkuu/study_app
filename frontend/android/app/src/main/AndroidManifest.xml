@@ -36,8 +36,13 @@
     <!-- Study reminders (core/notifications/study_reminders.dart, 2026-10-20):
          opt-in from Profile, which is when Android 13+ asks for
          POST_NOTIFICATIONS. BOOT_COMPLETED lets a scheduled reminder survive
-         a restart. Inexact timing on purpose, so no exact-alarm permission. -->
+         a restart. SCHEDULE_EXACT_ALARM (2026-10-21): reminders at the exact
+         minute chosen, once the student allows "Alarms & reminders" (asked
+         when they turn reminders on); without it they still arrive, just
+         less precisely. Not USE_EXACT_ALARM, which Play reserves for alarm
+         and calendar apps. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
         android:label="Study OS"
