@@ -127,6 +127,26 @@ async def test_deleting_an_upload_removes_exactly_its_content(client, project):
         assert await db.scalar(select(func.count()).select_from(StoredFile).where(StoredFile.id.in_([b["file_id"], c["file_id"]]))) == 0
 
 
+async def test_deleting_two_uploads_at_once_removes_the_right_content(client, project):
+    """Two deletes in one project at the same time (two quick taps): the
+    second used the position it read before waiting for the first, which
+    had already shifted it, so it cut out a third file's passages."""
+    import asyncio
+
+    await _upload_text_file(client, project, "osmosis.txt", "Osmosis moves water across membranes. " * 30)
+    b = await _upload_text_file(client, project, "golgi.txt", "The Golgi apparatus packages proteins. " * 30)
+    c = await _upload_text_file(client, project, "ribosome.txt", "Ribosomes translate messenger RNA. " * 30)
+    await _upload_text_file(client, project, "lysosome.txt", "Lysosomes digest waste with enzymes. " * 30)
+
+    results = await asyncio.gather(*(
+        client.delete(f"/api/projects/{project['slug']}/materials/{m['id']}", headers=project["headers"]) for m in (b, c)
+    ))
+    assert [r.status_code for r in results] == [200, 200]
+    assert any("Osmosis" in x for x in await _search(client, project, "osmosis water"))
+    assert any("Lysosomes" in x for x in await _search(client, project, "lysosomes digest waste"))
+    assert not any("Golgi" in x or "Ribosomes" in x for x in await _search(client, project, "Golgi ribosomes proteins RNA"))
+
+
 async def test_legacy_upload_without_a_recorded_slice(client, project):
     a = await _upload_text_file(client, project, "old.txt", "Osmosis moves water. " * 30)
     async with async_session() as db:  # what an upload from before chunk tracking looks like

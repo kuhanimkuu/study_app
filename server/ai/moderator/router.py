@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core import security
+from ...core.rate_limit import ai_user
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ...domains.billing import service as billing_service
@@ -46,7 +47,7 @@ class ExplainResponse(BaseModel):
 async def explain_concept(
     concept_id: int,
     payload: ExplainRequest | None = None,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> ExplainResponse:
     concept = await get_concept_or_404(db, current_user["id"], concept_id)

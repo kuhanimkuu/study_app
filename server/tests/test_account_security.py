@@ -183,3 +183,42 @@ async def test_readiness_check_reaches_the_database(client):
     resp = await client.get("/api/health/ready")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok", "database": "ok"}
+
+
+async def test_ai_and_upload_limits_are_per_account():
+    from fastapi import HTTPException
+
+    from server.core.rate_limit import per_user_limit
+
+    limited = per_user_limit("pytest_ai", 2, 60)
+    student_a, student_b = {"id": 900001}, {"id": 900002}
+    assert await limited(current_user=student_a) is student_a
+    await limited(current_user=student_a)
+    with pytest.raises(HTTPException) as refused:
+        await limited(current_user=student_a)
+    assert refused.value.status_code == 429
+    assert await limited(current_user=student_b) is student_b  # someone else is unaffected
+
+
+def test_ai_routes_use_the_per_account_limit():
+    import inspect
+
+    from server.ai.moderator import router as explain_router
+    from server.core.rate_limit import ai_user, upload_user
+    from server.domains.assessment import router as assessment_router
+    from server.domains.knowledge import router as knowledge_router
+    from server.domains.learning import router as learning_router
+    from server.routers import ask
+
+    def guard(endpoint):
+        return getattr(inspect.signature(endpoint).parameters["current_user"].default, "dependency", None)
+
+    for endpoint in (ask.ask_text, ask.ask_image, ask.ask_pdf, ask.ask_audio, ask.ask_web, ask.ask_project,
+                     knowledge_router.generate_studio_doc):
+        assert guard(endpoint) is ai_user, endpoint.__name__
+    assert guard(knowledge_router.add_material) is upload_user
+    for module in (explain_router, assessment_router, learning_router):
+        assert any(
+            "current_user" in inspect.signature(f).parameters and guard(f) is ai_user
+            for f in vars(module).values() if inspect.iscoroutinefunction(f)
+        ), module.__name__

@@ -49,6 +49,7 @@ from ..ai.moderator.style import build_adaptive_style_note, verbosity_max_tokens
 from ..ai.personality.router import get_or_create_personality
 from ..ai.schemas import ModeratorResponse
 from ..core import security
+from ..core.rate_limit import ai_user
 from ..core.threads import run_engine_in_thread
 from ..core.model_config import ModelConfig, resolve_model_config_async
 from ..db.session import get_db
@@ -216,7 +217,7 @@ async def _charge_hosted_usage(result: dict, model_config: dict, db: AsyncSessio
 @router.post("/api/ask/text", response_model=ModeratorResponse)
 async def ask_text(
     payload: TextAsk,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     classified = await engines.text_input.run(content=payload.content)
@@ -265,7 +266,7 @@ async def ask_image(
     file: UploadFile = File(...),
     session_id: str = Form("default"),
     model_config_json: str | None = Form(None, alias="model_config"),
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
@@ -292,7 +293,7 @@ async def ask_pdf(
     query: str | None = Form(None),
     session_id: str = Form("default"),
     model_config_json: str | None = Form(None, alias="model_config"),
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """`file` is required on the first call in a session; a follow-up call
@@ -327,7 +328,7 @@ async def ask_audio(
     file: UploadFile = File(...),
     session_id: str = Form("default"),
     model_config_json: str | None = Form(None, alias="model_config"),
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     resolved_config = await _resolve_form_model_config(model_config_json, current_user, db)
@@ -356,7 +357,7 @@ class WebAsk(BaseModel):
 
 
 @router.post("/api/ask/web", response_model=ModeratorResponse)
-async def ask_web(payload: WebAsk, current_user: dict = Depends(security.get_current_user)) -> dict:
+async def ask_web(payload: WebAsk, current_user: dict = Depends(ai_user)) -> dict:
     """Fetches and returns the page content directly, NOT routed through
     the moderator — the moderator has no web-content route implemented,
     so pretending it "understands" fetched web content would produce a
@@ -387,7 +388,7 @@ class ProjectAsk(BaseModel):
 @router.post("/api/ask/project", response_model=ModeratorResponse)
 async def ask_project(
     payload: ProjectAsk,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Mirrors /api/ask/pdf's shape: first call names a project (no query

@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core import security
+from ...core.rate_limit import ai_user
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ..knowledge.models import KnowledgeSpace
@@ -94,7 +95,7 @@ class GenerateRequest(BaseModel):
 async def generate_concepts(
     slug: str,
     payload: GenerateRequest,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Extracts the key concepts from this space's uploaded material and
@@ -336,7 +337,7 @@ async def create_flashcard(
 async def generate_flashcards(
     slug: str,
     payload: GenerateRequest,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Writes flashcards from this space's material straight into its deck

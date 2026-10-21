@@ -1274,3 +1274,15 @@ The user had me check the 245-item engineering checklist in `me.md` against the 
   - Point-in-time recovery.
   - Branch protection (would block direct pushes to main).
   - A staging server.
+- **Follow-up check (same day): race conditions, N+1, error tracking, rate limits, background jobs, spend alerts, rollback, live DB, webhooks, backups.**
+  - **Race, fixed:** deleting two files of one project at once cut a third file's passages out of the search index. The material row was read before the index lock, so its chunk_start was stale. It is now re-read inside the lock; the test fails on the old code.
+  - **Rate limits, fixed:** per-account limits now apply to the AI routes (`/api/ask/*`, explain, generate, studio: 120 per 10 minutes) and material uploads (30 per hour). There was no limit there, and heavy jobs share one queue.
+  - **Checked, no problem:**
+    - N+1: only refreshes of the ≤15 rows just generated.
+    - Error tracking: no crash reports in 7 days, no 500s in 24 h.
+    - Background jobs: cleanup ran; nightly backups ran on the 19th, 20th and 21st.
+    - Spend: per-student monthly limit.
+    - Rollback: the new migration goes down and up.
+    - Live DB: `/api/health/ready` is OK at head `a1d5f3c97e20`.
+    - Webhooks: none exist (payments are mocked).
+  - **CI:** 8 accepted Pillow CVEs ignored by ID; failing test names are posted as annotations.

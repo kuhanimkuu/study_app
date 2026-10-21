@@ -29,8 +29,8 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://study_os_app:study_os_app@localhost:5432/study_os
       JWT_SECRET: ci-only-not-a-real-secret
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"  # Ubuntu 24.04's, as on the Contabo server
           cache: pip
@@ -39,7 +39,15 @@ jobs:
         run: sudo apt-get update -q && sudo apt-get install -y -q tesseract-ocr ffmpeg
       - run: pip install -r requirements-dev.txt
       - run: alembic upgrade head
-      - run: python -m pytest -q
+      - name: Tests
+        # Failing test names go out as annotations: run logs need a GitHub
+        # login to read, annotations don't.
+        run: |
+          set +e
+          python -m pytest -q -rfE 2>&1 | tee pytest.log
+          status=${PIPESTATUS[0]}
+          grep -E '^(FAILED|ERROR) ' pytest.log | head -20 | sed 's/^/::error::/'
+          exit $status
 
   app:
     runs-on: ubuntu-24.04
@@ -47,7 +55,7 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.35.6"
@@ -59,15 +67,24 @@ jobs:
   security:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0  # gitleaks scans the whole history
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - run: pip install pip-audit
       - name: Known vulnerabilities in Python packages
-        run: pip-audit -r requirements.txt
+        # Accepted on purpose (2026-10-21): Pillow CVEs fixed only in 13.0,
+        # which fastembed doesn't allow yet. All are in the TIFF/GIF/EPS/PPM
+        # decoders; uploads must carry a JPEG/PNG/WebP/GIF/BMP signature
+        # (routers/ask.py), so TIFF/EPS/PPM never reach Pillow. Drop these
+        # once fastembed allows Pillow 13.
+        run: >-
+          pip-audit -r requirements.txt
+          --ignore-vuln CVE-2026-112895 --ignore-vuln CVE-2026-112400 --ignore-vuln CVE-2026-112397
+          --ignore-vuln CVE-2026-112896 --ignore-vuln CVE-2026-112897 --ignore-vuln CVE-2026-112395
+          --ignore-vuln CVE-2026-112404 --ignore-vuln CVE-2026-112899
       - name: Secrets committed to git
         uses: gitleaks/gitleaks-action@v2
         env:

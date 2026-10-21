@@ -31,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
 from ...core import security
+from ...core.rate_limit import ai_user, upload_user
 from ...core.threads import run_engine_in_thread
 from ...db.session import async_session, get_db
 from . import index_store
@@ -207,7 +208,7 @@ async def add_material(
     file: UploadFile | None = File(None),
     text: str | None = Form(None),
     url: str | None = Form(None),
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(upload_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Accepts `file` (.pdf or .txt), `text` (pasted), or `url` (a web page,
@@ -389,6 +390,10 @@ async def delete_material(
         raise HTTPException(status_code=409, detail="this file is still being indexed — try again once it's ready")
 
     async with _index_lock():
+        # Re-read inside the lock: another delete in this project may have
+        # just shifted this file's chunk_start while we waited, and the
+        # stale value cut out a different file's passages (2026-10-21).
+        await db.refresh(material)
         if material.status == "indexed":
             await index_store.ensure_index_file(db, current_user["id"], slug)
             projects_dir = engines.moderator._user_projects_dir(current_user["id"])
@@ -466,7 +471,7 @@ class GenerateStudioDoc(BaseModel):
 async def generate_studio_doc(
     slug: str,
     payload: GenerateStudioDoc,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     if payload.doc_type not in _DOC_TYPES:

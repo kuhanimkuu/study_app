@@ -19,7 +19,9 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 
-from fastapi import HTTPException, Request
+from fastapi import Depends, HTTPException, Request
+
+from . import security
 
 # Bounds unbounded memory growth from an attacker spraying requests across
 # many distinct IPs — once the tracked-key count crosses this, keys with no
@@ -48,7 +50,10 @@ def check_rate_limit(request: Request, key_prefix: str, max_attempts: int, windo
     hit more than `max_attempts` times from this client IP within the last
     `window_seconds`. Call BEFORE doing the actual work, so a rejected
     request never reaches password verification / DB writes."""
-    key = f"{key_prefix}:{_client_ip(request)}"
+    _check_key(f"{key_prefix}:{_client_ip(request)}", max_attempts, window_seconds)
+
+
+def _check_key(key: str, max_attempts: int, window_seconds: int) -> None:
     now = time.monotonic()
     cutoff = now - window_seconds
 
@@ -61,6 +66,25 @@ def check_rate_limit(request: Request, key_prefix: str, max_attempts: int, windo
 
     attempts.append(now)
     _prune_stale_keys(window_seconds)
+
+
+def per_user_limit(key_prefix: str, max_attempts: int, window_seconds: int):
+    """A dependency used in place of security.get_current_user: the same
+    signed-in user, limited per account rather than per address (2026-10-21).
+    The AI and upload routes had no limit at all, and heavy jobs (OCR, PDF,
+    audio) wait in one shared queue, so one account sending hundreds of
+    requests would have slowed everyone else's answers and uploads."""
+
+    async def dependency(current_user: dict = Depends(security.get_current_user)) -> dict:
+        _check_key(f"{key_prefix}:user:{current_user['id']}", max_attempts, window_seconds)
+        return current_user
+
+    return dependency
+
+
+# Far above real use (a student chatting flat out sends a few a minute).
+ai_user = per_user_limit("ai", 120, 10 * 60)
+upload_user = per_user_limit("material_upload", 30, 60 * 60)
 
 
 def reset() -> None:

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...ai.memory.service import create_episodic_memory
 from ...core import security
+from ...core.rate_limit import ai_user
 from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...db.session import get_db
 from ..billing import service as billing_service
@@ -95,7 +96,7 @@ async def create_question(
 async def generate_questions(
     concept_id: int,
     payload: GenerateRequest,
-    current_user: dict = Depends(security.get_current_user),
+    current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Writes practice questions (mcq / true_false / short_answer) for one
