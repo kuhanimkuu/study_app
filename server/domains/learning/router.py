@@ -367,23 +367,57 @@ async def generate_flashcards(
     cards = generation.parse_flashcards(text, payload.count)
     if not cards:
         raise generation._nothing_usable("flashcards")
+    return await _save_new_cards(db, space.id, payload.concept_id, cards)
 
+
+async def _save_new_cards(db: AsyncSession, space_id: int, concept_id: int | None, cards: list[tuple[str, str]]) -> dict:
+    """Adds the cards whose front isn't in the deck yet."""
     existing_fronts = {
         f.lower()
-        for f in (await db.scalars(select(Flashcard.front).where(Flashcard.knowledge_space_id == space.id))).all()
+        for f in (await db.scalars(select(Flashcard.front).where(Flashcard.knowledge_space_id == space_id))).all()
     }
     created: list[Flashcard] = []
     for front, back in cards:
         if front.lower() in existing_fronts:
             continue
         existing_fronts.add(front.lower())
-        card = Flashcard(knowledge_space_id=space.id, concept_id=payload.concept_id, front=front, back=back)
+        card = Flashcard(knowledge_space_id=space_id, concept_id=concept_id, front=front, back=back)
         db.add(card)
         created.append(card)
     await db.commit()
     for c in created:
         await db.refresh(c)
     return {"flashcards": [c.public() for c in created], "skipped_existing": len(cards) - len(created)}
+
+
+class CardsFromText(BaseModel):
+    text: str = Field(min_length=20, max_length=12_000)
+    count: int = Field(default=5, ge=1, le=12)
+    model_config_: ModelConfig | None = Field(default=None, alias="model_config")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+@router.post("/knowledge-spaces/{slug}/flashcards/from-text")
+async def flashcards_from_text(
+    slug: str,
+    payload: CardsFromText,
+    current_user: dict = Depends(ai_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """"Save as flashcards" under a chat answer (2026-10-21): the answer's
+    key facts become cards in this subject's review queue, so something
+    learnt in chat gets remembered too."""
+    space = await get_space_or_404(db, current_user["id"], slug)
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    text = await generation.call_model(
+        generation.flashcards_prompt(payload.text, payload.count, None), 120 + 90 * payload.count,
+        model_config, db, current_user["id"],
+    )
+    cards = generation.parse_flashcards(text, payload.count)
+    if not cards:
+        raise generation._nothing_usable("flashcards")
+    return await _save_new_cards(db, space.id, None, cards)
 
 
 @router.get("/knowledge-spaces/{slug}/flashcards")

@@ -171,8 +171,18 @@ async def submit_attempt(
     concept = await get_concept_or_404(db, current_user["id"], question.concept_id)
 
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    return await grade_and_record(db, current_user["id"], question, concept, payload.answer, model_config)
+
+
+async def grade_and_record(
+    db: AsyncSession, user_id: int, question: Question, concept: Concept, answer: Any, model_config: dict
+) -> dict:
+    """Grades one answer and records it: the attempt, FSRS mastery,
+    a mastered-concept memory, and misconception status — in one commit.
+    Shared by the attempt endpoint and lessons (domains/tutor), so a
+    lesson's check questions count exactly like practice (2026-10-21)."""
     try:
-        is_correct, feedback, evaluated_by = await grade(question, payload.answer, model_config)
+        is_correct, feedback, evaluated_by = await grade(question, answer, model_config)
     except UnsupportedQuestionType as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except GradingInputError as exc:
@@ -185,14 +195,12 @@ async def submit_attempt(
     # call — see grading.py's _grade_via_llm doc comment. Only the hosted
     # tier (model_config carries "hosted_provider") gets billed for it;
     # every backend's call is logged for the token meter.
-    await billing_service.record_ai_usage(
-        db, current_user["id"], model_config, model_config.get("_billed_usage"), "grading"
-    )
+    await billing_service.record_ai_usage(db, user_id, model_config, model_config.get("_billed_usage"), "grading")
 
     attempt = QuestionAttempt(
-        user_id=current_user["id"],
+        user_id=user_id,
         question_id=question.id,
-        submitted_answer=payload.answer,
+        submitted_answer=answer,
         is_correct=is_correct,
         evaluated_by=evaluated_by,
         feedback=feedback,
@@ -200,7 +208,7 @@ async def submit_attempt(
     db.add(attempt)
     await db.flush()  # so this attempt is included in the misconception streak check below
 
-    mastery = await get_or_create_mastery(db, current_user["id"], question.concept_id)
+    mastery = await get_or_create_mastery(db, user_id, question.concept_id)
     score_before = mastery_score(mastery) if mastery.attempts > 0 else 0.0
     review_after_attempt(mastery, is_correct)
     score_after = mastery_score(mastery)
@@ -208,12 +216,12 @@ async def submit_attempt(
     if score_before < _MASTERED_THRESHOLD <= score_after:
         await create_episodic_memory(
             db,
-            current_user["id"],
+            user_id,
             key=concept.name,
             value={"event": "concept_mastered", "concept_id": concept.id, "mastery": score_after},
         )
 
-    await _check_misconception(db, current_user["id"], concept)
+    await _check_misconception(db, user_id, concept)
 
     await db.commit()
     await db.refresh(mastery)

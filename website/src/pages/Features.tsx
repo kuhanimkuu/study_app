@@ -93,6 +93,8 @@ export default function Features() {
                   <strong>Maths:</strong> solve, simplify, differentiate, integrate and graph — including interactive graphs and unit conversion
                 </>,
                 <>Explanations, diagrams of processes and quick quizzes <em className="ai-pill">AI</em></>,
+                <>After explaining, Sage asks a quick question to check you got it — or switch to just answers <em className="ai-pill">AI</em></>,
+                <>“Learn more” under any answer: a lesson on it, a quiz, or flashcards <em className="ai-pill">AI</em></>,
                 <>Study guides, practice exams and flashcards as downloadable PDFs <em className="ai-pill">AI</em></>,
                 'Looks things up on the web when you ask about something current',
                 'Every chat saved on your phone — or turned into a new subject',
@@ -114,6 +116,9 @@ export default function Features() {
             <Checks
               color="var(--xp)"
               items={[
+                <>
+                  <strong>Lessons on any topic:</strong> Sage teaches in short steps, checks each one with a question, and turns the recap into flashcards <em className="ai-pill">AI</em>
+                </>,
                 'Flashcards scheduled with FSRS spaced repetition — rate each one Again, Hard, Good or Easy',
                 'Quizzes with ten kinds of questions, plus an exam mode that gives feedback only at the end',
                 <>Written answers and essays graded with feedback <em className="ai-pill">AI</em></>,

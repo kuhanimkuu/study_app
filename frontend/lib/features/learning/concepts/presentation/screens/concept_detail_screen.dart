@@ -9,6 +9,7 @@ import '../../../../chat/presentation/widgets/block_view.dart';
 import '../../../../practice/questions/presentation/screens/create_question_screen.dart';
 import '../../../../practice/questions/presentation/screens/question_practice_screen.dart';
 import '../../../../practice/quizzes/presentation/screens/quiz_runner_screen.dart';
+import '../../../../tutor/lessons/lesson_screen.dart';
 
 /// One concept: description, mastery, an on-demand explanation (reuses the
 /// chat feature's BlockView rather than a new renderer — see the approved
@@ -279,6 +280,19 @@ class _ConceptDetailScreenState extends State<ConceptDetailScreen> {
                     );
                   }),
                   const SizedBox(height: 24),
+                  // A lesson teaches and checks; Explain just explains.
+                  GradientButton(
+                    label: 'Learn this in a lesson',
+                    icon: Icons.school_rounded,
+                    color: StudyOsColors.success,
+                    onPressed: () async {
+                      await Navigator.of(context).push(MaterialPageRoute(
+                        builder: (_) => LessonScreen(apiClient: widget.apiClient, conceptId: _conceptId),
+                      ));
+                      _load();
+                    },
+                  ),
+                  const SizedBox(height: 10),
                   GradientButton(
                     label: 'Explain this to me',
                     icon: Icons.auto_awesome_rounded,

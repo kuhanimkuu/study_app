@@ -462,6 +462,7 @@ class ApiClient {
     required String sessionId,
     List<Map<String, dynamic>>? history,
     String? regenerate,
+    bool tutorMode = true,
   }) async {
     final res = await _http
         .post(
@@ -479,6 +480,9 @@ class ApiClient {
             // ChatMessage.historyFor and the server's TextAsk.
             if (history != null && history.isNotEmpty) 'history': history,
             if (regenerate != null) 'regenerate': regenerate,
+            // Sage ends explanations with a check question (2026-10-21);
+            // false is the "Just answer" switch.
+            'tutor_mode': tutorMode,
           }),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
@@ -561,6 +565,7 @@ class ApiClient {
     required String sessionId,
     List<Map<String, dynamic>>? history,
     String? regenerate,
+    bool tutorMode = true,
   }) async {
     final modelConfig = await _resolveModelConfig(null);
     final res = await _http
@@ -575,7 +580,87 @@ class ApiClient {
             if (modelConfig != null) 'model_config': modelConfig,
             if (history != null && history.isNotEmpty) 'history': history,
             if (regenerate != null) 'regenerate': regenerate,
+            'tutor_mode': tutorMode,
           }),
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  // --- lessons (2026-10-21) — server/domains/tutor/router.py ---
+
+  /// Writes a lesson on [topic] (in [subjectSlug], or "My lessons"), or on
+  /// a subject's concept. Takes a while: one AI call writes the whole lesson.
+  Future<Map<String, dynamic>> startLesson({String? topic, String? subjectSlug, int? conceptId}) async {
+    final modelConfig = await _resolveModelConfig(null);
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/lessons'),
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            if (topic != null) 'topic': topic,
+            if (subjectSlug != null) 'knowledge_space_slug': subjectSlug,
+            if (conceptId != null) 'concept_id': conceptId,
+            if (modelConfig != null) 'model_config': modelConfig,
+          }),
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> getLesson(int lessonId) async {
+    final res = await _http
+        .get(Uri.parse('$baseUrl/api/v1/lessons/$lessonId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// [status]: "in_progress" or "completed"; null for all.
+  Future<List<Map<String, dynamic>>> listLessons({String? status, int limit = 10}) async {
+    final query = {'limit': '$limit', if (status != null) 'status': status};
+    final res = await _http
+        .get(Uri.parse('$baseUrl/api/v1/lessons').replace(queryParameters: query), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return (_decode(res)['lessons'] as List).cast<Map<String, dynamic>>();
+  }
+
+  Future<Map<String, dynamic>> answerLessonStep(int lessonId, int stepIndex, Object answer) async {
+    final modelConfig = await _resolveModelConfig(null);
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/lessons/$lessonId/steps/$stepIndex/answer'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'answer': answer, if (modelConfig != null) 'model_config': modelConfig}),
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  /// Finishes a lesson; its recap becomes flashcards. Returns
+  /// {"lesson", "flashcards_added"}.
+  Future<Map<String, dynamic>> completeLesson(int lessonId) async {
+    final res = await _http
+        .post(Uri.parse('$baseUrl/api/v1/lessons/$lessonId/complete'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<void> deleteLesson(int lessonId) async {
+    final res = await _http
+        .delete(Uri.parse('$baseUrl/api/v1/lessons/$lessonId'), headers: _authHeaders)
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    _decode(res);
+  }
+
+  /// "Save as flashcards" under a chat answer: its key facts become cards
+  /// in [subjectSlug]'s review queue.
+  Future<Map<String, dynamic>> flashcardsFromText({required String subjectSlug, required String text, int count = 5}) async {
+    final modelConfig = await _resolveModelConfig(null);
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/knowledge-spaces/$subjectSlug/flashcards/from-text'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'text': text, 'count': count, if (modelConfig != null) 'model_config': modelConfig}),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);

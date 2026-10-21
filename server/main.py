@@ -80,6 +80,7 @@ from .domains.knowledge.router import router as knowledge_router
 from .domains.knowledge.search_router import router as search_router
 from .domains.learning.router import router as learning_router
 from .domains.planning.router import router as planning_router
+from .domains.tutor.router import router as tutor_router
 from .routers import ask, health
 from .workers.cleanup import cleanup_loop
 
@@ -152,6 +153,7 @@ app.include_router(ask.router)
 app.include_router(learning_router)
 app.include_router(assessment_router)
 app.include_router(planning_router)
+app.include_router(tutor_router)
 app.include_router(moderator_router)
 app.include_router(memory_router)
 app.include_router(personality_router)

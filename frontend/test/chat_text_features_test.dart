@@ -69,6 +69,20 @@ void main() {
     expect(retried, isTrue);
   });
 
+  testWidgets("Sage's replies offer Learn more", (tester) async {
+    var opened = false;
+    await tester.pumpWidget(_wrap(MessageBubble(
+      message: ChatMessage.response([
+        {'type': 'text', 'content': 'Osmosis is water moving.', 'source': 'moderator'},
+      ]),
+      baseUrl: 'http://test',
+      onReact: (_) {},
+      onLearnMore: () => opened = true,
+    )));
+    await tester.tap(find.text('Learn more'));
+    expect(opened, isTrue);
+  });
+
   test('emoji go in at the cursor', () {
     final controller = TextEditingController(text: 'great job');
     controller.selection = const TextSelection.collapsed(offset: 5);

@@ -15,6 +15,8 @@ import '../../../../core/widgets/sage_mascot.dart';
 import '../../../chat/chat_quick_action.dart';
 import '../../../practice/flashcards/presentation/screens/flashcard_review_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
+import '../../../tutor/lessons/lesson_entry_card.dart';
+import '../../../tutor/lessons/lesson_screen.dart';
 
 /// "What should I study right now?" — the landing tab.
 ///
@@ -155,6 +157,15 @@ class _HomeScreenState extends State<HomeScreen> {
     _load();
   }
 
+  /// A lesson on a concept the student is weak at: it re-teaches it and
+  /// its checks count as practice.
+  Future<void> _lessonOn(Map<String, dynamic> masteryItem) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (context) => LessonScreen(apiClient: widget.apiClient, conceptId: masteryItem['concept_id'] as int),
+    ));
+    _load();
+  }
+
   Future<void> _openFlashcardReview() async {
     await Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => FlashcardReviewScreen(apiClient: widget.apiClient)),
@@ -250,8 +261,28 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                   ],
+                  // Learning first (2026-10-21): a lesson to start or finish,
+                  // the weakest concept to strengthen, and cards due — the
+                  // chat tools moved to the bottom.
+                  const _SectionTitle('Today'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: LessonEntryCard(apiClient: widget.apiClient, onLessonClosed: _load),
+                  ),
+                  if (weakest.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _StrengthenCard(item: weakest.first, onStart: () => _lessonOn(weakest.first)),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _FlashcardDeckCard(count: dueCount, capped: dueCount >= _dueLimit, onReview: _openFlashcardReview),
+                  ),
                   if (phases.isNotEmpty) ...[
-                    const _SectionTitle('Continue learning'),
+                    const _SectionTitle('Your study plan'),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       child: _ContinueCard(phase: phases.first as Map<String, dynamic>, totalPhases: phases.length, onStart: widget.onOpenPlanner),
@@ -267,16 +298,6 @@ class _HomeScreenState extends State<HomeScreen> {
                       onAdd: widget.onOpenProjects,
                     ),
                   ),
-                  const _SectionTitle('Flashcards'),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _FlashcardDeckCard(count: dueCount, capped: dueCount >= _dueLimit, onReview: _openFlashcardReview),
-                  ),
-                  const _SectionTitle('Study tools'),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: _ToolsRow(onAction: widget.onQuickAction),
-                  ),
                   if (weakest.isNotEmpty) ...[
                     _SectionTitle('Needs a little love', actionLabel: 'Practice', onAction: widget.onOpenPractice),
                     Padding(
@@ -284,6 +305,11 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Column(children: [for (final m in weakest) _WeakConceptRow(item: m)]),
                     ),
                   ],
+                  const _SectionTitle('Ask Sage'),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _ToolsRow(onAction: widget.onQuickAction),
+                  ),
                 ],
               );
             },
@@ -353,7 +379,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Text('Hi ${_firstName()}!', style: theme.textTheme.headlineMedium?.copyWith(color: Colors.white)),
                       const SizedBox(height: 6),
                       Text(
-                        "I'm Sage, your study buddy. Let's set up your first subject.",
+                        "I'm Sage, your study buddy. Tell me a topic and I'll teach it — or add your class notes.",
                         style: theme.textTheme.bodyMedium?.copyWith(color: Colors.white.withValues(alpha: 0.92)),
                       ),
                     ],
@@ -364,7 +390,11 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
+          LessonEntryCard(apiClient: widget.apiClient, onLessonClosed: _load),
+          const SizedBox(height: 24),
+          Align(alignment: Alignment.centerLeft, child: Text('Studying a course?', style: theme.textTheme.titleLarge)),
+          const SizedBox(height: 12),
           for (final (i, step) in steps.indexed)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -429,6 +459,45 @@ class _CardSurface extends StatelessWidget {
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(borderRadius: radius, onTap: onTap, child: Padding(padding: padding, child: child)),
+      ),
+    );
+  }
+}
+
+/// "Strengthen: (concept)" — the weakest concept, re-taught as a lesson.
+class _StrengthenCard extends StatelessWidget {
+  const _StrengthenCard({required this.item, required this.onStart});
+
+  final Map<String, dynamic> item;
+  final VoidCallback onStart;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final mastery = (item['mastery'] as num).toDouble();
+    return _CardSurface(
+      onTap: onStart,
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(color: StudyOsColors.streak, borderRadius: BorderRadius.circular(14)),
+            child: const Icon(Icons.fitness_center_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Strengthen: ${item['concept_name']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMedium),
+                const SizedBox(height: 2),
+                Text('${(mastery * 100).round()}% mastered · a quick lesson to fix it', style: theme.textTheme.bodySmall),
+              ],
+            ),
+          ),
+          Icon(Icons.chevron_right_rounded, color: theme.colorScheme.onSurfaceVariant),
+        ],
       ),
     );
   }

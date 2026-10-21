@@ -9,6 +9,7 @@ import '../../../../../core/widgets/profile_icon_button.dart';
 import '../../../../practice/flashcards/presentation/screens/flashcard_review_screen.dart';
 import '../../../../practice/quizzes/presentation/screens/quiz_runner_screen.dart';
 import 'concept_detail_screen.dart';
+import '../../../../tutor/lessons/lesson_entry_card.dart';
 
 /// Account-wide Learn hub — matches the approved visual reference's
 /// `Learn.tsx`: mode buttons (Flashcards/Quiz/Practice), a subject filter,
@@ -203,11 +204,15 @@ class _LearnHubScreenState extends State<LearnHubScreen> {
               final dueCount = (_dueFlashcards ?? []).length;
 
               if (mastery.isEmpty) {
+                // Not a dead end (2026-10-21): with no notes yet, a lesson
+                // is the way in — it creates the concept and its cards.
                 return ListView(
-                  children: const [
-                    EmptyState(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    LessonEntryCard(apiClient: widget.apiClient, onLessonClosed: _load),
+                    const EmptyState(
                       icon: Icons.school_outlined,
-                      message: 'No concepts yet. Add notes to a subject, then come back here to practise.',
+                      message: 'No concepts yet. Take a lesson above, or add notes to a subject — then practise them here.',
                     ),
                   ],
                 );
@@ -237,6 +242,10 @@ class _LearnHubScreenState extends State<LearnHubScreen> {
                         ProfileIconButton(authService: widget.authService),
                       ],
                     ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                    child: LessonEntryCard(apiClient: widget.apiClient, onLessonClosed: _load),
                   ),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),

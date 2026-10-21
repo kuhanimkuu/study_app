@@ -12,6 +12,8 @@ import '../../../../core/widgets/list_item_card.dart';
 import '../../../../core/widgets/project_accent.dart';
 import '../../../../core/widgets/sage_mascot.dart';
 import '../../../chat/chat_conversation.dart';
+import '../../../chat/tutor_mode.dart';
+import '../../../chat/presentation/widgets/learn_more_sheet.dart';
 import '../../../chat/models/chat_message.dart';
 import '../../../chat/presentation/widgets/chat_input_bar.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
@@ -363,6 +365,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         sessionId: _sessionId,
         history: history,
         regenerate: regenerate,
+        tutorMode: TutorMode.instance.on.value,
       );
       final blocks = result['blocks'] as List<dynamic>? ?? [];
       final activity = result['activity'] as Map<String, dynamic>?;
@@ -402,6 +405,22 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   void _cancelEdit() {
     setState(() => _editing = null);
     _chatController.clear();
+  }
+
+  void _learnMore(ChatMessage reply) {
+    final index = _messages.indexOf(reply);
+    final question = index > 0 && _messages[index - 1].isEditable ? _messages[index - 1].userText : null;
+    showLearnMoreSheet(
+      context,
+      apiClient: widget.apiClient,
+      reply: reply,
+      question: question,
+      subjectSlug: widget.slug,
+      onQuizMe: () {
+        _chatController.text = 'Quiz me on that — one question at a time, and tell me how I did.';
+        _sendQuery();
+      },
+    );
   }
 
   Future<void> _react(ChatMessage message, String? emoji) async {
@@ -670,6 +689,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                       onReact: message.isError ? null : (emoji) => _react(message, emoji),
                       onEdit: message.isEditable && !_isAsking ? () => _startEdit(message) : null,
                       onRetry: _conversation.canRetry(message) && !_isAsking ? () => _retry(message) : null,
+                      onLearnMore: message.isUser || message.isError ? null : () => _learnMore(message),
                     );
                   },
                 ),

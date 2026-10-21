@@ -15,10 +15,12 @@ import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 import '../../chat_conversation.dart';
 import '../../chat_quick_action.dart';
+import '../../tutor_mode.dart';
 import '../../models/chat_message.dart';
 import '../widgets/attachment_menu_sheet.dart';
 import '../widgets/chat_input_bar.dart';
 import '../widgets/chat_sessions_drawer.dart';
+import '../widgets/learn_more_sheet.dart';
 import '../widgets/message_bubble.dart';
 import '../widgets/pending_pdf_chip.dart';
 import '../widgets/server_settings_dialog.dart';
@@ -306,6 +308,7 @@ class _ChatScreenState extends State<ChatScreen> {
           localEvents: localEvents,
           history: history,
           regenerate: 'edited',
+          tutorMode: TutorMode.instance.on.value,
         ));
   }
 
@@ -329,6 +332,7 @@ class _ChatScreenState extends State<ChatScreen> {
           localEvents: localEvents,
           history: retry.history,
           regenerate: 'retry',
+          tutorMode: TutorMode.instance.on.value,
         ));
   }
 
@@ -361,7 +365,24 @@ class _ChatScreenState extends State<ChatScreen> {
           modelConfig: modelConfig,
           localEvents: localEvents,
           history: history,
+          tutorMode: TutorMode.instance.on.value,
         ));
+  }
+
+  /// "Learn more from this" under a reply: a lesson, a quiz, flashcards.
+  void _learnMore(ChatMessage reply) {
+    final index = _messages.indexOf(reply);
+    final question = index > 0 && _messages[index - 1].isEditable ? _messages[index - 1].userText : null;
+    showLearnMoreSheet(
+      context,
+      apiClient: _api,
+      reply: reply,
+      question: question,
+      onQuizMe: () {
+        _textController.text = 'Quiz me on that — one question at a time, and tell me how I did.';
+        _sendText();
+      },
+    );
   }
 
   /// [source] is [ImageSource.camera] for "Take photo" and
@@ -636,8 +657,14 @@ class _ChatScreenState extends State<ChatScreen> {
             onSelected: (value) {
               if (value == 'subject') _convertToProject();
               if (value == 'server') _openSettings();
+              if (value == 'tutor') setState(() => TutorMode.instance.set(!TutorMode.instance.on.value));
             },
             itemBuilder: (context) => [
+              CheckedPopupMenuItem(
+                value: 'tutor',
+                checked: TutorMode.instance.on.value,
+                child: const Text('Sage checks I understood'),
+              ),
               PopupMenuItem(
                 value: 'subject',
                 enabled: _messages.isNotEmpty,
@@ -691,6 +718,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         onReact: message.isError ? null : (emoji) => _react(message, emoji),
                         onEdit: message.isEditable && !_isLoading ? () => _startEdit(message) : null,
                         onRetry: _conversation.canRetry(message) && !_isLoading ? () => _retry(message) : null,
+                        onLearnMore: message.isUser || message.isError ? null : () => _learnMore(message),
                       );
                     },
                   ),

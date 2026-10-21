@@ -11,6 +11,7 @@ import 'core/errors/error_reporter.dart';
 import 'core/notifications/study_reminders.dart';
 import 'core/settings/model_settings_service.dart';
 import 'core/storage/chat_media_store.dart';
+import 'features/chat/tutor_mode.dart';
 
 Future<void> main() async {
   // The student's saved answer to "keep chat files on this phone?" — read
@@ -27,6 +28,8 @@ Future<void> main() async {
   await ChatMediaStore.instance.load();
   // Whether study reminders are on, so Home's first load can reschedule them.
   await StudyReminders.instance.load();
+  // Whether Sage checks understanding in chat (features/chat/tutor_mode.dart).
+  await TutorMode.instance.load();
   // One shared ApiClient for the whole app — AuthService attaches the
   // login token to this exact instance, so every screen (chat, history,
   // account) that holds a reference to it is authenticated automatically.

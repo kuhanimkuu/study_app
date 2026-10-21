@@ -1349,3 +1349,33 @@ The user asked for full text features (copy, paste, edit, emoji, reactions) that
   - What was fixable: each release is now `download/study-os-<version>.apk`, saved under that name (nginx `filename=$1` from the requested path), so versions don't become "(1)". `study-os.apk` stays as "latest" for old links.
   - `website/deploy.sh` takes the version from `pubspec.yaml`, refuses to run if `site.ts` disagrees, uploads the versioned file, refreshes `study-os.apk` and deletes older versioned copies.
   - The Download page names the versioned file. `ops/apk-download-name.sh` updated the live nginx.
+
+### 2026-10-21 — Release 1.0.11: the app teaches, not just answers
+
+The user felt the app was "just an AI prompting app". Most of the learning machinery already existed (concepts, FSRS mastery, flashcards, graded questions, quizzes, a guided session), but the app led with "ask Sage", answers stopped at the answer, and nothing checked understanding. The user chose all four proposed changes.
+
+1. **Lessons** (new domain `server/domains/tutor/`; migration `6f1fd3b371f4`):
+   - `POST /api/v1/lessons` takes a topic (optionally a subject) or a concept and writes the whole lesson in one model call as JSON (`lessons.py`, parsed leniently and validated strictly): 3–5 steps (heading, ≤120-word explanation, one check question as mcq, true/false or short answer), an optional worked example, and 5 recap cards.
+   - It's grounded in the subject's notes when there are any (`grounded_in_notes`), pitched at the profile's education level and course, and uses the personality style note.
+   - The concept is found case-insensitively or created; without a subject, lessons go in a "My lessons" subject.
+   - Check questions are ordinary `Question` rows on the concept. `/lessons/{id}/steps/{i}/answer` uses `grade_and_record`, refactored out of the attempt endpoint, so mastery, misconceptions and memory work exactly as in Practice. A second answer to the same step isn't counted.
+   - The answer and the "why" are only revealed after answering.
+   - `/complete` turns the recap into flashcards, skipping duplicate fronts.
+   - App: `features/tutor/lessons/lesson_screen.dart` (choose topic and subject → "Sage is preparing…" → steps with checks, feedback and why → worked example with reveal → recap → done with score).
+2. **Sage checks understanding in chat:**
+   - `tutor_mode` (default on) adds a teaching note: explain, then end with one "**Check:**" question unless the student is greeting, chatting or asked for the answer only.
+   - When the student answers it, the model prefixes `[[correct]]`/`[[incorrect]]`. `_take_check_verdict` strips it into `activity.check`, and an incorrect answer gets the "struggle" label, which feeds History's weak spots.
+   - The chat menu has "Sage checks I understood" (`features/chat/tutor_mode.dart`, shared by both chats). Off sends a "just answer" note instead.
+3. **Practice from any answer:** "Learn more" under every reply (`learn_more_sheet.dart`) offers:
+   - teach me this as a lesson (the topic is the question asked);
+   - quiz me (asks in chat);
+   - save as flashcards, via the new `POST /knowledge-spaces/{slug}/flashcards/from-text`, which also gets the `<material>` fence (the flashcard prompt had none). A subject picker offers "My lessons" if the student has no subjects.
+4. **Home leads with learning:**
+   - A "Today" section: the lesson card ("Learn a topic with Sage" plus "Continue: …"), "Strengthen: <weakest concept>" (a lesson on it), and cards due.
+   - Ask Sage moved to the bottom.
+   - A new account sees the lesson card first ("tell me a topic and I'll teach it") before "Studying a course?".
+   - The Practice tab's empty state was a dead end ("add notes first"); it now offers a lesson too.
+   - A concept page has "Learn this in a lesson" above "Explain this to me".
+- **Website:** the features page lists lessons, check questions and "Learn more".
+- **Tests:** 253/253 backend (new `test_lessons.py`; tutor-mode tests in `test_conversation.py`), 88/88 Flutter (new `lesson_screen_test.dart`, plus a Learn more test).
+- **Not verified with a real model yet**; no key is available here, so the lesson prompt's JSON output is untested live. The parser accepts a fenced block, an answer letter for an mcq, and dropped bad checks, but a lesson needs at least 2 valid checks.

@@ -443,7 +443,7 @@ async def run(**kwargs: Any) -> dict:
     user_id: int | None = kwargs.get("user_id")
     # The chat so far (2026-10-21), rendered once into a prompt fragment for
     # the routes that write prose — see _conversation_context.
-    conversation = _conversation_context(kwargs.get("history"), kwargs.get("regenerate"))
+    conversation = _conversation_context(kwargs.get("history"), kwargs.get("regenerate"), kwargs.get("tutor_mode"))
     # Local-first architecture (see README.md's "Architecture note" and
     # moderator/README.md): the device, not this server, is the source of
     # truth for chat history/progress. local_events is the client's own
@@ -562,6 +562,13 @@ async def run(**kwargs: Any) -> dict:
         "engine": engine_used,
         "labels": [input_type] + ([task] if task else []) + list(detected),
     }
+    # Tutor mode: whether this message answered Sage's last check question
+    # correctly (see _take_check_verdict). A wrong answer is a "struggle"
+    # event — what History's weak spots are built from.
+    verdict = model_config.pop("_check_verdict", None)
+    if verdict is not None:
+        activity["check"] = "correct" if verdict else "incorrect"
+        activity["labels"].append("check_correct" if verdict else "struggle")
     # "_usage": present only when one of _author_general_reply/
     # _route_write_doc/_author_text made a real model_router call this
     # request and wrote it back onto model_config (see those functions'
@@ -593,7 +600,30 @@ _REGENERATE_NOTES = {
 }
 
 
-def _conversation_context(history: list[dict] | None, regenerate: str | None = None) -> str:
+_TUTOR_NOTE = (
+    "How to teach: explain clearly and simply, building on what the student already said. Then, unless the "
+    "student is only greeting you, thanking you, chatting, or asked for just the answer, end with ONE short "
+    "question that checks they understood, on its own line starting with \"**Check:**\". If the student's "
+    "message is their answer to the check question you asked last, start your reply with [[correct]] or "
+    "[[incorrect]] on its own line; then tell them kindly whether they were right and why, and clear up any "
+    "misunderstanding before moving on."
+)
+_DIRECT_NOTE = "The student asked for direct answers: answer the question without quizzing them."
+_VERDICT_RE = re.compile(r"^\s*\[\[\s*(correct|incorrect)\s*\]\]\s*", re.IGNORECASE)
+
+
+def _take_check_verdict(text: str, model_config: dict) -> str:
+    """Strips tutor mode's [[correct]]/[[incorrect]] marker from the start
+    of a reply and leaves the verdict on model_config (the same write-back
+    as "_billed_usage"), where run() turns it into the activity's labels."""
+    match = _VERDICT_RE.match(text)
+    if match is None:
+        return text
+    model_config["_check_verdict"] = match.group(1).lower() == "correct"
+    return text[match.end():]
+
+
+def _conversation_context(history: list[dict] | None, regenerate: str | None = None, tutor_mode: bool | None = None) -> str:
     """The recent chat as a prompt fragment (2026-10-21). Until then every
     message reached the model on its own, so "explain that again", an
     edited question or a thumbs-down meant nothing to it. Reactions and
@@ -614,6 +644,9 @@ def _conversation_context(history: list[dict] | None, regenerate: str | None = N
             line += f"\n  [the student reacted {turn['reaction']} to this]"
         lines.append(line)
     note = _REGENERATE_NOTES.get(regenerate or "", "")
+    # None = the caller didn't say (direct engine use): neither note.
+    teaching = "" if tutor_mode is None else (_TUTOR_NOTE if tutor_mode else _DIRECT_NOTE)
+    note = " ".join(n for n in (teaching, note) if n)
     if not lines and not note:
         return ""
     fragment = ""
@@ -866,6 +899,7 @@ async def _route_project(
     )
     try:
         answer = (await _call_model_or_unavailable(prompt, personality_max_tokens or 600, model_config)).strip()
+        answer = _take_check_verdict(answer, model_config).strip()
     except ModelUnavailable as exc:
         unavailable = {"type": "model_unavailable", "message": exc.message, "attempted_backend": exc.attempted_backend}
         if exc.attempted_backend == "local":
@@ -1184,14 +1218,15 @@ async def _author_general_reply(
         f"The student said: '{content}'. Reply naturally and concisely (2-4 sentences unless "
         f"the question clearly needs more detail).{personality_style or ''}"
     )
-    max_tokens = personality_max_tokens or 220
+    # Room for an explanation plus tutor mode's check question.
+    max_tokens = personality_max_tokens or 320
     llm_result = await _model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
     # Written back onto the SAME model_config dict object run() received
     # (never copied anywhere in this file) so the hosted tier's billing
     # (server/domains/billing/) can read it back at the top of run() below
     # — see this module's run()'s final return statement.
     model_config["_billed_usage"] = llm_result.get("usage")
-    text = llm_result["text"].strip()
+    text = _take_check_verdict(llm_result["text"].strip(), model_config).strip()
     return text or None
 
 

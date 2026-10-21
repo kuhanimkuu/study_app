@@ -23,6 +23,7 @@ class MessageBubble extends StatelessWidget {
     this.onReact,
     this.onEdit,
     this.onRetry,
+    this.onLearnMore,
   });
 
   final ChatMessage message;
@@ -46,6 +47,9 @@ class MessageBubble extends StatelessWidget {
 
   /// Sage's replies with a 👎 or 😕: "Try a different explanation".
   final VoidCallback? onRetry;
+
+  /// Sage's replies: "Learn more from this" — a lesson, a quiz, flashcards.
+  final VoidCallback? onLearnMore;
 
   void _openActions(BuildContext context) {
     final react = onReact;
@@ -148,6 +152,7 @@ class MessageBubble extends StatelessWidget {
                         message: message,
                         onReact: onReact!,
                         onRetry: onRetry,
+                        onLearnMore: onLearnMore,
                         onMore: () => _openActions(context),
                       ),
                     if (topic != null) ...[
@@ -180,12 +185,13 @@ class MessageBubble extends StatelessWidget {
 /// Under each of Sage's replies: copy, react, and — after a 👎 or 😕 —
 /// "Try a different explanation".
 class _ReplyActions extends StatelessWidget {
-  const _ReplyActions({required this.message, required this.onReact, required this.onMore, this.onRetry});
+  const _ReplyActions({required this.message, required this.onReact, required this.onMore, this.onRetry, this.onLearnMore});
 
   final ChatMessage message;
   final void Function(String? emoji) onReact;
   final VoidCallback onMore;
   final VoidCallback? onRetry;
+  final VoidCallback? onLearnMore;
 
   @override
   Widget build(BuildContext context) {
@@ -198,6 +204,13 @@ class _ReplyActions extends StatelessWidget {
         spacing: 2,
         runSpacing: 4,
         children: [
+          if (onLearnMore != null)
+            TextButton.icon(
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+              icon: const Icon(Icons.school_rounded, size: 18),
+              label: const Text('Learn more'),
+              onPressed: onLearnMore,
+            ),
           IconButton(
             visualDensity: VisualDensity.compact,
             icon: Icon(Icons.copy_rounded, size: 18, color: muted),

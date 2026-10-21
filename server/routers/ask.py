@@ -180,6 +180,9 @@ class TextAsk(BaseModel):
     # this message, "retry" when they asked for a different explanation.
     history: list[HistoryTurn] = Field(default_factory=list, max_length=30)
     regenerate: Literal["edited", "retry"] | None = None
+    # Sage teaches: ends explanations with a check question and marks the
+    # answer (2026-10-21). False = the app's "Just answer" switch.
+    tutor_mode: bool = True
     task: str | None = None
     requested_format: str | None = None
     # Structured arguments for the moderator's explicit-task-only routes
@@ -276,6 +279,7 @@ async def ask_text(
         personality_max_tokens=personality_max_tokens,
         history=[turn.model_dump() for turn in payload.history],
         regenerate=payload.regenerate,
+        tutor_mode=payload.tutor_mode,
     )
 
     return await _charge_hosted_usage(result, model_config, db, current_user["id"])
@@ -402,6 +406,9 @@ class ProjectAsk(BaseModel):
     # Same as TextAsk's (2026-10-21).
     history: list[HistoryTurn] = Field(default_factory=list, max_length=30)
     regenerate: Literal["edited", "retry"] | None = None
+    # Sage teaches: ends explanations with a check question and marks the
+    # answer (2026-10-21). False = the app's "Just answer" switch.
+    tutor_mode: bool = True
     # See TextAsk's matching field for the trailing-underscore alias.
     model_config_: ModelConfig | None = Field(default=None, alias="model_config")
 
@@ -435,5 +442,6 @@ async def ask_project(
         personality_max_tokens=personality_max_tokens,
         history=[turn.model_dump() for turn in payload.history],
         regenerate=payload.regenerate,
+        tutor_mode=payload.tutor_mode,
     )
     return await _charge_hosted_usage(result, model_config, db, current_user["id"])
