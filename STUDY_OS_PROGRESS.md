@@ -1307,3 +1307,28 @@ The user chose Resend for email and asked for exact-time reminders. Play Store a
   - `refresh()` keeps Home's last streak and due counts, so rescheduling after a settings change keeps the personal wording.
 - **CI:** the Google sign-in tests set their own client id (they had depended on the local `.env`). CI is green.
 - **Tests:** 237/237 backend (new `test_password_reset.py`), 70/70 Flutter (new `forgot_password_test.dart`).
+
+### 2026-10-21 — Release 1.0.9: chat text features, and the AI sees the conversation
+
+The user asked for full text features (copy, paste, edit, emoji, reactions) that the AI can interact with, including the AI rewriting its reply when the student edits their message, and for the input field to always stay above the keyboard.
+
+- **The gap underneath:** the AI got no conversation history at all; each message reached it alone ("The student said: …"). Follow-ups, edits and reactions could not mean anything to it.
+- **Server:**
+  - `/api/ask/text` and `/api/ask/project` take `history` (up to 30 turns: role, text ≤ 8,000 characters, reaction, edited) and `regenerate` ("edited" or "retry").
+  - The moderator's `_conversation_context` renders the last 12 turns (1,500 characters each) between `<conversation>` tags, fenced as context, with reactions ("[the student reacted 👎 to this]") and "(edited this message)". For "edited" it adds "answer the edited version, it replaces your reply"; for "retry", "explain it differently".
+  - The context is passed explicitly to general replies and to project answers and their general fallback.
+  - The project chat now also gets the student's personality settings.
+  - Request text is capped at 20,000 characters.
+- **App:**
+  - `ChatConversation` (`features/chat/chat_conversation.dart`) is shared by the main chat and the subject chat: send, react (the same emoji again removes it), edit (drops the replies after the edited message and resends with the chat before it), and retry (removes the reply; the history keeps it with its reaction).
+  - LocalDb v2 adds `reaction` and `edited` columns; `saveMessage` returns the id; new `updateMessage` and `deleteMessagesFrom`. The web stub matches.
+  - `ChatMessage` gets id, reaction, edited, `plainText` and `historyFor`.
+  - Long-press a message: reaction row (👍 ❤️ 😂 😮 🙏 😕 👎), Copy, Select text, Edit (own typed messages), Remove reaction.
+  - Under each of Sage's replies: copy, 👍, 👎, react; after 👎 or 😕, "Try a different explanation" replaces the reply in place.
+  - The input bar gets an emoji button (built-in picker, inserts at the cursor), an "Editing message" banner with cancel, a check button while editing, and a multiline keyboard. Paste and select use the standard menu.
+- **Keyboard:** the layout was already right: the outer Scaffold strips the keyboard inset from its body, so the nested Scaffold doesn't shift twice, and `adjustResize` is set. Added:
+  - a test that puts the real `ChatInputBar` in both layouts (inside the shell with its bottom bar, and in a subject's tab) with a 300 px keyboard open, and checks the field sits just above it;
+  - drag-to-dismiss on the transcript;
+  - scrolling to the latest message when the field gets focus;
+  - SafeArea on the bottom only.
+- **Tests:** 243/243 backend (new `test_conversation.py`), 84/84 Flutter (new `chat_conversation_test.dart` and `chat_text_features_test.dart`).

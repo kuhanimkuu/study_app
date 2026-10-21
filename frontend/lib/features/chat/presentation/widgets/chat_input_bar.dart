@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../../../../app/theme.dart';
+import 'emoji_picker_sheet.dart';
 
 /// The bottom input row: attachment "+" button, a pill-shaped text field
-/// (mic inside it), and a round send button that turns solid blue — chunky,
-/// design v3 — once there's something to send. Purely presentational — ChatScreen owns
-/// the controller and the actions the two buttons trigger.
+/// (emoji button and mic inside it), and a round send button that turns
+/// solid blue — chunky, design v3 — once there's something to send. Purely
+/// presentational — ChatScreen owns the controller and the actions the
+/// buttons trigger.
+///
+/// Keyboard (2026-10-21): the screens put this at the bottom of a Column
+/// in a Scaffold that resizes for the keyboard, so it always sits right on
+/// top of it; the SafeArea here only pads for the system bar when the
+/// keyboard is closed. test/chat_keyboard_test.dart checks both chats.
 class ChatInputBar extends StatefulWidget {
   const ChatInputBar({
     super.key,
@@ -14,7 +21,14 @@ class ChatInputBar extends StatefulWidget {
     required this.onAttachmentTap,
     this.focusNode,
     this.onMicTap,
+    this.editingText,
+    this.onCancelEdit,
   });
+
+  /// While the student edits a sent message: a preview of the original,
+  /// shown in a banner above the field with a cancel button.
+  final String? editingText;
+  final VoidCallback? onCancelEdit;
 
   final TextEditingController controller;
   final VoidCallback onSend;
@@ -49,6 +63,13 @@ class _ChatInputBarState extends State<ChatInputBar> {
 
   void _onTextChanged() => setState(() {});
 
+  Future<void> _pickEmoji() async {
+    final emoji = await showEmojiPicker(context);
+    if (emoji == null) return;
+    insertAtCursor(widget.controller, emoji);
+    widget.focusNode?.requestFocus();
+  }
+
   @override
   Widget build(BuildContext context) {
     final hasText = widget.controller.text.trim().isNotEmpty;
@@ -59,7 +80,36 @@ class _ChatInputBarState extends State<ChatInputBar> {
         border: Border(top: BorderSide(color: theme.colorScheme.outline, width: 1.5)),
       ),
       child: SafeArea(
-        child: Padding(
+        top: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.editingText != null)
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 8, 4, 0),
+                child: Row(
+                  children: [
+                    Icon(Icons.edit_rounded, size: 18, color: theme.colorScheme.primary),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Editing message', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.primary)),
+                          Text(
+                            widget.editingText!,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(icon: const Icon(Icons.close_rounded), tooltip: 'Cancel edit', onPressed: widget.onCancelEdit),
+                  ],
+                ),
+              ),
+            Padding(
           padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -79,8 +129,16 @@ class _ChatInputBarState extends State<ChatInputBar> {
                   minLines: 1,
                   maxLines: 5,
                   textCapitalization: TextCapitalization.sentences,
+                  keyboardType: TextInputType.multiline,
+                  // The phone keyboard's own emoji key works as well as the
+                  // button; paste and select come from the standard menu.
                   decoration: InputDecoration(
-                    hintText: 'Ask Sage anything…',
+                    hintText: widget.editingText != null ? 'Edit your message…' : 'Ask Sage anything…',
+                    prefixIcon: IconButton(
+                      icon: Icon(Icons.emoji_emotions_outlined, color: theme.colorScheme.onSurfaceVariant),
+                      tooltip: 'Emoji',
+                      onPressed: _pickEmoji,
+                    ),
                     filled: true,
                     fillColor: theme.colorScheme.surfaceContainerHighest,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -95,13 +153,12 @@ class _ChatInputBarState extends State<ChatInputBar> {
                             tooltip: 'Voice input',
                           ),
                   ),
-                  onSubmitted: (_) => widget.onSend(),
                 ),
               ),
               const SizedBox(width: 8),
               _RoundButton(
-                icon: Icons.arrow_upward_rounded,
-                tooltip: 'Send',
+                icon: widget.editingText != null ? Icons.check_rounded : Icons.arrow_upward_rounded,
+                tooltip: widget.editingText != null ? 'Save edit' : 'Send',
                 color: hasText ? StudyOsColors.primary : theme.colorScheme.surfaceContainerHigh,
                 iconColor: hasText ? Colors.white : theme.colorScheme.onSurfaceVariant,
                 ledge: hasText ? StudyOsColors.primaryLedge : null,
@@ -109,6 +166,8 @@ class _ChatInputBarState extends State<ChatInputBar> {
               ),
             ],
           ),
+            ),
+          ],
         ),
       ),
     );

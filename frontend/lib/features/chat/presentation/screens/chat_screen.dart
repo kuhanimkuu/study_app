@@ -13,6 +13,7 @@ import '../../../../core/widgets/sage_mascot.dart';
 import '../../../../core/widgets/profile_icon_button.dart';
 import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
+import '../../chat_conversation.dart';
 import '../../chat_quick_action.dart';
 import '../../models/chat_message.dart';
 import '../widgets/attachment_menu_sheet.dart';
@@ -63,13 +64,17 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
-  final List<ChatMessage> _messages = [];
+  final _conversation = ChatConversation(sessionId: _randomSessionId());
+  List<ChatMessage> get _messages => _conversation.messages;
+  String get _sessionId => _conversation.sessionId;
   final TextEditingController _textController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _textFocusNode = FocusNode();
-  String _sessionId = _randomSessionId();
   ApiClient get _api => widget.authService.apiClient;
   bool _isLoading = false;
+
+  /// The sent message being edited (its text is in the field), or null.
+  ChatMessage? _editing;
 
   /// Past general-chat sessions for the sidebar (see ChatSessionsDrawer) —
   /// refreshed whenever the drawer opens, not kept continuously in sync,
@@ -89,6 +94,11 @@ class _ChatScreenState extends State<ChatScreen> {
     super.initState();
     _resumeMostRecentSession();
     widget.pendingAction.addListener(_onPendingAction);
+    // The keyboard opening shrinks the transcript; keep the latest message
+    // in view above the field.
+    _textFocusNode.addListener(() {
+      if (_textFocusNode.hasFocus) Future.delayed(const Duration(milliseconds: 300), _scrollToBottom);
+    });
     // A quick action set moments before this tab first mounts (Home ->
     // AppShell._runChatQuickAction sets the value THEN switches tabs,
     // same frame) would otherwise fire before the listener above was
@@ -148,20 +158,18 @@ class _ChatScreenState extends State<ChatScreen> {
     final rows = await LocalDb.instance.loadMessages(sessionId: sessionId);
     final restored = ChatMessage.fromStoredRows(rows);
     setState(() {
-      _sessionId = sessionId;
-      _messages
-        ..clear()
-        ..addAll(restored);
+      _conversation.replaceAll(sessionId, restored);
       _pendingPdfName = null;
+      _editing = null;
     });
     _scrollToBottom();
   }
 
   void _startNewChat() {
     setState(() {
-      _sessionId = _randomSessionId();
-      _messages.clear();
+      _conversation.replaceAll(_randomSessionId(), []);
       _pendingPdfName = null;
+      _editing = null;
     });
   }
 
@@ -243,15 +251,18 @@ class _ChatScreenState extends State<ChatScreen> {
         _pendingPdfName = null;
       }
       final activity = result['activity'] as Map<String, dynamic>?;
-      setState(() => _messages.add(ChatMessage.response(blocks, activity: activity)));
-      await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'response', blocks: blocks);
+      final saving = _conversation.addResponse(blocks, activity: activity);
+      setState(() {});
+      await saving;
       await _persistActivity(activity);
     } on ApiException catch (e) {
-      setState(() => _messages.add(ChatMessage.error(e.message)));
-      await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'error', errorText: e.message);
+      final saving = _conversation.addError(e.message);
+      setState(() {});
+      await saving;
     } catch (e) {
-      setState(() => _messages.add(ChatMessage.error(e.toString())));
-      await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'error', errorText: e.toString());
+      final saving = _conversation.addError(e.toString());
+      setState(() {});
+      await saving;
     } finally {
       setState(() => _isLoading = false);
       _scrollToBottom();
@@ -259,15 +270,75 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _addUserMessage(String text) async {
-    setState(() => _messages.add(ChatMessage.user(text)));
+    final saving = _conversation.addUser(text);
+    setState(() {});
     _scrollToBottom();
-    await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'user', userText: text);
+    await saving;
+  }
+
+  // --- editing, reactions, "try again" (2026-10-21) ---
+
+  void _startEdit(ChatMessage message) {
+    setState(() => _editing = message);
+    _textController.text = message.userText ?? '';
+    _textController.selection = TextSelection.collapsed(offset: _textController.text.length);
+    _textFocusNode.requestFocus();
+  }
+
+  void _cancelEdit() {
+    setState(() => _editing = null);
+    _textController.clear();
+  }
+
+  /// Sends the edited text in place of the original: the old replies after
+  /// it go, and Sage answers the new version.
+  Future<void> _sendEdit(ChatMessage message, String text) async {
+    setState(() => _editing = null);
+    if (text == message.userText) return;
+    final history = await _conversation.edit(message, text);
+    setState(() {});
+    final modelConfig = await _modelConfigForRequest();
+    final localEvents = await LocalDb.instance.loadActivityForQuery();
+    await _handleResult(() => _api.askText(
+          content: text,
+          sessionId: _sessionId,
+          modelConfig: modelConfig,
+          localEvents: localEvents,
+          history: history,
+          regenerate: 'edited',
+        ));
+  }
+
+  Future<void> _react(ChatMessage message, String? emoji) async {
+    await _conversation.react(message, emoji);
+    setState(() {});
+  }
+
+  /// "Try a different explanation" on a reply the student reacted 👎 or 😕
+  /// to: the reply is replaced by a new one that knows the old one missed.
+  Future<void> _retry(ChatMessage reply) async {
+    final retry = await _conversation.prepareRetry(reply);
+    if (retry == null) return;
+    setState(() {});
+    final modelConfig = await _modelConfigForRequest();
+    final localEvents = await LocalDb.instance.loadActivityForQuery();
+    await _handleResult(() => _api.askText(
+          content: retry.question,
+          sessionId: _sessionId,
+          modelConfig: modelConfig,
+          localEvents: localEvents,
+          history: retry.history,
+          regenerate: 'retry',
+        ));
   }
 
   Future<void> _sendText() async {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
     _textController.clear();
+    final editing = _editing;
+    if (editing != null) return _sendEdit(editing, text);
+    final history = _conversation.history();
     await _addUserMessage(text);
 
     if (_pendingPdfName != null) {
@@ -289,6 +360,7 @@ class _ChatScreenState extends State<ChatScreen> {
           sessionId: _sessionId,
           modelConfig: modelConfig,
           localEvents: localEvents,
+          history: history,
         ));
   }
 
@@ -607,13 +679,20 @@ class _ChatScreenState extends State<ChatScreen> {
                 : ListView.builder(
                     controller: _scrollController,
                     padding: const EdgeInsets.all(12),
+                    keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                     itemCount: _messages.length,
-                    itemBuilder: (context, index) => MessageBubble(
-                      message: _messages[index],
-                      baseUrl: _api.baseUrl,
-                      onStillStuck: () => _markStillStuck(_messages[index]),
-                      onSetUpByok: _openAccountSettings,
-                    ),
+                    itemBuilder: (context, index) {
+                      final message = _messages[index];
+                      return MessageBubble(
+                        message: message,
+                        baseUrl: _api.baseUrl,
+                        onStillStuck: () => _markStillStuck(message),
+                        onSetUpByok: _openAccountSettings,
+                        onReact: message.isError ? null : (emoji) => _react(message, emoji),
+                        onEdit: message.isEditable && !_isLoading ? () => _startEdit(message) : null,
+                        onRetry: _conversation.canRetry(message) && !_isLoading ? () => _retry(message) : null,
+                      );
+                    },
                   ),
           ),
           if (_isLoading) const WorkingIndicator(),
@@ -625,6 +704,8 @@ class _ChatScreenState extends State<ChatScreen> {
           ChatInputBar(
             controller: _textController,
             focusNode: _textFocusNode,
+            editingText: _editing?.userText,
+            onCancelEdit: _cancelEdit,
             onSend: _sendText,
             onAttachmentTap: _openAttachmentMenu,
             onMicTap: _startVoiceInput,

@@ -38,7 +38,14 @@ class LocalDb {
     final path = p.join(dir.path, 'study_os_user_$userId.db');
     _db = await openDatabase(
       path,
-      version: 1,
+      // v2 (2026-10-21): reactions and edited messages.
+      version: 2,
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE chat_messages ADD COLUMN reaction TEXT');
+          await db.execute('ALTER TABLE chat_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0');
+        }
+      },
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE chat_messages (
@@ -48,7 +55,9 @@ class LocalDb {
             user_text TEXT,
             blocks_json TEXT,
             error_text TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            reaction TEXT,
+            edited INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('''
@@ -78,14 +87,16 @@ class LocalDb {
     return db;
   }
 
-  Future<void> saveMessage({
+  /// Returns the new row's id (what [updateMessage] and
+  /// [deleteMessagesFrom] take).
+  Future<int> saveMessage({
     required String sessionId,
     required String role,
     String? userText,
     List<dynamic>? blocks,
     String? errorText,
   }) async {
-    await _requireDb.insert('chat_messages', {
+    return _requireDb.insert('chat_messages', {
       'session_id': sessionId,
       'role': role,
       'user_text': userText,
@@ -110,8 +121,32 @@ class LocalDb {
               'blocks': row['blocks_json'] != null ? jsonDecode(row['blocks_json'] as String) : null,
               'error_text': row['error_text'],
               'created_at': row['created_at'],
+              'id': row['id'],
+              'reaction': row['reaction'],
+              'edited': row['edited'] == 1,
             })
         .toList();
+  }
+
+  /// An edit or a reaction. [clearReaction] removes it (a null [reaction]
+  /// alone means "leave it as is").
+  Future<void> updateMessage(int id, {String? userText, bool? edited, String? reaction, bool clearReaction = false}) async {
+    await _requireDb.update(
+      'chat_messages',
+      {
+        if (userText != null) 'user_text': userText,
+        if (edited != null) 'edited': edited ? 1 : 0,
+        if (reaction != null || clearReaction) 'reaction': reaction,
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Deletes message [id] and everything after it in the session — what
+  /// editing a message (its old replies go) and "try again" need.
+  Future<void> deleteMessagesFrom(String sessionId, int id) async {
+    await _requireDb.delete('chat_messages', where: 'session_id = ? AND id >= ?', whereArgs: [sessionId, id]);
   }
 
   /// One row per distinct general-chat session (`preview` is that

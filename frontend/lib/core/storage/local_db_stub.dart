@@ -8,6 +8,7 @@ class LocalDb {
 
   final List<Map<String, dynamic>> _messages = [];
   final List<Map<String, dynamic>> _events = [];
+  int _nextId = 1;
 
   Future<void> open(int userId) async {}
 
@@ -16,14 +17,18 @@ class LocalDb {
     _events.clear();
   }
 
-  Future<void> saveMessage({
+  Future<int> saveMessage({
     required String sessionId,
     required String role,
     String? userText,
     List<dynamic>? blocks,
     String? errorText,
   }) async {
+    final id = _nextId++;
     _messages.add({
+      'id': id,
+      'reaction': null,
+      'edited': false,
       'session_id': sessionId,
       'role': role,
       'user_text': userText,
@@ -31,6 +36,19 @@ class LocalDb {
       'error_text': errorText,
       'created_at': DateTime.now().toUtc().toIso8601String(),
     });
+    return id;
+  }
+
+  Future<void> updateMessage(int id, {String? userText, bool? edited, String? reaction, bool clearReaction = false}) async {
+    for (final m in _messages.where((m) => m['id'] == id)) {
+      if (userText != null) m['user_text'] = userText;
+      if (edited != null) m['edited'] = edited;
+      if (reaction != null || clearReaction) m['reaction'] = reaction;
+    }
+  }
+
+  Future<void> deleteMessagesFrom(String sessionId, int id) async {
+    _messages.removeWhere((m) => m['session_id'] == sessionId && (m['id'] as int) >= id);
   }
 
   Future<List<Map<String, dynamic>>> loadMessages({String? sessionId}) async {

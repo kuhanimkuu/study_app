@@ -460,6 +460,8 @@ class ApiClient {
     Map<String, dynamic>? modelConfig,
     List<Map<String, dynamic>>? localEvents,
     required String sessionId,
+    List<Map<String, dynamic>>? history,
+    String? regenerate,
   }) async {
     final res = await _http
         .post(
@@ -473,6 +475,10 @@ class ApiClient {
             if (modelConfig != null) 'model_config': modelConfig,
             if (localEvents != null) 'local_events': localEvents,
             'session_id': sessionId,
+            // The chat so far and "edited"/"retry" (2026-10-21) — see
+            // ChatMessage.historyFor and the server's TextAsk.
+            if (history != null && history.isNotEmpty) 'history': history,
+            if (regenerate != null) 'regenerate': regenerate,
           }),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
@@ -553,6 +559,8 @@ class ApiClient {
     String? project,
     String? query,
     required String sessionId,
+    List<Map<String, dynamic>>? history,
+    String? regenerate,
   }) async {
     final modelConfig = await _resolveModelConfig(null);
     final res = await _http
@@ -565,6 +573,8 @@ class ApiClient {
             if (query != null) 'query': query,
             'session_id': sessionId,
             if (modelConfig != null) 'model_config': modelConfig,
+            if (history != null && history.isNotEmpty) 'history': history,
+            if (regenerate != null) 'regenerate': regenerate,
           }),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);

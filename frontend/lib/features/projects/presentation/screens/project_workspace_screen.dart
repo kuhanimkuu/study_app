@@ -11,6 +11,7 @@ import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/list_item_card.dart';
 import '../../../../core/widgets/project_accent.dart';
 import '../../../../core/widgets/sage_mascot.dart';
+import '../../../chat/chat_conversation.dart';
 import '../../../chat/models/chat_message.dart';
 import '../../../chat/presentation/widgets/chat_input_bar.dart';
 import '../../../chat/presentation/widgets/message_bubble.dart';
@@ -68,10 +69,15 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   bool _wasIndexing = false;
 
   // --- Chat tab state ---
-  final List<ChatMessage> _messages = [];
+  late final _conversation = ChatConversation(sessionId: _sessionId);
+  List<ChatMessage> get _messages => _conversation.messages;
   final _chatController = TextEditingController();
   final _chatScrollController = ScrollController();
+  final _chatFocusNode = FocusNode();
   bool _isAsking = false;
+
+  /// The sent message being edited (its text is in the field), or null.
+  ChatMessage? _editing;
 
   // --- Studio tab state ---
   static const _docTypeLabels = {
@@ -96,6 +102,9 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
     _loadMaterials();
     _loadChatHistory();
     _loadArtifacts();
+    _chatFocusNode.addListener(() {
+      if (_chatFocusNode.hasFocus) Future.delayed(const Duration(milliseconds: 300), _scrollChatToBottom);
+    });
   }
 
   /// While something is indexing, re-checks after each reply arrives —
@@ -137,6 +146,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   @override
   void dispose() {
     _materialsPoll?.cancel();
+    _chatFocusNode.dispose();
     super.dispose();
   }
 
@@ -246,7 +256,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   Future<void> _loadChatHistory() async {
     final rows = await LocalDb.instance.loadMessages(sessionId: _sessionId);
     final restored = ChatMessage.fromStoredRows(rows);
-    if (mounted) setState(() => _messages.addAll(restored));
+    if (mounted) setState(() => _conversation.replaceAll(_sessionId, restored));
   }
 
   Future<void> _addText() async {
@@ -327,17 +337,38 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
     final text = _chatController.text.trim();
     if (text.isEmpty) return;
     _chatController.clear();
-    setState(() => _messages.add(ChatMessage.user(text)));
-    await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'user', userText: text);
+    final editing = _editing;
+    if (editing != null) {
+      // Editing a sent question: its old answers go, Sage answers the new one.
+      setState(() => _editing = null);
+      if (text == editing.userText) return;
+      final history = await _conversation.edit(editing, text);
+      setState(() {});
+      return _ask(text, history: history, regenerate: 'edited');
+    }
+    final history = _conversation.history();
+    final saving = _conversation.addUser(text);
+    setState(() {});
     _scrollChatToBottom();
+    await saving;
+    await _ask(text, history: history);
+  }
 
+  Future<void> _ask(String question, {required List<Map<String, dynamic>> history, String? regenerate}) async {
     setState(() => _isAsking = true);
     try {
-      final result = await widget.apiClient.askProject(project: widget.slug, query: text, sessionId: _sessionId);
+      final result = await widget.apiClient.askProject(
+        project: widget.slug,
+        query: question,
+        sessionId: _sessionId,
+        history: history,
+        regenerate: regenerate,
+      );
       final blocks = result['blocks'] as List<dynamic>? ?? [];
       final activity = result['activity'] as Map<String, dynamic>?;
-      setState(() => _messages.add(ChatMessage.response(blocks, activity: activity)));
-      await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'response', blocks: blocks);
+      final saving = _conversation.addResponse(blocks, activity: activity);
+      setState(() {});
+      await saving;
       if (activity != null) {
         await LocalDb.instance.saveActivity(
           topic: activity['topic'] as String?,
@@ -348,15 +379,41 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         );
       }
     } on ApiException catch (e) {
-      setState(() => _messages.add(ChatMessage.error(e.message)));
-      await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'error', errorText: e.message);
+      final saving = _conversation.addError(e.message);
+      setState(() {});
+      await saving;
     } catch (e) {
-      setState(() => _messages.add(ChatMessage.error(e.toString())));
-      await LocalDb.instance.saveMessage(sessionId: _sessionId, role: 'error', errorText: e.toString());
+      final saving = _conversation.addError(e.toString());
+      setState(() {});
+      await saving;
     } finally {
-      setState(() => _isAsking = false);
+      if (mounted) setState(() => _isAsking = false);
       _scrollChatToBottom();
     }
+  }
+
+  void _startEdit(ChatMessage message) {
+    setState(() => _editing = message);
+    _chatController.text = message.userText ?? '';
+    _chatController.selection = TextSelection.collapsed(offset: _chatController.text.length);
+    _chatFocusNode.requestFocus();
+  }
+
+  void _cancelEdit() {
+    setState(() => _editing = null);
+    _chatController.clear();
+  }
+
+  Future<void> _react(ChatMessage message, String? emoji) async {
+    await _conversation.react(message, emoji);
+    setState(() {});
+  }
+
+  Future<void> _retry(ChatMessage reply) async {
+    final retry = await _conversation.prepareRetry(reply);
+    if (retry == null) return;
+    setState(() {});
+    await _ask(retry.question, history: retry.history, regenerate: 'retry');
   }
 
   /// Same temporary self-report mechanism as the main ChatScreen — see
@@ -602,12 +659,19 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
               : ListView.builder(
                   controller: _chatScrollController,
                   padding: const EdgeInsets.all(12),
+                  keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
                   itemCount: _messages.length,
-                  itemBuilder: (context, index) => MessageBubble(
-                    message: _messages[index],
-                    baseUrl: widget.apiClient.baseUrl,
-                    onStillStuck: () => _markStillStuck(_messages[index]),
-                  ),
+                  itemBuilder: (context, index) {
+                    final message = _messages[index];
+                    return MessageBubble(
+                      message: message,
+                      baseUrl: widget.apiClient.baseUrl,
+                      onStillStuck: () => _markStillStuck(message),
+                      onReact: message.isError ? null : (emoji) => _react(message, emoji),
+                      onEdit: message.isEditable && !_isAsking ? () => _startEdit(message) : null,
+                      onRetry: _conversation.canRetry(message) && !_isAsking ? () => _retry(message) : null,
+                    );
+                  },
                 ),
         ),
         // Same pieces as the main ChatScreen (2026-10-07) — this tab used
@@ -615,6 +679,9 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         if (_isAsking) const WorkingIndicator(),
         ChatInputBar(
           controller: _chatController,
+          focusNode: _chatFocusNode,
+          editingText: _editing?.userText,
+          onCancelEdit: _cancelEdit,
           onSend: _sendQuery,
           // In a project, "attach" means adding material to it.
           onAttachmentTap: _uploadFile,

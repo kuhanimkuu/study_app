@@ -36,6 +36,7 @@ import asyncio
 import re
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -162,8 +163,23 @@ def _save_upload(file: UploadFile, session_id: str, kind: str) -> Path:
     return dest
 
 
+class HistoryTurn(BaseModel):
+    """One earlier message of this chat, sent by the app (chat history
+    lives on the phone, not the server)."""
+
+    role: Literal["user", "assistant"]
+    text: str = Field(max_length=8_000)
+    reaction: str | None = Field(default=None, max_length=16)
+    edited: bool = False
+
+
 class TextAsk(BaseModel):
-    content: str
+    content: str = Field(max_length=20_000)
+    # The recent chat, oldest first (2026-10-21) — see the moderator's
+    # _conversation_context. "regenerate": "edited" when the student edited
+    # this message, "retry" when they asked for a different explanation.
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=30)
+    regenerate: Literal["edited", "retry"] | None = None
     task: str | None = None
     requested_format: str | None = None
     # Structured arguments for the moderator's explicit-task-only routes
@@ -214,6 +230,16 @@ async def _charge_hosted_usage(result: dict, model_config: dict, db: AsyncSessio
     return result
 
 
+async def _personality_for(db: AsyncSession, user_id: int) -> tuple[str, int | None]:
+    personality = await get_or_create_personality(db, user_id)
+    explicit_memories = (
+        await db.scalars(select(Memory).where(Memory.user_id == user_id, Memory.type == "explicit"))
+    ).all()
+    await db.commit()  # persists a just-created default personality, if any
+    style = build_adaptive_style_note(personality, [{"key": m.key, "value": m.value} for m in explicit_memories])
+    return style, verbosity_max_tokens(personality)
+
+
 @router.post("/api/ask/text", response_model=ModeratorResponse)
 async def ask_text(
     payload: TextAsk,
@@ -232,15 +258,7 @@ async def ask_text(
     # — see STUDY_OS_PROGRESS.md), not just /api/v1/concepts/{id}/explain.
     # Both are user-scoped (not concept-scoped), which is exactly what
     # makes them applicable here where there's no specific Concept in play.
-    personality = await get_or_create_personality(db, current_user["id"])
-    explicit_memories = (
-        await db.scalars(select(Memory).where(Memory.user_id == current_user["id"], Memory.type == "explicit"))
-    ).all()
-    await db.commit()  # persists a just-created default personality, if any
-    personality_style = build_adaptive_style_note(
-        personality, [{"key": m.key, "value": m.value} for m in explicit_memories]
-    )
-    personality_max_tokens = verbosity_max_tokens(personality)
+    personality_style, personality_max_tokens = await _personality_for(db, current_user["id"])
 
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
     result = await engines.moderator.run(
@@ -256,6 +274,8 @@ async def ask_text(
         local_events=(payload.local_events or []) + server_events,
         personality_style=personality_style,
         personality_max_tokens=personality_max_tokens,
+        history=[turn.model_dump() for turn in payload.history],
+        regenerate=payload.regenerate,
     )
 
     return await _charge_hosted_usage(result, model_config, db, current_user["id"])
@@ -375,10 +395,13 @@ async def ask_web(payload: WebAsk, current_user: dict = Depends(ai_user)) -> dic
 
 
 class ProjectAsk(BaseModel):
-    content: str = ""
+    content: str = Field(default="", max_length=20_000)
     project: str | None = None
-    query: str | None = None
+    query: str | None = Field(default=None, max_length=20_000)
     session_id: str = "default"
+    # Same as TextAsk's (2026-10-21).
+    history: list[HistoryTurn] = Field(default_factory=list, max_length=30)
+    regenerate: Literal["edited", "retry"] | None = None
     # See TextAsk's matching field for the trailing-underscore alias.
     model_config_: ModelConfig | None = Field(default=None, alias="model_config")
 
@@ -397,6 +420,9 @@ async def ask_project(
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
     if payload.project:
         await index_store.ensure_index_file(db, current_user["id"], payload.project)
+    # The project chat is a full tutor now (2026-10-21), so it gets the
+    # student's personality settings and the chat so far too.
+    personality_style, personality_max_tokens = await _personality_for(db, current_user["id"])
     result = await engines.moderator.run(
         input_type="project",
         content=payload.content,
@@ -405,5 +431,9 @@ async def ask_project(
         session_id=payload.session_id,
         user_id=current_user["id"],
         model_config=model_config,
+        personality_style=personality_style,
+        personality_max_tokens=personality_max_tokens,
+        history=[turn.model_dump() for turn in payload.history],
+        regenerate=payload.regenerate,
     )
     return await _charge_hosted_usage(result, model_config, db, current_user["id"])
