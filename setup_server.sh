@@ -252,6 +252,11 @@ add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
 add_header Strict-Transport-Security "max-age=31536000" always;
 add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
 EOF
+# Per-address budget for login/signup (used by the /api/auth/ location
+# below). Generous: a whole class on one school Wi-Fi shares an address.
+cat > /etc/nginx/conf.d/study-os-limits.conf <<'EOF'
+limit_req_zone $binary_remote_addr zone=study_os_auth:10m rate=60r/m;
+EOF
 cat > /etc/nginx/sites-available/$SERVICE <<EOF
 server {
     listen 80;
@@ -275,6 +280,25 @@ $WEBSITE_LOCATIONS
         # so Android recognises the file as an app to install
         types { application/vnd.android.package-archive apk; }
         add_header Content-Disposition "attachment";
+    }
+
+    # Login/signup: per-address limit, answered in JSON like the app's own
+    # errors. ^~ so it wins over the regex location below. (Existing
+    # servers: ops/nginx-auth-limit.sh adds this.)
+    location ^~ /api/auth/ {
+        limit_req zone=study_os_auth burst=60 nodelay;
+        limit_req_status 429;
+        error_page 429 = @auth_limited;
+        proxy_pass http://127.0.0.1:$APP_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$remote_addr;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+    location @auth_limited {
+        default_type application/json;
+        return 429 '{"detail":"too many attempts — please try again later"}';
     }
 
     # The app (FastAPI): its API and the files chats generate.

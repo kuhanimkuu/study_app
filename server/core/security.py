@@ -21,9 +21,11 @@ via SQLAlchemy instead of sqlite3, and is async all the way through.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import bcrypt
@@ -60,6 +62,77 @@ def hash_password(password: str) -> str:
 
 def verify_password(password: str, password_hash: str) -> bool:
     return bcrypt.checkpw(password.encode(), password_hash.encode())
+
+
+# --- bcrypt off the event loop, in bounded lanes (2026-10-21) ---
+# A bcrypt check is ~0.3 s of CPU on purpose. Run inline it froze the whole
+# single-worker app: 100 bot signups from many addresses made a real
+# student's login take 16-21 s and every other request (health, chat) 14 s.
+# Now:
+#   - hashing runs in its own threads (bcrypt releases the GIL), so the
+#     rest of the app never waits on it;
+#   - login and signup get separate lanes, so a signup flood can't delay
+#     people logging in to existing accounts (logins are what matter most);
+#   - each lane admits only a few waiting requests. Past that the server
+#     answers "busy, try again in a few seconds" straight away (503 +
+#     Retry-After) instead of putting the student at the back of a long
+#     queue. Worst case to get in: about (waiting / threads) x 0.3 s.
+# The per-IP limits in core/rate_limit.py (and nginx's, see setup_server.sh)
+# stop most of a flood before it gets here; these lanes are for a flood
+# spread across many addresses, which per-IP limits can't catch.
+
+class _HashLane:
+    def __init__(self, name: str, threads: int, max_waiting: int):
+        self._pool = ThreadPoolExecutor(max_workers=threads, thread_name_prefix=f"bcrypt-{name}")
+        self._max_in_lane = threads + max_waiting
+        self.in_lane = 0
+
+    async def run(self, fn, *args):
+        if self.in_lane >= self._max_in_lane:
+            raise HTTPException(
+                status_code=503,
+                detail="The server is busy right now — please try again in a few seconds.",
+                headers={"Retry-After": "5"},
+            )
+        self.in_lane += 1  # single event loop thread: no lock needed
+        try:
+            return await asyncio.get_running_loop().run_in_executor(self._pool, fn, *args)
+        finally:
+            self.in_lane -= 1
+
+
+# ~0.3 s per check: up to 12 waiting on 2 threads is about 2 s at worst.
+login_lane = _HashLane("login", threads=2, max_waiting=12)
+signup_lane = _HashLane("signup", threads=1, max_waiting=6)
+
+# Accounts with a password check running right now. One at a time per
+# account: bots guessing one account's password then hold one slot of the
+# login lane, not all of it, so everyone else still gets in.
+_verifying_accounts: set[int] = set()
+
+
+async def hash_password_async(password: str) -> str:
+    return await signup_lane.run(hash_password, password)
+
+
+async def verify_password_async(password: str, password_hash: str, user_id: int | None = None) -> bool:
+    """With `user_id`, refuses (503) while another check for the same
+    account is still running — see _verifying_accounts."""
+    if user_id is None:
+        return await login_lane.run(verify_password, password, password_hash)
+    if user_id in _verifying_accounts:
+        # 503 like a full lane: "busy, retry shortly" (the app retries these
+        # by itself), unlike core/rate_limit.py's per-address 429.
+        raise HTTPException(
+            status_code=503,
+            detail="Another sign-in to this account is in progress — please try again in a moment.",
+            headers={"Retry-After": "2"},
+        )
+    _verifying_accounts.add(user_id)
+    try:
+        return await login_lane.run(verify_password, password, password_hash)
+    finally:
+        _verifying_accounts.discard(user_id)
 
 
 def create_token(user_id: int) -> str:

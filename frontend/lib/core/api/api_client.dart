@@ -16,7 +16,8 @@ import 'package:http/http.dart' as http;
 /// there), so bytes is the one approach that works on every target
 /// platform this project builds for (Android, Windows, web).
 class ApiClient {
-  ApiClient({required this.baseUrl, this.token});
+  /// [httpClient] is for tests (package:http/testing's MockClient).
+  ApiClient({required this.baseUrl, this.token, http.Client? httpClient}) : _http = httpClient ?? http.Client();
 
   /// Applied to every request below. Without this, a dropped connection
   /// (a killed adb reverse tunnel, a server restart mid-request, a dead
@@ -59,7 +60,7 @@ class ApiClient {
   /// close) a fresh client per call — a new TCP + TLS handshake to Render
   /// every time, which on a phone means extra latency, data and battery
   /// for each of the many small JSON calls a screen makes (2026-10-19).
-  final http.Client _http = http.Client();
+  final http.Client _http;
 
   Never _timeoutError() => throw ApiException(0, 'Request timed out — check the server is reachable.');
 
@@ -117,7 +118,35 @@ class ApiClient {
 
   // --- auth ---
 
+  /// Waits before each retry of a "server busy" (503) answer from login or
+  /// signup — see [_retryWhenBusy]. Tests set it to zero delays.
+  static List<Duration> busyRetryDelays = const [Duration(seconds: 1), Duration(seconds: 2), Duration(seconds: 3)];
+
+  /// Login/signup answer 503 when the server's password-checking queue is
+  /// full or this account's previous sign-in is still being checked (e.g.
+  /// bots guessing its password — server/core/security.py). Retrying a few
+  /// seconds later usually gets in, so do that quietly instead of showing an
+  /// error straight away. Any other error (wrong password, the per-address
+  /// 429 limit) is returned at once.
+  Future<Map<String, dynamic>> _retryWhenBusy(Future<Map<String, dynamic>> Function() call) async {
+    for (final delay in busyRetryDelays) {
+      try {
+        return await call();
+      } on ApiException catch (e) {
+        if (e.statusCode != 503) rethrow;
+        await Future<void>.delayed(delay);
+      }
+    }
+    return call();
+  }
+
   Future<Map<String, dynamic>> signup({
+    required String email,
+    required String password,
+    String? displayName,
+  }) => _retryWhenBusy(() => _signupOnce(email: email, password: password, displayName: displayName));
+
+  Future<Map<String, dynamic>> _signupOnce({
     required String email,
     required String password,
     String? displayName,
@@ -136,7 +165,10 @@ class ApiClient {
     return _decode(res);
   }
 
-  Future<Map<String, dynamic>> login({required String email, required String password}) async {
+  Future<Map<String, dynamic>> login({required String email, required String password}) =>
+      _retryWhenBusy(() => _loginOnce(email: email, password: password));
+
+  Future<Map<String, dynamic>> _loginOnce({required String email, required String password}) async {
     final res = await _http
         .post(
           Uri.parse('$baseUrl/api/auth/login'),

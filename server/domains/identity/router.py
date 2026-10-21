@@ -49,8 +49,11 @@ _RAG_PROJECTS_ROOT = _REPO_ROOT / "features" / "rag" / "projects" / "projects"
 # for what this does and doesn't protect against. Signup gets a stricter
 # window than login (spam-account creation vs. legitimate retry-after-typo
 # traffic have different tolerances).
-_LOGIN_MAX_ATTEMPTS, _LOGIN_WINDOW_SECONDS = 10, 5 * 60
-_SIGNUP_MAX_ATTEMPTS, _SIGNUP_WINDOW_SECONDS = 5, 60 * 60
+# Per address. Generous since 2026-10-21: a class on one school Wi-Fi shares
+# an address, and the password lanes in core/security.py (not these limits)
+# are what keep a flood from slowing everyone else down.
+_LOGIN_MAX_ATTEMPTS, _LOGIN_WINDOW_SECONDS = 60, 5 * 60
+_SIGNUP_MAX_ATTEMPTS, _SIGNUP_WINDOW_SECONDS = 30, 60 * 60
 
 
 class SignupRequest(BaseModel):
@@ -137,7 +140,7 @@ async def signup(payload: SignupRequest, request: Request, db: AsyncSession = De
 
     user = User(
         email=payload.email,
-        password_hash=security.hash_password(payload.password),
+        password_hash=await security.hash_password_async(payload.password),
         display_name=payload.display_name,
         encryption_key=crypto.generate_user_key(),
     )
@@ -161,7 +164,9 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
     # user.password_hash is None for a Google-only account (never set one)
     # — checked explicitly rather than letting it reach verify_password,
     # which would raise on a None hash instead of cleanly rejecting.
-    if user is None or user.password_hash is None or not security.verify_password(payload.password, user.password_hash):
+    if user is None or user.password_hash is None or not await security.verify_password_async(
+        payload.password, user.password_hash, user_id=user.id
+    ):
         raise HTTPException(status_code=401, detail="invalid email or password")
 
     token = security.create_token(user.id)
@@ -306,7 +311,7 @@ async def delete_account(
     if user is None:
         raise HTTPException(status_code=401, detail="user no longer exists")
     if user.password_hash is not None:
-        if payload.password is None or not security.verify_password(payload.password, user.password_hash):
+        if payload.password is None or not await security.verify_password_async(payload.password, user.password_hash):
             raise HTTPException(status_code=401, detail="incorrect password")
 
     user_id = user.id
