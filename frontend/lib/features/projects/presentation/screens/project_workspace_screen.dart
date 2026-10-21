@@ -23,6 +23,7 @@ import '../../../knowledge/notes/presentation/screens/notes_list_screen.dart';
 import '../../../knowledge/search/presentation/screens/knowledge_search_screen.dart';
 import '../../../learning/concepts/presentation/screens/concepts_list_screen.dart';
 import '../../../practice/flashcards/presentation/screens/flashcards_list_screen.dart';
+import '../../../account/ai_setup/ai_setup.dart';
 
 /// A single project ("notebook") — Sources (add material), Chat (query
 /// that material), and Studio (generate study guides/flashcards/etc. over
@@ -686,6 +687,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
                       message: message,
                       baseUrl: widget.apiClient.baseUrl,
                       onStillStuck: () => _markStillStuck(message),
+                      onSetUpByok: () => AiSetup.open(context),
                       onReact: message.isError ? null : (emoji) => _react(message, emoji),
                       onEdit: message.isEditable && !_isAsking ? () => _startEdit(message) : null,
                       onRetry: _conversation.canRetry(message) && !_isAsking ? () => _retry(message) : null,
@@ -697,6 +699,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         // Same pieces as the main ChatScreen (2026-10-07) — this tab used
         // to have its own plainer input and a bare progress line.
         if (_isAsking) const WorkingIndicator(),
+        const AiSetupBanner(compact: true, margin: EdgeInsets.fromLTRB(10, 6, 10, 0)),
         ChatInputBar(
           controller: _chatController,
           focusNode: _chatFocusNode,

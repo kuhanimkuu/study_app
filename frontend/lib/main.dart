@@ -12,6 +12,7 @@ import 'core/notifications/study_reminders.dart';
 import 'core/settings/model_settings_service.dart';
 import 'core/storage/chat_media_store.dart';
 import 'features/chat/tutor_mode.dart';
+import 'features/account/ai_setup/ai_setup.dart';
 
 Future<void> main() async {
   // The student's saved answer to "keep chat files on this phone?" — read
@@ -42,7 +43,10 @@ Future<void> main() async {
 
 class StudyOsApp extends StatelessWidget {
   StudyOsApp({super.key, required this.apiClient})
-      : authService = AuthService(apiClient: apiClient, modelSettings: ModelSettingsService());
+      : authService = AuthService(apiClient: apiClient, modelSettings: ModelSettingsService()) {
+    // Lets any screen ask "is AI set up?" (features/account/ai_setup).
+    AiSetup.attach(authService);
+  }
 
   final ApiClient apiClient;
   final AuthService authService;

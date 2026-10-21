@@ -11,7 +11,6 @@ import '../../../../core/storage/local_db.dart';
 import '../../../../core/voice/voice_input_sheet.dart';
 import '../../../../core/widgets/sage_mascot.dart';
 import '../../../../core/widgets/profile_icon_button.dart';
-import '../../../account/presentation/screens/account_screen.dart';
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 import '../../chat_conversation.dart';
 import '../../chat_quick_action.dart';
@@ -27,6 +26,7 @@ import '../widgets/server_settings_dialog.dart';
 import '../widgets/starter_card.dart';
 import '../widgets/web_url_dialog.dart';
 import '../widgets/working_indicator.dart';
+import '../../../account/ai_setup/ai_setup.dart';
 
 /// The main chat screen — a single thread that accepts text plus four
 /// attachment types (image/PDF/audio/web), all funneled through server/'s
@@ -618,12 +618,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _openAccountSettings() {
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (context) => AccountScreen(authService: widget.authService)),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -714,7 +708,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         message: message,
                         baseUrl: _api.baseUrl,
                         onStillStuck: () => _markStillStuck(message),
-                        onSetUpByok: _openAccountSettings,
+                        onSetUpByok: () => AiSetup.open(context),
                         onReact: message.isError ? null : (emoji) => _react(message, emoji),
                         onEdit: message.isEditable && !_isLoading ? () => _startEdit(message) : null,
                         onRetry: _conversation.canRetry(message) && !_isLoading ? () => _retry(message) : null,
@@ -729,6 +723,7 @@ class _ChatScreenState extends State<ChatScreen> {
               filename: _pendingPdfName!,
               onDismiss: () => setState(() => _pendingPdfName = null),
             ),
+          const AiSetupBanner(compact: true, margin: EdgeInsets.fromLTRB(10, 6, 10, 0)),
           ChatInputBar(
             controller: _textController,
             focusNode: _textFocusNode,

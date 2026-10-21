@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../tutor/lessons/lesson_screen.dart';
 import '../../models/chat_message.dart';
+import '../../../account/ai_setup/ai_setup.dart';
 
 /// "Learn more from this" under one of Sage's replies (2026-10-21): turn a
 /// chat answer into learning — a lesson on it, a quiz in the chat, or
@@ -29,6 +30,7 @@ Future<void> showLearnMoreSheet(
             subtitle: Text('Short steps on “$topic”, with checks', maxLines: 1, overflow: TextOverflow.ellipsis),
             onTap: () {
               Navigator.of(sheetContext).pop();
+              // LessonScreen asks for the AI setup itself if needed.
               Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => LessonScreen(apiClient: apiClient, topic: topic, subjectSlug: subjectSlug),
               ));
@@ -38,18 +40,18 @@ Future<void> showLearnMoreSheet(
             leading: const Icon(Icons.quiz_rounded),
             title: const Text('Quiz me on this'),
             subtitle: const Text('Sage asks you questions here, one at a time'),
-            onTap: () {
+            onTap: () async {
               Navigator.of(sheetContext).pop();
-              onQuizMe();
+              if (await AiSetup.ensure(context)) onQuizMe();
             },
           ),
           ListTile(
             leading: const Icon(Icons.style_rounded),
             title: const Text('Save as flashcards'),
             subtitle: const Text('The key facts go into your reviews'),
-            onTap: () {
+            onTap: () async {
               Navigator.of(sheetContext).pop();
-              _saveAsFlashcards(context, apiClient, reply, subjectSlug);
+              if (await AiSetup.ensure(context) && context.mounted) _saveAsFlashcards(context, apiClient, reply, subjectSlug);
             },
           ),
         ],

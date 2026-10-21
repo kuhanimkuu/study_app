@@ -27,6 +27,14 @@ class ModelSettingsService extends ChangeNotifier {
 
   bool get hasApiKey => apiKey != null && apiKey!.isNotEmpty;
 
+  static const byokProviders = ['deepseek', 'openai', 'anthropic'];
+
+  /// Whether Sage can answer: a provider with its key, or the hosted tier.
+  /// The free built-in model isn't available on the server, so "local"
+  /// (the default) means AI isn't set up yet (2026-10-21).
+  bool get aiReady =>
+      (byokProviders.contains(backend) && hasApiKey) || (backend == 'hosted' && hostedProvider != null);
+
   Future<void> load(int userId) async {
     _userId = userId;
     backend = await _storage.read(key: _key('backend', userId)) ?? 'local';

@@ -1379,3 +1379,24 @@ The user felt the app was "just an AI prompting app". Most of the learning machi
 - **Website:** the features page lists lessons, check questions and "Learn more".
 - **Tests:** 253/253 backend (new `test_lessons.py`; tutor-mode tests in `test_conversation.py`), 88/88 Flutter (new `lesson_screen_test.dart`, plus a Learn more test).
 - **Not verified with a real model yet**; no key is available here, so the lesson prompt's JSON output is untested live. The parser accepts a fenced block, an answer letter for an mcq, and dropped bad checks, but a lesson needs at least 2 valid checks.
+
+### 2026-10-21 — Release 1.0.12: nobody misses that Sage needs an AI key
+
+The user pointed out that most people won't know about bring-your-own-key, because the app doesn't say it loudly, so they'll assume the app is broken. The only mentions were a line in the intro tour, a form deep in Profile, and the "model unavailable" card after a request had already failed. The default backend ("local") doesn't work on the server.
+
+- `ModelSettingsService.aiReady`: true for a provider with its key, or the hosted tier.
+- `AiSetup` (`features/account/ai_setup/ai_setup.dart`): attached to the one AuthService in `main.dart`, so screens that only hold an ApiClient can check it. Unattached (tests) counts as ready.
+  - `ensure` opens the setup when not ready.
+  - `open` always opens it (for a saved key that stopped working).
+  - `offerOnce` opens it by itself once per account, right after the first-run tour (or at the first app open when the tour was already seen).
+- `AiSetupBanner`: a bold orange card, "Sage needs an AI key to work", with "Set up AI now". It shows until a key is saved: on Home (both layouts), in Profile's AI section, and on the lesson screen. A one-line version sits above both chats' text fields.
+- `AiSetupScreen` follows the same providers, key pages and steps as the website's /ai/ guide, with no prices:
+  1. choose a provider (DeepSeek marked "Recommended");
+  2. open the provider's key page;
+  3. paste the key (paste button, show/hide);
+  4. "Test and save".
+- Server: `POST /api/v1/ai/check` (`server/routers/ai_check.py`, 10 per 10 minutes per account) makes one 5-token call with the key. It answers in plain words: wrong key (401), no credit (402, or OpenAI's `insufficient_quota`), not permitted (403), rate limited (429). The key is only saved if the check passes. Logged on the meter as "check".
+- Gates: starting a lesson, and "Learn more" → quiz or flashcards, open the setup first instead of failing. The "AI unavailable" card's button opens the setup in both chats; before, the subject chat card had no button at all.
+- Profile → AI model has "Set up AI step by step".
+- `AuthService.byokConfig` is shared by requests and the key test. `testAndSaveKey` encrypts the key before it leaves the phone (the test checks the plain key isn't sent). `debugSignIn` exists for tests.
+- Tests: 260/260 backend (new `test_ai_check.py`), 91/91 Flutter (new `ai_setup_test.dart`).

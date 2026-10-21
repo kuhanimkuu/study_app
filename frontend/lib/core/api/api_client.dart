@@ -587,6 +587,18 @@ class ApiClient {
     return _decode(res);
   }
 
+  /// AI setup's key test — one tiny call; see server/routers/ai_check.py.
+  Future<Map<String, dynamic>> checkAi(Map<String, dynamic> modelConfig) async {
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/ai/check'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'model_config': modelConfig}),
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
   // --- lessons (2026-10-21) — server/domains/tutor/router.py ---
 
   /// Writes a lesson on [topic] (in [subjectSlug], or "My lessons"), or on

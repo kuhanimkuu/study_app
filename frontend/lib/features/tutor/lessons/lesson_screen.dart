@@ -6,6 +6,7 @@ import '../../../core/widgets/gradient_button.dart';
 import '../../../core/widgets/sage_mascot.dart';
 import '../../chat/presentation/widgets/blocks/text_block.dart';
 import '../../practice/questions/presentation/widgets/question_answer_input.dart';
+import '../../account/ai_setup/ai_setup.dart';
 
 /// "Learn a topic" (2026-10-21): Sage teaches one topic in small steps, each
 /// ending in a question that checks it landed, then a worked example and a
@@ -61,7 +62,8 @@ class _LessonScreenState extends State<LessonScreen> {
     if (widget.lessonId != null) {
       _resume(widget.lessonId!);
     } else if (widget.conceptId != null || (widget.topic ?? '').trim().isNotEmpty) {
-      _start();
+      // After the first frame: _start may need to open the AI setup.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _start());
     } else {
       _loadSubjects();
     }
@@ -86,6 +88,18 @@ class _LessonScreenState extends State<LessonScreen> {
     final topic = _topicController.text.trim();
     if (topic.isEmpty && widget.conceptId == null) {
       setState(() => _error = 'Type what you want to learn.');
+      return;
+    }
+    // A lesson is written by the student's AI: set it up first rather
+    // than fail after "preparing your lesson…".
+    if (!await AiSetup.ensure(context)) {
+      if (mounted) {
+        setState(() {
+          _phase = _Phase.choose;
+          _error = 'Lessons need an AI key — set one up, then start again.';
+        });
+        if (_subjects.isEmpty) _loadSubjects();
+      }
       return;
     }
     setState(() {
@@ -234,6 +248,7 @@ class _LessonScreenState extends State<LessonScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
+        const AiSetupBanner(margin: EdgeInsets.only(bottom: 16)),
         const Center(child: SageMascot(size: 96, mood: SageMood.happy)),
         const SizedBox(height: 12),
         Text('What do you want to learn?', style: theme.textTheme.headlineSmall, textAlign: TextAlign.center),

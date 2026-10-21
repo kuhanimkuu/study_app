@@ -10,6 +10,7 @@ import '../features/projects/presentation/screens/projects_list_screen.dart';
 import '../core/widgets/sage_mascot.dart';
 import 'app_tour.dart';
 import 'theme.dart';
+import '../features/account/ai_setup/ai_setup.dart';
 
 /// Shown once the user is authenticated — bottom nav switching between the
 /// top-level screens. AuthGate decides whether this or the login/signup
@@ -62,7 +63,12 @@ class _AppShellState extends State<AppShell> {
     super.initState();
     AppTour.replayRequested.addListener(_onReplayRequested);
     AppTour.shouldShow().then((show) {
-      if (show && mounted) setState(() => _showTour = true);
+      if (!mounted) return;
+      if (show) {
+        setState(() => _showTour = true);
+      } else {
+        AiSetup.offerOnce(context);
+      }
     });
   }
 
@@ -78,6 +84,9 @@ class _AppShellState extends State<AppShell> {
   void _finishTour() {
     AppTour.markSeen();
     setState(() => _showTour = false);
+    // Right after the tour: most students don't know Sage needs their own
+    // AI key, so the setup opens by itself once.
+    AiSetup.offerOnce(context);
   }
 
   List<AppTourStep> _tourSteps() => [

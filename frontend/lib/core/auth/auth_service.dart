@@ -62,15 +62,29 @@ class AuthService extends ChangeNotifier {
       return {'backend': 'hosted', 'hosted_provider': settings.hostedProvider};
     }
 
-    if (!settings.hasApiKey) return null;
+    return byokConfig(backend: settings.backend, apiKey: settings.apiKey, modelName: settings.modelName);
+  }
+
+  /// A BYOK provider's request config, with the key encrypted for this user
+  /// (UserCrypto). Also used by AI setup to test a key before saving it.
+  Future<Map<String, dynamic>?> byokConfig({required String backend, String? apiKey, String? modelName}) async {
     final key = _encryptionKey;
-    if (key == null) return null;
-    final encryptedKey = await UserCrypto.encryptForUser(key, settings.apiKey!);
+    if (apiKey == null || apiKey.isEmpty || key == null) return null;
     return {
-      'backend': settings.backend,
-      if (settings.modelName != null) 'model_name': settings.modelName,
-      'encrypted_api_key': encryptedKey,
+      'backend': backend,
+      if (modelName != null) 'model_name': modelName,
+      'encrypted_api_key': await UserCrypto.encryptForUser(key, apiKey),
     };
+  }
+
+  /// AI setup's "Test and save": tries the key with one tiny call, and
+  /// saves it only if that works. Throws ApiException with a plain-words
+  /// reason (wrong key, no credit...) otherwise.
+  Future<void> testAndSaveKey({required String backend, required String apiKey}) async {
+    final config = await byokConfig(backend: backend, apiKey: apiKey);
+    if (config == null) throw ApiException(0, 'Sign in again, then retry.');
+    await apiClient.checkAi(config);
+    await modelSettings.save(backend: backend, apiKey: apiKey);
   }
 
   final ApiClient apiClient;
@@ -89,6 +103,15 @@ class AuthService extends ChangeNotifier {
   /// signup/login (db.auth_user()), never by routine calls like /me.
   String? _encryptionKey;
   String? get encryptionKey => _encryptionKey;
+
+  /// Tests only: a signed-in state without going through login (which also
+  /// opens the on-device database).
+  @visibleForTesting
+  Future<void> debugSignIn(Map<String, dynamic> user, String encryptionKey) async {
+    _user = user;
+    _encryptionKey = encryptionKey;
+    await modelSettings.load(user['id'] as int);
+  }
 
   bool _initialized = false;
   bool get initialized => _initialized;

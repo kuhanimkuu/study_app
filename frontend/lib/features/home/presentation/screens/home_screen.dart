@@ -17,6 +17,7 @@ import '../../../practice/flashcards/presentation/screens/flashcard_review_scree
 import '../../../projects/presentation/screens/project_workspace_screen.dart';
 import '../../../tutor/lessons/lesson_entry_card.dart';
 import '../../../tutor/lessons/lesson_screen.dart';
+import '../../../account/ai_setup/ai_setup.dart';
 
 /// "What should I study right now?" — the landing tab.
 ///
@@ -233,7 +234,11 @@ class _HomeScreenState extends State<HomeScreen> {
               final concepts = (_plan?['concepts_considered'] as int?) ?? 0;
               final projects = (_projects ?? []).cast<Map<String, dynamic>>();
               if (concepts == 0 && projects.isEmpty) {
-                return ListView(children: [_header(context), _buildFreshAccountHero(context)]);
+                return ListView(children: [
+                  _header(context),
+                  const AiSetupBanner(margin: EdgeInsets.fromLTRB(16, 8, 16, 0)),
+                  _buildFreshAccountHero(context),
+                ]);
               }
 
               final phases = (_plan?['phases'] as List<dynamic>?) ?? [];
@@ -245,6 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 padding: const EdgeInsets.only(bottom: 32),
                 children: [
                   _header(context),
+                  const AiSetupBanner(margin: EdgeInsets.fromLTRB(16, 8, 16, 4)),
                   const SizedBox(height: 8),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16),

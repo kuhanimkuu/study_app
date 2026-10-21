@@ -15,6 +15,8 @@ import '../../../progress/presentation/screens/progress_screen.dart';
 import '../widgets/ai_usage_meter.dart';
 import '../widgets/chat_media_settings.dart';
 import '../widgets/study_reminders_card.dart';
+import '../../ai_setup/ai_setup.dart';
+import '../../ai_setup/ai_setup_screen.dart';
 
 /// Profile + BYOK model preference. Rebuilt to match the approved visual
 /// reference's `Profile.tsx`: a gradient header card (avatar/name/email/
@@ -569,6 +571,15 @@ class _AccountScreenState extends State<AccountScreen> {
                 const SizedBox(height: 24),
 
                 _sectionHeader(context, 'AI model'),
+                const AiSetupBanner(margin: EdgeInsets.only(bottom: 10)),
+                _ProfileRow(
+                  icon: Icons.key_rounded,
+                  label: 'Set up AI step by step',
+                  sublabel: 'Choose a provider, paste your key, and test it',
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => AiSetupScreen(authService: widget.authService)),
+                  ),
+                ),
                 Column(
                   children: [
                     for (final option in const [

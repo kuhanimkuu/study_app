@@ -81,7 +81,7 @@ from .domains.knowledge.search_router import router as search_router
 from .domains.learning.router import router as learning_router
 from .domains.planning.router import router as planning_router
 from .domains.tutor.router import router as tutor_router
-from .routers import ask, health
+from .routers import ai_check, ask, health
 from .workers.cleanup import cleanup_loop
 
 FEATURES_ROOT = Path(__file__).resolve().parent.parent / "features"
@@ -150,6 +150,7 @@ app.include_router(files_router)
 app.include_router(notes_router)
 app.include_router(search_router)
 app.include_router(ask.router)
+app.include_router(ai_check.router)
 app.include_router(learning_router)
 app.include_router(assessment_router)
 app.include_router(planning_router)
