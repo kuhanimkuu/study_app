@@ -90,9 +90,12 @@ async def relevant_material(user_id: int, slug: str, query: str, budget: int) ->
     return sample_material(ranked or chunks, budget)
 
 
-async def call_model(prompt: str, max_tokens: int, model_config: dict, db: AsyncSession, user_id: int) -> str:
+async def call_model(
+    prompt: str, max_tokens: int, model_config: dict, db: AsyncSession, user_id: int, source: str = "generation",
+) -> str:
     """One model call with this app's standard failure messages, plus
-    token-meter logging and hosted-tier billing (same as the attempt endpoint)."""
+    token-meter logging and hosted-tier billing (same as the attempt
+    endpoint). `source` is the feature it's charged as (billing/credits.py)."""
     backend = model_config.get("backend", "local")
     try:
         result = await engines.model_router.run(prompt=prompt, max_tokens=max_tokens, **model_config)
@@ -107,7 +110,7 @@ async def call_model(prompt: str, max_tokens: int, model_config: dict, db: Async
 
     usage = result.get("usage")
     if usage is not None:
-        await billing_service.record_ai_usage(db, user_id, model_config, usage, "generation")
+        await billing_service.record_ai_usage(db, user_id, model_config, usage, source)
         # Committed now, not with the caller's rows: the provider billed this
         # call even if its output then turns out unusable (a 502 below).
         await db.commit()

@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/api/api_client.dart';
+import '../../../research/go_deeper_screen.dart';
 import '../../../tutor/lessons/lesson_screen.dart';
+import '../../tutor_mode.dart';
 import '../../models/chat_message.dart';
 import '../../../account/ai_setup/ai_setup.dart';
 
@@ -33,6 +35,23 @@ Future<void> showLearnMoreSheet(
               // LessonScreen asks for the AI setup itself if needed.
               Navigator.of(context).push(MaterialPageRoute(
                 builder: (_) => LessonScreen(apiClient: apiClient, topic: topic, subjectSlug: subjectSlug),
+              ));
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.travel_explore_rounded),
+            title: const Text('Go deeper'),
+            subtitle: const Text('Real videos, books and papers on it'),
+            onTap: () async {
+              Navigator.of(sheetContext).pop();
+              if (!await AiSetup.ensure(context) || !context.mounted) return;
+              Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => GoDeeperScreen(
+                  apiClient: apiClient,
+                  topic: topic,
+                  context: reply.plainText,
+                  depth: TutorMode.instance.depth.value,
+                ),
               ));
             },
           ),

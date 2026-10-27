@@ -7,6 +7,7 @@ import '../../../core/widgets/sage_mascot.dart';
 import '../../chat/presentation/widgets/blocks/text_block.dart';
 import '../../practice/questions/presentation/widgets/question_answer_input.dart';
 import '../../account/ai_setup/ai_setup.dart';
+import '../../research/go_deeper_screen.dart';
 
 /// "Learn a topic" (2026-10-21): Sage teaches one topic in small steps, each
 /// ending in a question that checks it landed, then a worked example and a
@@ -508,6 +509,19 @@ class _LessonScreenState extends State<LessonScreen> {
           ),
         ],
         const SizedBox(height: 28),
+        // After a lesson: real videos, books and papers to go further.
+        OutlinedButton.icon(
+          icon: const Icon(Icons.travel_explore_rounded),
+          label: const Text('Go deeper: videos, books and papers'),
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => GoDeeperScreen(
+              apiClient: widget.apiClient,
+              topic: _lesson!['topic'] as String? ?? _lesson!['title'] as String,
+              context: _lesson!['title'] as String?,
+            ),
+          )),
+        ),
+        const SizedBox(height: 10),
         GradientButton(label: 'Learn another topic', onPressed: _learnAnother),
         const SizedBox(height: 10),
         OutlinedButton(onPressed: () => Navigator.of(context).maybePop(), child: const Text('Done')),

@@ -33,6 +33,8 @@ class _FakeApi extends ApiClient {
         'by_model': [
           {'provider': 'openai', 'model_name': 'gpt-4o-mini', 'hosted': false, 'calls': 2, 'input_tokens': 11990, 'output_tokens': 2990, 'cost_micro_usd': monthCost},
           {'provider': 'openai', 'model_name': 'custom-x', 'hosted': false, 'calls': 1, 'input_tokens': 10, 'output_tokens': 10, 'cost_micro_usd': null},
+          // Study OS AI is paid in credits: no provider, no cost (2026-10-27).
+          {'provider': 'Study OS', 'model_name': 'Study OS AI', 'hosted': true, 'calls': 4, 'input_tokens': 4000, 'output_tokens': 2000, 'cost_micro_usd': null, 'credits': 5},
         ],
         'monthly_limit_cents': limitCents,
       };
@@ -65,6 +67,9 @@ void main() {
     expect(find.text('Today'), findsOneWidget);
     expect(find.text('gpt-4o-mini'), findsOneWidget);
     expect(find.text('no price'), findsOneWidget);
+    expect(find.text('Study OS AI'), findsOneWidget);
+    expect(find.text('5 credits'), findsOneWidget);
+    expect(find.text('credits · 4 calls'), findsOneWidget);
     await tester.scrollUntilVisible(find.text('Prices are estimates'), 200);
     expect(find.textContaining('1 call used a model we don\'t have a price for'), findsOneWidget);
   });

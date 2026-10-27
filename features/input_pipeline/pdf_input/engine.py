@@ -57,7 +57,12 @@ async def run(**kwargs: Any) -> dict:
         "tables": pdf_result["tables"],
         "equations": pdf_result["equations"],
     }
-    return {"input_type": "pdf", "content": pdf_result["text"], "structure": structure}
+    # "pages" (2026-10-27): each page's own text, so an upload can be indexed
+    # page by page and answers can cite "p. 12" (server knowledge router).
+    return {
+        "input_type": "pdf", "content": pdf_result["text"], "structure": structure,
+        "pages": pdf_result.get("pages", []),
+    }
 
 
 if __name__ == "__main__":

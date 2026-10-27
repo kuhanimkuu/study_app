@@ -44,7 +44,8 @@ class WalletBalance(Base):
     )
 
     def public(self) -> dict:
-        return {"balance_cents": self.balance_cents, "updated_at": self.updated_at.isoformat()}
+        # balance_cents holds credits since 2026-10-27 (credits.py).
+        return {"credits": self.balance_cents, "updated_at": self.updated_at.isoformat()}
 
 
 class LedgerEntry(Base):
@@ -56,7 +57,11 @@ class LedgerEntry(Base):
     kind: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # usage rows only — null for topups.
+    # usage rows only — null for topups. Since 2026-10-27 amount_cents
+    # counts app credits (1 credit = 1 cent of sale price, see credits.py)
+    # and `feature` says what they were spent on. The provider, token and
+    # cost columns stay for Study OS's own records; public() leaves them out.
+    feature: Mapped[str | None] = mapped_column(String(20), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(20), nullable=True)
     model_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -80,17 +85,16 @@ class LedgerEntry(Base):
     )
 
     def public(self) -> dict:
+        """What a student sees: credits and what they bought — never the
+        provider, tokens or what the call cost Study OS."""
+        from .credits import FEATURE_NAMES
+
         return {
             "id": self.id,
             "kind": self.kind,
-            "amount_cents": self.amount_cents,
-            "provider": self.provider,
-            "model_name": self.model_name,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "provider_cost_cents": self.provider_cost_cents,
-            "markup_cents": self.markup_cents,
-            "infra_surcharge_cents": self.infra_surcharge_cents,
+            "credits": self.amount_cents,
+            "feature": self.feature,
+            "feature_name": FEATURE_NAMES.get(self.feature or "", "AI use") if self.kind == "usage" else None,
             "payment_reference": self.payment_reference,
             "confirmed": self.confirmed,
             "created_at": self.created_at.isoformat(),
@@ -106,8 +110,9 @@ class AiUsage(Base):
 
     cost_micro_usd is millionths of a dollar, not cents: a typical BYOK
     call costs a small fraction of a cent, which cents would round to 0.
-    For a hosted call it's what the wallet was actually debited; for BYOK
-    it's an estimate from pricing.py's price table (the student's provider
+    For a hosted call it's what the provider charged Study OS (internal:
+    the student sees `credits` instead, and the hidden allowance counts
+    this); for BYOK it's an estimate from pricing.py's price table (the student's provider
     bills them directly, Study OS never sees that bill), and null for a
     model that table doesn't price — never a guessed $0."""
 
@@ -123,6 +128,8 @@ class AiUsage(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_micro_usd: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Hosted calls only: the app credits charged (credits.py). Null for BYOK.
+    credits: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, nullable=False, index=True
     )

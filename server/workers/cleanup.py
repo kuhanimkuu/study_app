@@ -42,6 +42,7 @@ import datetime
 from sqlalchemy import delete, select
 
 from ..core.idempotency import delete_expired_keys
+from ..domains.research.fetch import delete_expired as delete_expired_research_cache
 from ..db.session import async_session
 from ..domains.diagnostics.models import RETENTION_DAYS as CLIENT_ERROR_RETENTION_DAYS
 from ..domains.diagnostics.models import ClientError
@@ -152,6 +153,7 @@ async def run_cleanup_once() -> CleanupResult:
     await delete_old_client_errors()
     await delete_expired_reset_codes()
     await delete_expired_keys()
+    await delete_expired_research_cache()
     result = await asyncio.to_thread(
         clean_files,
         live_user_ids,

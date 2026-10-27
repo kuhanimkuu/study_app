@@ -20,9 +20,8 @@ class ModelSettingsService extends ChangeNotifier {
   String backend = 'local';
   String? modelName;
   String? apiKey;
-  // backend == 'hosted' only — which of Study OS's pooled provider keys to
-  // bill against (anthropic/openai/deepseek). Null until the user picks
-  // one; account_screen.dart defaults it to 'anthropic' on first selection.
+  // backend == 'hosted' only. Set (to 'auto') once the student picks Study
+  // OS AI; the server chooses the model and ignores the value (2026-10-27).
   String? hostedProvider;
 
   bool get hasApiKey => apiKey != null && apiKey!.isNotEmpty;

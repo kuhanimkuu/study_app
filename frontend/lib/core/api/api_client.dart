@@ -678,6 +678,37 @@ class ApiClient {
     _decode(res);
   }
 
+  // --- Go deeper and videos (2026-10-27) — server/domains/research ---
+
+  /// 2-3 real resources on [topic]: {"level", "items": [...], "picked_by"}.
+  Future<Map<String, dynamic>> goDeeper({required String topic, String? context, String? depth}) async {
+    final modelConfig = await _resolveModelConfig(null);
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/go-deeper'),
+          headers: _jsonHeaders,
+          body: jsonEncode({
+            'topic': topic.length > 200 ? topic.substring(0, 200) : topic,
+            if (context != null) 'context': context.length > 2000 ? context.substring(0, 2000) : context,
+            if (depth != null) 'depth': depth,
+            if (modelConfig != null) 'model_config': modelConfig,
+          }),
+        )
+        .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
+  Future<Map<String, dynamic>> reportSource({required String url, required String reason}) async {
+    final res = await _http
+        .post(
+          Uri.parse('$baseUrl/api/v1/sources/report'),
+          headers: _jsonHeaders,
+          body: jsonEncode({'url': url, 'reason': reason}),
+        )
+        .timeout(_requestTimeout, onTimeout: _timeoutError);
+    return _decode(res);
+  }
+
   /// "Save as flashcards" under a chat answer: its key facts become cards
   /// in [subjectSlug]'s review queue.
   Future<Map<String, dynamic>> flashcardsFromText({required String subjectSlug, required String text, int count = 5}) async {
@@ -1186,10 +1217,10 @@ class ApiClient {
     return _decode(res);
   }
 
-  // --- billing: the hosted pay-as-you-go AI tier (blueprint Section
-  // 42.1). See server/domains/billing/ — Study OS's own pooled provider
-  // key, never a per-user provisioned one; `amount_cents`/`balance_cents`
-  // are integer cents throughout, matching the server's ledger model. ---
+  // --- billing: the hosted AI tier, paid in app credits (2026-10-27). See
+  // server/domains/billing/ — Study OS's own pooled provider key, never a
+  // per-user provisioned one. The balance comes with the price of each
+  // feature and the packs on offer. ---
 
   Future<Map<String, dynamic>> getBillingBalance() async {
     final res = await _http
@@ -1201,12 +1232,12 @@ class ApiClient {
   /// The only payment provider wired up server-side right now is a mock
   /// that confirms instantly — see payment_provider.py. No real money
   /// changes hands yet.
-  Future<Map<String, dynamic>> createTopup(int amountCents) async {
+  Future<Map<String, dynamic>> createTopup(String pack) async {
     final res = await _http
         .post(
           Uri.parse('$baseUrl/api/v1/billing/topups'),
           headers: _jsonHeaders,
-          body: jsonEncode({'amount_cents': amountCents}),
+          body: jsonEncode({'pack': pack}),
         )
         .timeout(_requestTimeout, onTimeout: _timeoutError);
     return _decode(res);

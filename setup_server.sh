@@ -403,6 +403,25 @@ sudo -u $APP_USER -H bash -c "cd $APP_DIR && set -a && . ./.env && set +a && .ve
 EOF
 chmod 755 /usr/local/bin/study-os-errors
 
+cat > /usr/local/bin/study-os-blocklist <<EOF
+#!/usr/bin/env bash
+# Sites Go deeper never suggests, and students' "Report this source" reports.
+# Usage: study-os-blocklist list | reports | add <site or page> [reason] | remove <site or page>
+set -euo pipefail
+cd /
+sudo -u $APP_USER -H bash -c 'cd $APP_DIR && set -a && . ./.env && set +a && exec .venv/bin/python -m server.domains.research.blocklist "\$@"' _ "\$@"
+EOF
+chmod 755 /usr/local/bin/study-os-blocklist
+
+cat > /usr/local/bin/study-os-costs <<EOF
+#!/usr/bin/env bash
+# What each AI feature really costs, next to its credit price. Usage: study-os-costs [days, default 30]
+set -euo pipefail
+cd /
+sudo -u $APP_USER -H bash -c "cd $APP_DIR && set -a && . ./.env && set +a && .venv/bin/python -m server.scripts.cost_report --days \${1:-30}"
+EOF
+chmod 755 /usr/local/bin/study-os-costs
+
 cat > /usr/local/bin/study-os-import <<EOF
 #!/usr/bin/env bash
 # Copy all data from another Postgres database (e.g. Render's External Database
@@ -466,6 +485,8 @@ cat <<EOF
    study-os-update                    pull new code from GitHub and restart
    study-os-backup                    run a backup now
    study-os-import "<postgres URL>"   copy data in from another database (e.g. Render)
+   study-os-blocklist list|reports    sources Go deeper never suggests, and student reports
+   study-os-costs [days]              what each AI feature costs, next to its credit price
 
  Settings file: $ENV_FILE
 =====================================================================

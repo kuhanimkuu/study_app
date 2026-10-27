@@ -136,6 +136,30 @@ class Link(BaseModel):
     url: str
 
 
+class VideoChapter(BaseModel):
+    start: int
+    title: str
+
+
+class VideoBlock(BaseModel):
+    """A YouTube video to play inside the app with YouTube's own embedded
+    player (2026-10-27): from a pasted link or Go deeper. `start`/`end` are
+    the section worth watching (seconds), `covers` what that part teaches."""
+
+    type: Literal["video"] = "video"
+    id: str
+    title: str
+    url: str
+    channel: str | None = None
+    attribution: str | None = None
+    duration: int | None = None
+    start: int = 0
+    end: int | None = None
+    section: str | None = None
+    covers: str | None = None
+    chapters: list[VideoChapter] = []
+
+
 class LinksBlock(BaseModel):
     """A "Learn more" card of real links under a project-chat explanation
     (2026-10-21): search pages on trusted learning sites, plus live web
@@ -163,6 +187,7 @@ Block = Annotated[
         ThreeDBlock,
         ModelUnavailableBlock,
         LinksBlock,
+        VideoBlock,
     ],
     Field(discriminator="type"),
 ]

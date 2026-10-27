@@ -1,11 +1,14 @@
 """
-/api/v1/billing/... — hosted-tier wallet balance, top-ups, and usage
-history (blueprint Section 42.1). No real payment processor is wired in
-yet (see payment_provider.py) — POST /topups/{reference}/confirm exists so
-the mock provider's synchronous-confirm flow can be exercised over real
-HTTP today; a real processor would normally settle a topup via its own
-server-to-server webhook route instead of this user-triggered one, which
-is the shape to add when a real processor gets chosen.
+/api/v1/billing/... — hosted-tier app credits, top-ups and usage history
+(blueprint Section 42.1; credits since 2026-10-27, see credits.py).
+Students see credits and what they spent them on, never provider cost,
+markup or tokens, and the server picks the hosted model. No real payment
+processor is wired in yet (see payment_provider.py) — POST
+/topups/{reference}/confirm exists so the mock provider's synchronous-
+confirm flow can be exercised over real HTTP today; a real processor would
+normally settle a topup via its own server-to-server webhook route instead
+of this user-triggered one, which is the shape to add when a real
+processor gets chosen.
 """
 from __future__ import annotations
 
@@ -13,12 +16,12 @@ import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core import security
 from ...db.session import get_db
-from . import service
+from . import credits, service
 from .models import AiUsage, LedgerEntry
 from .payment_provider import get_payment_provider
 
@@ -30,13 +33,18 @@ async def get_balance(
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """Credits left, what each feature costs, and the packs on offer."""
     wallet = await service.get_or_create_wallet(db, current_user["id"])
     await db.commit()
-    return wallet.public()
+    return {
+        **wallet.public(),
+        "prices": credits.price_list(),
+        "packs": [{"id": pack_id, **pack} for pack_id, pack in credits.PACKS.items()],
+    }
 
 
 class CreateTopup(BaseModel):
-    amount_cents: int = Field(gt=0)
+    pack: str
 
 
 @router.post("/topups")
@@ -45,11 +53,15 @@ async def create_topup(
     current_user: dict = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    pack = credits.PACKS.get(payload.pack)
+    if pack is None:
+        raise HTTPException(status_code=422, detail=f"pack must be one of {sorted(credits.PACKS)}")
     provider = get_payment_provider()
-    result = provider.create_topup(current_user["id"], payload.amount_cents)
+    # The provider is asked for the pack's price; the wallet gets its credits.
+    result = provider.create_topup(current_user["id"], pack["price_cents"])
 
     if result["confirmed"]:
-        entry = await service.credit_topup(db, current_user["id"], payload.amount_cents, result["reference"])
+        entry = await service.credit_topup(db, current_user["id"], pack["credits"], result["reference"])
         await db.commit()
         await db.refresh(entry)
         return entry.public()
@@ -57,7 +69,7 @@ async def create_topup(
     # Real-processor path: the topup is pending until a webhook (future
     # work) or an explicit /confirm call marks it settled.
     entry = LedgerEntry(
-        user_id=current_user["id"], kind="topup", amount_cents=payload.amount_cents,
+        user_id=current_user["id"], kind="topup", amount_cents=pack["credits"],
         payment_reference=result["reference"], confirmed=False,
     )
     db.add(entry)
@@ -124,7 +136,8 @@ async def ai_usage_summary(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """The token meter (2026-10-20): this student's own AI usage — today,
-    the last 30 days and all time — plus a per-model breakdown. Only ever
+    the last 30 days and all time — plus a per-model breakdown, with
+    hosted calls shown as credits, not dollars (2026-10-27). Only ever
     the caller's rows; no key or other student's data is involved.
 
     cost_micro_usd sums only priced calls; unpriced_calls counts the rest
@@ -143,13 +156,18 @@ async def ai_usage_summary(
         "all_time": None,
     }
 
+    # Costs here are the student's own-key estimates only: a hosted call's
+    # provider cost is Study OS's business, so hosted calls show credits.
+    own_key = AiUsage.hosted.is_(False)
+
     def totals_query(since):
         q = select(
             func.count(AiUsage.id),
             func.coalesce(func.sum(AiUsage.input_tokens), 0),
             func.coalesce(func.sum(AiUsage.output_tokens), 0),
-            func.coalesce(func.sum(AiUsage.cost_micro_usd), 0),
-            func.count(AiUsage.id).filter(AiUsage.cost_micro_usd.is_(None)),
+            func.coalesce(func.sum(case((own_key, AiUsage.cost_micro_usd), else_=0)), 0),
+            func.count(AiUsage.id).filter(own_key, AiUsage.cost_micro_usd.is_(None)),
+            func.coalesce(func.sum(AiUsage.credits), 0),
         ).where(AiUsage.user_id == current_user["id"])
         if since is not None:
             q = q.where(AiUsage.created_at >= since)
@@ -157,31 +175,36 @@ async def ai_usage_summary(
 
     summary = {}
     for name, since in periods.items():
-        calls, input_tokens, output_tokens, cost, unpriced = (await db.execute(totals_query(since))).one()
+        calls, input_tokens, output_tokens, cost, unpriced, credits_used = (await db.execute(totals_query(since))).one()
         summary[name] = {
             "calls": calls, "input_tokens": input_tokens, "output_tokens": output_tokens,
-            "cost_micro_usd": cost, "unpriced_calls": unpriced,
+            "cost_micro_usd": cost, "unpriced_calls": unpriced, "credits_used": credits_used,
         }
 
+    # Every hosted call is one "Study OS AI" row, whichever model served it.
+    provider_col = case((own_key, AiUsage.provider), else_="Study OS")
+    model_col = case((own_key, AiUsage.model_name), else_="Study OS AI")
     rows = await db.execute(
         select(
-            AiUsage.provider, AiUsage.model_name, AiUsage.hosted,
+            provider_col, model_col, AiUsage.hosted,
             func.count(AiUsage.id),
             func.sum(AiUsage.input_tokens), func.sum(AiUsage.output_tokens),
-            func.sum(AiUsage.cost_micro_usd),
+            func.sum(AiUsage.cost_micro_usd), func.sum(AiUsage.credits),
         )
         .where(AiUsage.user_id == current_user["id"])
-        .group_by(AiUsage.provider, AiUsage.model_name, AiUsage.hosted)
+        .group_by(provider_col, model_col, AiUsage.hosted)
         .order_by(func.sum(AiUsage.input_tokens + AiUsage.output_tokens).desc())
     )
     by_model = [
         {
             "provider": provider, "model_name": model_name, "hosted": hosted, "calls": calls,
             "input_tokens": input_tokens or 0, "output_tokens": output_tokens or 0,
-            # null when none of this model's calls could be priced.
-            "cost_micro_usd": cost,
+            # null when none of this model's calls could be priced, and
+            # always for hosted calls, which show credits instead.
+            "cost_micro_usd": None if hosted else cost,
+            "credits": (credits_used or 0) if hosted else None,
         }
-        for provider, model_name, hosted, calls, input_tokens, output_tokens, cost in rows
+        for provider, model_name, hosted, calls, input_tokens, output_tokens, cost, credits_used in rows
     ]
     limit_cents = await service.get_monthly_limit_cents(db, current_user["id"])
     return {**summary, "by_model": by_model, "monthly_limit_cents": limit_cents}

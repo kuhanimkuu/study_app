@@ -1472,3 +1472,35 @@ The user shared `Downloads/Study_OS_plan.pdf`, a product and revenue plan with f
   - Step 2: Go deeper — real videos, papers and books from official APIs; the model picks and never writes URLs.
   - Step 3: rights-aware sources.
   - Step 4: measure cost per feature, then rework the hosted wallet into app credits.
+
+### 2026-10-27 — Release 1.0.15: Go deeper, videos in the app, rights-aware sources, app credits (plan steps 2–4)
+
+The user asked for the rest of the plan, plus: a YouTube link should play inside the app, showing which section to watch and what it covers.
+
+- **Go deeper (step 2), `server/domains/research/`:**
+  - `POST /api/v1/go-deeper` finds candidates through official APIs: YouTube Data API (needs `YOUTUBE_API_KEY`), OpenAlex, arXiv, Open Library and Wikipedia.
+  - Fetching is polite: a User-Agent with the contact email, a gap per host, and a `research_cache` table.
+  - Sage picks 2–3 by id only and never writes a URL. Every link is checked, and each source shown is logged to `source_log`.
+  - The level (beginner…research) comes from depth and education level.
+  - With no AI key or a bad reply, the server makes default picks.
+- **Videos in the app:**
+  - A pasted YouTube link (chat or web search) or a Go deeper pick becomes a `video` block: a card with a thumbnail, "Watch 1:35–6:40", the section name and what it covers.
+  - Tapping it opens `VideoPlayerScreen` (`youtube_player_iframe`, YouTube's own embedded player; nothing is downloaded). It starts at that section and lists the chapters to jump to, plus Watch on YouTube.
+  - `POST /api/v1/videos/resolve` works without a key (oEmbed).
+- **Rights (step 3), `rights.py`:**
+  - Fixed rules sort sources into tiers. **A** is an open licence from a trusted source (excerpt ≤ 600 characters with credit). **B** is linked with a short ≤ 200-character description. **C** (pirate sites) is never shown.
+  - A licence claimed by an untrusted domain counts as tier B.
+  - `POST /api/v1/sources/report` takes "Report this source" from the app; `study-os-blocklist list|reports|add|remove` manages blocks on the server.
+  - PDFs are indexed with page labels, so notes are cited as "your notes, p. 12".
+- **Cost and credits (step 4):** see `docs/COST_AND_CREDITS.md`.
+  - **Measured on deepseek-chat:** about $0.0007 per chat answer; a lesson is about $0.0013.
+  - **Worst cases from the length caps:** $0.0011–$0.0063 per feature.
+  - **Credits** (1 credit = $0.01; `billing/credits.py`): chat 1, exam-level 2, study guide 2, lesson 3, Go deeper 1, explanation 1, practice/flashcards 2, marking 1, the AI test free.
+  - **Packs:** 100/$1, 550/$5, 1,200/$10. There's still no real payment; top-ups are mock.
+  - The hosted tier no longer shows provider cost, markup, tokens or a provider choice. The server picks the model (`HOSTED_DEFAULT_PROVIDER`, default deepseek), and the app shows Credits and "Lesson −3 credits".
+  - **Hidden allowance:** a student's hosted calls in a month may cost no more than the credits spent on them sold for (+10¢), and never more than `HOSTED_MONTHLY_COST_CAP_USD` ($3).
+  - The student's own dollar limit now counts only their own-key calls.
+  - `study-os-costs [days]` (`server/scripts/cost_report.py`) prints real cost per feature from the token meter.
+  - Migration `a3f19c7d2e58` adds `ledger_entries.feature` and `ai_usage.credits`.
+- **Deploy:** `website/deploy.sh` now checks the APK's SHA-256 on the server before swapping it in, after a truncated 1.0.14 upload. `ops/server-scripts-1.0.15.sh` installs the two new server commands.
+- **Tests:** 324/324 backend (`test_go_deeper.py` added; `test_billing.py` reworked for credits, worst-case-vs-price, packs and the hidden allowance; two config-reading tests now expect the 503 for an unconfigured hosted tier), 101/101 Flutter.

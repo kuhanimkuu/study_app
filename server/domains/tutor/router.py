@@ -165,7 +165,7 @@ async def start_lesson(
     level = ", ".join(v for v in (user.education_level, user.course) if v) if user else None
     style = await _style_note(db, user_id)
     text = await generation.call_model(
-        lesson_prompt(topic, material, level, style), LESSON_MAX_TOKENS, model_config, db, user_id
+        lesson_prompt(topic, material, level, style), LESSON_MAX_TOKENS, model_config, db, user_id, source="lesson"
     )
     parsed = parse_lesson(text, topic)
 

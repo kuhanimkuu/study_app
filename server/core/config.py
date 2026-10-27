@@ -77,6 +77,18 @@ class Settings(BaseSettings):
     # not a default to guess at; the knob is fully wired end-to-end now
     # so setting it later needs only an .env change, not a code change.
     hosted_infra_surcharge_percent: float = 0.0
+    # Since 2026-10-27 students pay in app credits (billing/credits.py); the
+    # two percentages above only matter to pricing.compute_charge, kept for
+    # internal reports. The server picks the hosted model — students don't.
+    hosted_default_provider: str = "deepseek"
+    # The hidden allowance (billing/service.py's enforce_hosted_allowance):
+    # in a calendar month (UTC) one student's hosted calls may cost Study OS
+    # no more than the credits they spent sold for, and never more than
+    # this many US dollars. Never shown as a price; a student who reaches
+    # it is told this month's AI allowance is used up. Raise it once real
+    # payments exist — while top-ups are free test ones, it is what stops
+    # one account using the pooled key without limit.
+    hosted_monthly_cost_cap_usd: float = 3.0
 
     # Study OS's OWN pooled provider API keys for the hosted tier —
     # distinct from a user's manually-entered BYOK key (which is
@@ -95,6 +107,13 @@ class Settings(BaseSettings):
     # own onboarding@resend.dev only delivers to the Resend account owner,
     # which is enough for testing.
     resend_api_key: str = ""
+
+    # "Go deeper" sources (server/domains/research, 2026-10-27). Without a
+    # YouTube key there are no video suggestions (a pasted YouTube link
+    # still plays, via YouTube's public oEmbed). OpenAlex works without a
+    # key on a smaller daily budget.
+    youtube_api_key: str = ""
+    openalex_api_key: str = ""
     email_from: str = "Study OS <onboarding@resend.dev>"
 
 

@@ -318,6 +318,8 @@ class _ModelRow extends StatelessWidget {
     final output = _int(data['output_tokens']);
     final cost = data['cost_micro_usd'] as num?;
     final hosted = data['hosted'] == true;
+    // Hosted calls are paid in credits; their cost isn't the student's.
+    final credits = (data['credits'] as num?)?.toInt() ?? 0;
     final calls = _int(data['calls']);
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -332,7 +334,7 @@ class _ModelRow extends StatelessWidget {
                   Text('${data['model_name']}', style: theme.textTheme.titleSmall),
                   const SizedBox(height: 2),
                   Text(
-                    '${data['provider']} · ${hosted ? 'hosted' : 'your key'} · $calls ${calls == 1 ? 'call' : 'calls'}',
+                    '${hosted ? 'credits' : '${data['provider']} · your key'} · $calls ${calls == 1 ? 'call' : 'calls'}',
                     style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                   ),
                   const SizedBox(height: 2),
@@ -344,9 +346,13 @@ class _ModelRow extends StatelessWidget {
               ),
             ),
             Text(
-              cost == null ? 'no price' : '≈ ${formatMicroUsd(cost.toInt())}',
+              hosted
+                  ? '$credits ${credits == 1 ? 'credit' : 'credits'}'
+                  : cost == null
+                      ? 'no price'
+                      : '≈ ${formatMicroUsd(cost.toInt())}',
               style: theme.textTheme.titleSmall?.copyWith(
-                color: cost == null ? theme.colorScheme.onSurfaceVariant : StudyOsColors.xp,
+                color: cost == null && !hosted ? theme.colorScheme.onSurfaceVariant : StudyOsColors.xp,
               ),
             ),
           ],

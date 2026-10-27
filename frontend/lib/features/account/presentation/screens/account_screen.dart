@@ -72,11 +72,12 @@ class _AccountScreenState extends State<AccountScreen> {
   double? _avgMastery;
   int _sessionsThisWeek = 0;
 
-  // Hosted pay-as-you-go tier (blueprint Section 42.1) — see
-  // server/domains/billing/. _hostedProvider defaults to 'anthropic' the
-  // first time a user selects this option; a saved setting overrides that.
-  late String _hostedProvider = _settings.hostedProvider ?? 'anthropic';
-  int? _balanceCents;
+  // Hosted tier, paid in app credits (2026-10-27) — see
+  // server/domains/billing/credits.py. The server picks the model, so
+  // there's no provider to choose; packs and prices come from the server.
+  int? _credits;
+  List<Map<String, dynamic>> _packs = [];
+  List<Map<String, dynamic>> _prices = [];
   bool _billingLoading = false;
   List<Map<String, dynamic>> _recentUsage = [];
   bool _toppingUp = false;
@@ -103,7 +104,9 @@ class _AccountScreenState extends State<AccountScreen> {
       final usage = (results[1]['entries'] as List<dynamic>).cast<Map<String, dynamic>>();
       if (!mounted) return;
       setState(() {
-        _balanceCents = results[0]['balance_cents'] as int;
+        _credits = results[0]['credits'] as int;
+        _packs = (results[0]['packs'] as List? ?? const []).cast<Map<String, dynamic>>();
+        _prices = (results[0]['prices'] as List? ?? const []).cast<Map<String, dynamic>>();
         _recentUsage = usage.take(5).toList();
       });
     } catch (_) {
@@ -114,13 +117,13 @@ class _AccountScreenState extends State<AccountScreen> {
     }
   }
 
-  Future<void> _topUp(int amountCents) async {
+  Future<void> _topUp(String pack) async {
     setState(() {
       _toppingUp = true;
       _error = null;
     });
     try {
-      await _apiClient.createTopup(amountCents);
+      await _apiClient.createTopup(pack);
       await _loadBillingInfo();
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -172,7 +175,8 @@ class _AccountScreenState extends State<AccountScreen> {
         backend: _backend,
         modelName: _modelNameController.text.trim().isEmpty ? null : _modelNameController.text.trim(),
         apiKey: _apiKeyController.text.isEmpty ? null : _apiKeyController.text,
-        hostedProvider: _backend == 'hosted' ? _hostedProvider : null,
+        // Any value marks the hosted tier as chosen; the server picks the model.
+        hostedProvider: _backend == 'hosted' ? 'auto' : null,
       );
       setState(() => _savedMessage = 'Saved on this device.');
     } catch (e) {
@@ -584,7 +588,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   children: [
                     for (final option in const [
                       (id: 'local', name: 'Local model', sub: 'In development — not available yet'),
-                      (id: 'hosted', name: 'Study OS Hosted', sub: 'Pay-as-you-go — no key needed'),
+                      (id: 'hosted', name: 'Study OS AI', sub: 'Pay with credits — no key needed'),
                       (id: 'anthropic', name: 'Anthropic Claude', sub: 'Bring your own key'),
                       (id: 'openai', name: 'OpenAI GPT', sub: 'Bring your own key'),
                       (id: 'deepseek', name: 'DeepSeek', sub: 'Bring your own key'),
@@ -595,7 +599,7 @@ class _AccountScreenState extends State<AccountScreen> {
                         selected: _backend == option.id,
                         onTap: () {
                           setState(() => _backend = option.id);
-                          if (option.id == 'hosted' && _balanceCents == null && !_billingLoading) {
+                          if (option.id == 'hosted' && _credits == null && !_billingLoading) {
                             _loadBillingInfo();
                           }
                         },
@@ -603,22 +607,6 @@ class _AccountScreenState extends State<AccountScreen> {
                   ],
                 ),
                 if (_backend == 'hosted') ...[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      for (final provider in const [
-                        (id: 'anthropic', label: 'Anthropic'),
-                        (id: 'openai', label: 'OpenAI'),
-                        (id: 'deepseek', label: 'DeepSeek'),
-                      ])
-                        ChoiceChip(
-                          label: Text(provider.label),
-                          selected: _hostedProvider == provider.id,
-                          onSelected: (_) => setState(() => _hostedProvider = provider.id),
-                        ),
-                    ],
-                  ),
                   const SizedBox(height: 12),
                   Card(
                     child: Padding(
@@ -629,32 +617,48 @@ class _AccountScreenState extends State<AccountScreen> {
                           Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Text('Balance', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                              Text('Credits', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
                               if (_billingLoading)
                                 const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
                             ],
                           ),
                           Text(
-                            _balanceCents == null ? '—' : '\$${(_balanceCents! / 100).toStringAsFixed(2)}',
+                            _credits == null ? '—' : '$_credits',
                             style: theme.textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
                           ),
+                          if (_prices.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              _prices.map((p) => '${p['name']} ${p['credits']}').join(' · '),
+                              style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                            ),
+                          ],
                           const SizedBox(height: 10),
                           Row(
                             children: [
-                              for (final amount in const [(cents: 100, label: '+\$1'), (cents: 500, label: '+\$5'), (cents: 1000, label: '+\$10')]) ...[
+                              for (final pack in _packs) ...[
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: _toppingUp ? null : () => _topUp(amount.cents),
-                                    child: Text(amount.label),
+                                    onPressed: _toppingUp ? null : () => _topUp(pack['id'] as String),
+                                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8)),
+                                    child: Column(
+                                      children: [
+                                        Text('+${pack['credits']}', style: const TextStyle(fontWeight: FontWeight.w700)),
+                                        Text(
+                                          '\$${((pack['price_cents'] as int) / 100).toStringAsFixed(0)}',
+                                          style: theme.textTheme.labelSmall,
+                                        ),
+                                      ],
+                                    ),
                                   ),
                                 ),
-                                const SizedBox(width: 8),
+                                if (pack != _packs.last) const SizedBox(width: 8),
                               ],
                             ],
                           ),
                           const SizedBox(height: 6),
                           Text(
-                            'Test top-up — no real payment is collected yet.',
+                            'Test credits — no real payment is collected yet.',
                             style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                           ),
                           if (_recentUsage.isNotEmpty) ...[
@@ -1013,7 +1017,8 @@ class _ModelOptionCard extends StatelessWidget {
 }
 
 /// One row of the hosted tier's "Recent usage" list — a LedgerEntry.public()
-/// dict (see server/domains/billing/models.py), kind == "usage" only.
+/// dict (see server/domains/billing/models.py), kind == "usage" only: what
+/// the credits were spent on, never tokens or cost.
 class _UsageRow extends StatelessWidget {
   const _UsageRow({required this.entry});
 
@@ -1022,11 +1027,8 @@ class _UsageRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final provider = entry['provider'] as String? ?? '?';
-    final totalCents = -(entry['amount_cents'] as int? ?? 0);
+    final spent = -(entry['credits'] as int? ?? 0);
     final createdAt = DateTime.tryParse(entry['created_at'] as String? ?? '')?.toLocal();
-    final inputTokens = entry['input_tokens'] as int? ?? 0;
-    final outputTokens = entry['output_tokens'] as int? ?? 0;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -1036,16 +1038,16 @@ class _UsageRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(provider, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
-                Text(
-                  '$inputTokens in / $outputTokens out'
-                  '${createdAt == null ? '' : ' · ${createdAt.month}/${createdAt.day} ${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}'}',
-                  style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                ),
+                Text(entry['feature_name'] as String? ?? 'AI use', style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
+                if (createdAt != null)
+                  Text(
+                    '${createdAt.month}/${createdAt.day} ${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}',
+                    style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
               ],
             ),
           ),
-          Text('-\$${(totalCents / 100).toStringAsFixed(2)}', style: theme.textTheme.bodySmall),
+          Text('-$spent ${spent == 1 ? 'credit' : 'credits'}', style: theme.textTheme.bodySmall),
         ],
       ),
     );

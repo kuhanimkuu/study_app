@@ -7,6 +7,7 @@ import 'blocks/equation_block.dart';
 import 'blocks/error_block.dart';
 import 'blocks/graph_block.dart';
 import 'blocks/links_block.dart';
+import '../../../research/video_card.dart';
 import 'blocks/model3d_block.dart';
 import 'blocks/model_unavailable_block.dart';
 import 'blocks/pdf_block.dart';
@@ -60,6 +61,8 @@ class BlockView extends StatelessWidget {
     'pdf': (b, url, __) => PdfBlockView(block: b, baseUrl: url),
     'diagram': (b, _, __) => DiagramBlockView(block: b),
     'links': (b, _, __) => LinksBlockView(block: b),
+    // A YouTube video played in the app (2026-10-27): a pasted link.
+    'video': (b, _, __) => VideoCard(video: b),
   };
 
   @override

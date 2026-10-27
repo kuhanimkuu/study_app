@@ -14,7 +14,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import pricing
+from ...core.config import get_settings
+from . import credits, pricing
 from .models import AiSpendLimit, AiUsage, LedgerEntry, WalletBalance
 
 
@@ -53,36 +54,32 @@ async def credit_topup(db: AsyncSession, user_id: int, amount_cents: int, refere
 
 
 async def charge_for_usage(
-    db: AsyncSession, user_id: int, provider: str, model_name: str, usage: dict | None,
+    db: AsyncSession, user_id: int, provider: str, model_name: str, usage: dict | None, source: str = "chat",
 ) -> LedgerEntry | None:
-    """No-op (returns None) if there's nothing to charge — `usage` is None
-    for the local backend, and for any BYOK call, since neither is billed.
+    """Charges the feature's fixed price in app credits (credits.py), not
+    the tokens. No-op (returns None) if there's nothing to charge — `usage`
+    is None for the local backend, and for any BYOK call, since neither is
+    billed. The provider's own cost is kept on the row for Study OS's
+    records; the student never sees it.
 
     Debits the wallet even if it lands negative: the balance was checked
     BEFORE the generation call (see model_config.resolve_model_config_async's
-    `balance_cents > 0` pre-flight check), but the exact cost is only known
-    AFTER, from real token counts. That means a request which passes the
-    pre-flight check can, in principle, leave the balance slightly negative
-    if the actual usage costs more than a bare "balance > 0" check implied.
-    The next hosted-tier request is blocked until the user tops back up —
-    a small, named overdraft window, chosen over discarding an
-    already-completed (and already provider-billed-to-Study-OS) generation
-    mid-response."""
+    pre-flight check), and discarding an already-completed (and already
+    provider-billed) answer mid-response would be worse. The next hosted
+    request is blocked until the student has credits again."""
     if usage is None:
         return None
     input_tokens = usage.get("input_tokens") or 0
     output_tokens = usage.get("output_tokens") or 0
-    charge = pricing.compute_charge(provider, model_name, input_tokens, output_tokens)
+    price = credits.credits_for(source)
 
     wallet = await get_or_create_wallet(db, user_id, for_update=True)
-    wallet.balance_cents -= charge["total_cents"]
+    wallet.balance_cents -= price
     entry = LedgerEntry(
-        user_id=user_id, kind="usage", amount_cents=-charge["total_cents"],
+        user_id=user_id, kind="usage", amount_cents=-price, feature=source,
         provider=provider, model_name=model_name,
         input_tokens=input_tokens, output_tokens=output_tokens,
-        provider_cost_cents=charge["provider_cost_cents"],
-        markup_cents=charge["markup_cents"],
-        infra_surcharge_cents=charge["infra_surcharge_cents"],
+        provider_cost_cents=pricing.provider_cost_cents(provider, model_name, input_tokens, output_tokens),
         confirmed=True,
     )
     db.add(entry)
@@ -92,8 +89,9 @@ async def charge_for_usage(
 
 async def record_ai_usage(db: AsyncSession, user_id: int, model_config: dict, usage: dict | None, source: str) -> AiUsage | None:
     """The one call every AI call site makes after a model_router.run:
-    logs the call for the token meter and, on the hosted tier only, debits
-    the wallet (charge_for_usage). No-op when `usage` is None — the local
+    logs the call for the token meter and, on the hosted tier only, charges
+    the feature's credits (charge_for_usage). `source` names the feature
+    (credits.FEATURE_CREDITS). No-op when `usage` is None — the local
     model, or a call that never reached a provider. Flushes, doesn't
     commit: callers commit with their own rows (or right away, where the
     provider's bill must persist even if the request then fails)."""
@@ -106,20 +104,23 @@ async def record_ai_usage(db: AsyncSession, user_id: int, model_config: dict, us
     input_tokens = usage.get("input_tokens") or 0
     output_tokens = usage.get("output_tokens") or 0
     hosted_provider = model_config.get("hosted_provider")
+    charged = None
     if hosted_provider:
         provider = hosted_provider
         model_name = engines.model_router.DEFAULT_MODEL_NAMES[hosted_provider]
-        entry = await charge_for_usage(db, user_id, provider, model_name, usage)
-        cost = entry.amount_cents * -10_000 if entry is not None else None
+        entry = await charge_for_usage(db, user_id, provider, model_name, usage, source)
+        charged = -entry.amount_cents if entry is not None else None
     else:
         provider = model_config.get("backend", "local")
         model_name = model_config.get("model_name") or engines.model_router.DEFAULT_MODEL_NAMES.get(provider, provider)
-        cost = pricing.estimate_cost_micro_usd(provider, model_name, input_tokens, output_tokens)
+    # Hosted: what the provider charged Study OS (the hidden allowance
+    # counts it). BYOK: an estimate of the student's own provider bill.
+    cost = pricing.estimate_cost_micro_usd(provider, model_name, input_tokens, output_tokens)
 
     row = AiUsage(
         user_id=user_id, provider=provider, model_name=model_name, source=source,
         hosted=bool(hosted_provider), input_tokens=input_tokens, output_tokens=output_tokens,
-        cost_micro_usd=cost,
+        cost_micro_usd=cost, credits=charged,
     )
     db.add(row)
     await db.flush()
@@ -132,14 +133,46 @@ def month_start(now: datetime.datetime | None = None) -> datetime.datetime:
 
 
 async def month_spend_micro_usd(db: AsyncSession, user_id: int) -> int:
-    """This calendar month's (UTC) priced AI spend — unpriced calls can't
-    count toward a dollar limit, which the app's meter screen says."""
+    """This calendar month's (UTC) priced spend on the student's own keys —
+    unpriced calls can't count toward a dollar limit, which the app's meter
+    screen says. Hosted calls are paid in credits, so they don't count."""
     total = await db.scalar(
         select(func.coalesce(func.sum(AiUsage.cost_micro_usd), 0)).where(
-            AiUsage.user_id == user_id, AiUsage.created_at >= month_start()
+            AiUsage.user_id == user_id, AiUsage.created_at >= month_start(), AiUsage.hosted.is_(False)
         )
     )
     return int(total or 0)
+
+
+ALLOWANCE_USED_UP = (
+    "You've used this month's Study OS AI allowance. It renews on the 1st — until then you can "
+    "use your own AI key (Profile → Set up AI)."
+)
+
+# A small float so a student's first answers aren't blocked before any
+# credits have been counted.
+_ALLOWANCE_FLOAT_MICRO_USD = 100_000
+
+
+async def enforce_hosted_allowance(db: AsyncSession, user_id: int) -> None:
+    """The hidden allowance (credits.py): raises 402 once this month's
+    hosted calls have cost Study OS more than the credits spent on them
+    sold for (plus a 10-cent float), or more than the server's monthly cap.
+    With the hosted model priced in credits.py neither should happen in
+    normal use; they are what keeps the worst case below the price if the
+    model or its prices change first."""
+    cost, spent = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(AiUsage.cost_micro_usd), 0),
+                func.coalesce(func.sum(AiUsage.credits), 0),
+            ).where(AiUsage.user_id == user_id, AiUsage.hosted.is_(True), AiUsage.created_at >= month_start())
+        )
+    ).one()
+    cap = int(get_settings().hosted_monthly_cost_cap_usd * 1_000_000)
+    earned = int(spent) * credits.CREDIT_PRICE_CENTS * 10_000 + _ALLOWANCE_FLOAT_MICRO_USD
+    if int(cost) >= min(cap, earned):
+        raise HTTPException(status_code=402, detail=ALLOWANCE_USED_UP)
 
 
 async def get_monthly_limit_cents(db: AsyncSession, user_id: int) -> int | None:

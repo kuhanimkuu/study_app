@@ -35,7 +35,8 @@ class ModelConfig(BaseModel):
     # this user's own key before it ever left the device — required when
     # backend is a BYOK provider (never used for "hosted").
     encrypted_api_key: str | None = None
-    # backend == "hosted" only — which pooled provider to use.
+    # Ignored since 2026-10-27 (the server picks the hosted model); still
+    # accepted so older apps that send it keep working.
     hosted_provider: str | None = None
 
 
@@ -78,31 +79,30 @@ async def resolve_model_config_async(
     and BYOK call site should use this version now that "hosted" exists —
     resolve_model_config stays for now only as the explicit "not updated
     yet" guard above, not as a second real code path to keep in sync."""
-    # The student's own monthly cap applies to every paid call, BYOK and
-    # hosted alike; the free local model never costs anything.
-    if model_config is not None and model_config.backend != "local":
+    # The student's own monthly dollar cap is for their own keys; hosted
+    # calls are paid in credits, with the hidden allowance behind them.
+    if model_config is not None and model_config.backend not in ("local", "hosted"):
         await billing_service.enforce_spend_limit(db, current_user["id"])
 
     if model_config is not None and model_config.backend == "hosted":
-        provider = model_config.hosted_provider
-        if provider not in _HOSTED_PROVIDERS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"hosted_provider must be one of {_HOSTED_PROVIDERS}, got {provider!r}",
-            )
+        # The server picks the model (2026-10-27): credits are priced for it,
+        # so whatever hosted_provider an older app still sends is ignored.
         settings = get_settings()
-        api_key = getattr(settings, f"hosted_{provider}_api_key")
-        if not api_key:
+        provider = settings.hosted_default_provider
+        if provider not in _HOSTED_PROVIDERS or not getattr(settings, f"hosted_{provider}_api_key"):
             raise HTTPException(
                 status_code=503,
-                detail=f"the hosted tier isn't configured for provider={provider!r} on this server",
+                detail="Study OS AI isn't available on this server right now — use your own AI key "
+                "(Profile → Set up AI) for now.",
             )
+        api_key = getattr(settings, f"hosted_{provider}_api_key")
         wallet = await billing_service.get_or_create_wallet(db, current_user["id"])
         if wallet.balance_cents <= 0:
             raise HTTPException(
                 status_code=402,
-                detail="insufficient hosted-tier balance — top up via POST /api/v1/billing/topups",
+                detail="You're out of Study OS credits. Add more in Profile → AI model.",
             )
+        await billing_service.enforce_hosted_allowance(db, current_user["id"])
         # No model_name override honored here — see this module's
         # docstring. hosted_provider carries the billing identity
         # ("hosted") separately from backend (the real provider

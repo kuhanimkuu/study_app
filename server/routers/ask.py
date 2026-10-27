@@ -56,6 +56,8 @@ from ..core.model_config import ModelConfig, resolve_model_config_async
 from ..db.session import get_db
 from ..domains.billing import service as billing_service
 from ..domains.knowledge import index_store
+from ..domains.research import providers
+from ..domains.research.router import video_block, video_item
 
 router = APIRouter()
 
@@ -224,15 +226,20 @@ async def _resolve_form_model_config(raw: str | None, current_user: dict, db: As
     return await resolve_model_config_async(parsed, current_user, db)
 
 
-async def _charge_hosted_usage(result: dict, model_config: dict, db: AsyncSession, user_id: int) -> dict:
+async def _charge_hosted_usage(
+    result: dict, model_config: dict, db: AsyncSession, user_id: int, depth: str = "full",
+) -> dict:
     """"_usage" is moderator/engine.py's internal signal (not part of the
     public ModeratorResponse schema) for whether this request actually
     made a real provider call — see that module's run() doc comment.
     Logged for the token meter on every backend; only the hosted tier
-    (model_config carries "hosted_provider") is also billed for it."""
+    (model_config carries "hosted_provider") is also billed for it, in
+    credits by feature: a study guide, an exam-level answer or a plain one."""
     usage = result.pop("_usage", None)
     if usage is not None:
-        await billing_service.record_ai_usage(db, user_id, model_config, usage, "chat")
+        engine = (result.get("activity") or {}).get("engine")
+        source = "pdf_summary" if engine == "generate_docs" else "chat_exam" if depth == "exam" else "chat"
+        await billing_service.record_ai_usage(db, user_id, model_config, usage, source)
         await db.commit()
     return result
 
@@ -268,6 +275,12 @@ async def ask_text(
     personality_style, personality_max_tokens = await _personality_for(db, current_user["id"], payload.depth)
 
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    # A message that is just a YouTube link: play it in the app, at the part
+    # that fits what the chat was about (2026-10-27).
+    if providers.youtube_video_id(payload.content) is not None:
+        context = " ".join(turn.text for turn in payload.history[-2:]) or None
+        item = await video_item(payload.content, context, model_config, db, current_user["id"])
+        return {"blocks": [video_block(item)], "session_id": payload.session_id}
     result = await engines.moderator.run(
         input_type=classified["input_type"],
         content=classified["content"],
@@ -287,7 +300,7 @@ async def ask_text(
         depth=payload.depth,
     )
 
-    return await _charge_hosted_usage(result, model_config, db, current_user["id"])
+    return await _charge_hosted_usage(result, model_config, db, current_user["id"], payload.depth)
 
 
 @router.post("/api/ask/image", response_model=ModeratorResponse)
@@ -386,12 +399,16 @@ class WebAsk(BaseModel):
 
 
 @router.post("/api/ask/web", response_model=ModeratorResponse)
-async def ask_web(payload: WebAsk, current_user: dict = Depends(ai_user)) -> dict:
+async def ask_web(payload: WebAsk, current_user: dict = Depends(ai_user), db: AsyncSession = Depends(get_db)) -> dict:
     """Fetches and returns the page content directly, NOT routed through
     the moderator — the moderator has no web-content route implemented,
     so pretending it "understands" fetched web content would produce a
     confusing wrong answer most of the time. Honest scope boundary, see
     moderator/README.md."""
+    # A YouTube link is a video to watch, not a page to read (2026-10-27).
+    if providers.youtube_video_id(payload.url) is not None:
+        item = await video_item(payload.url, None, dict(_LOCAL_CONFIG), db, current_user["id"])
+        return {"blocks": [video_block(item)], "session_id": payload.session_id}
     try:
         fetched = await run_engine_in_thread(engines.web_input, content=payload.url, kind=payload.kind)
     except Exception as exc:
@@ -454,4 +471,4 @@ async def ask_project(
         tutor_mode=payload.tutor_mode,
         depth=payload.depth,
     )
-    return await _charge_hosted_usage(result, model_config, db, current_user["id"])
+    return await _charge_hosted_usage(result, model_config, db, current_user["id"], payload.depth)

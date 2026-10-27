@@ -36,6 +36,7 @@ locally-run embedding model, not a keyword/TF-IDF stand-in.
 from __future__ import annotations
 
 import asyncio
+import re
 import os
 import sys
 import threading
@@ -103,7 +104,14 @@ async def run(**kwargs: Any) -> dict:
 
     chunks: list[str] = []
     for doc in documents:
-        chunks.extend(_chunk_text(doc, chunk_size, chunk_overlap))
+        # A document may start with a "[[label]]" line, e.g. "[[p. 12]]" for
+        # one page of a PDF (2026-10-27): every chunk of it then starts with
+        # "(p. 12)", so a passage found later can say where it came from.
+        label = _LABEL_RE.match(doc)
+        if label:
+            chunks.extend(f"({label.group(1)}) {c}" for c in _chunk_text(doc[label.end():], chunk_size, chunk_overlap))
+        else:
+            chunks.extend(_chunk_text(doc, chunk_size, chunk_overlap))
 
     # Off the event loop (2026-10-07): embedding is minutes of CPU on a
     # small instance, and running it inline froze the whole server — Render's
@@ -117,6 +125,8 @@ async def run(**kwargs: Any) -> dict:
 
 
 # --- private helpers ---
+
+_LABEL_RE = re.compile(r"^\[\[([^\]\n]{1,40})\]\]\s*")
 
 
 def _chunk_text(text: str, chunk_size: int, chunk_overlap: int) -> list[str]:

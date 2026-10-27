@@ -1,5 +1,5 @@
-"""Integration tests for server/domains/billing — the hosted pay-as-you-go
-AI tier (blueprint Section 42.1). Real Postgres, same style as the other
+"""Integration tests for server/domains/billing — the hosted AI tier
+(blueprint Section 42.1), paid in app credits since 2026-10-27. Real Postgres, same style as the other
 test modules. See STUDY_OS_PROGRESS.md's 2026-09-20 entry for the ToS
 research that led to this design (Study OS's own pooled keys, never a
 per-user provisioned raw key).
@@ -17,7 +17,7 @@ from server import engines
 from server.core.config import get_settings
 from server.core.model_config import ModelConfig, resolve_model_config_async
 from server.db.session import async_session
-from server.domains.billing import pricing, service as billing_service
+from server.domains.billing import credits, pricing, service as billing_service
 from server.domains.identity.models import User
 from server.routers import ask as ask_router_module
 
@@ -42,13 +42,14 @@ async def student(client):
 
 
 @pytest.fixture
-def hosted_anthropic_configured(monkeypatch):
-    """Points Settings.hosted_anthropic_api_key at a fake (never-used —
-    every test using this fixture also mocks model_router.run, so no real
-    network call is ever made) key, so resolve_model_config_async's "is
-    the hosted tier configured for this provider" check passes and tests
-    can exercise the balance/billing logic past it."""
-    monkeypatch.setenv("HOSTED_ANTHROPIC_API_KEY", "test-fake-key-not-real")
+def hosted_configured(monkeypatch):
+    """Points the server's hosted model (deepseek by default) at a fake
+    (never-used — every test using this fixture also mocks
+    model_router.run, so no real network call is ever made) key, so
+    resolve_model_config_async's "is the hosted tier configured" check
+    passes and tests can exercise the credits logic past it."""
+    monkeypatch.setenv("HOSTED_DEFAULT_PROVIDER", "deepseek")
+    monkeypatch.setenv("HOSTED_DEEPSEEK_API_KEY", "test-fake-key-not-real")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -104,47 +105,66 @@ async def test_charge_for_usage_noop_when_usage_none(student):
         assert wallet.balance_cents == 0
 
 
-async def test_charge_for_usage_debits_wallet_and_records_decomposed_ledger_entry(student):
+async def test_charge_for_usage_charges_the_features_credits_not_the_tokens(student):
     async with async_session() as db:
-        await billing_service.credit_topup(db, student["user_id"], 10_000, "test-topup-1")
+        await billing_service.credit_topup(db, student["user_id"], 100, "test-topup-1")
         await db.commit()
 
     async with async_session() as db:
-        entry = await billing_service.charge_for_usage(
-            db, student["user_id"], "anthropic", "claude-sonnet-5",
-            usage={"input_tokens": 100_000, "output_tokens": 100_000},
+        lesson = await billing_service.charge_for_usage(
+            db, student["user_id"], "deepseek", "deepseek-chat",
+            usage={"input_tokens": 2_000, "output_tokens": 5_000}, source="lesson",
+        )
+        chat = await billing_service.charge_for_usage(
+            db, student["user_id"], "deepseek", "deepseek-chat",
+            usage={"input_tokens": 100_000, "output_tokens": 100_000}, source="chat",
         )
         await db.commit()
 
-        assert entry.kind == "usage"
-        assert entry.amount_cents == -234  # see test_compute_charge_known_model_decomposes_correctly
-        assert entry.provider_cost_cents == 180
-        assert entry.markup_cents == 54
-        assert entry.infra_surcharge_cents == 0
+        assert lesson.kind == "usage" and lesson.feature == "lesson"
+        assert lesson.amount_cents == -credits.FEATURE_CREDITS["lesson"] == -3
+        assert chat.amount_cents == -1  # same price however long it was
+        # Study OS's own record of what the provider charged: 2k*0.27 + 5k*1.10 micro-USD -> 1 cent.
+        assert lesson.provider_cost_cents == 1
+        public = lesson.public()
+        assert public["credits"] == -3 and public["feature_name"] == "Lesson"
+        for hidden in ("provider", "model_name", "input_tokens", "provider_cost_cents", "markup_cents"):
+            assert hidden not in public
 
         wallet = await billing_service.get_or_create_wallet(db, student["user_id"])
-        assert wallet.balance_cents == 10_000 - 234
+        assert wallet.balance_cents == 100 - 3 - 1
+
+
+def test_every_feature_price_covers_its_worst_case_on_deepseek():
+    """Plan Step 4: each credit price stays above the most that feature
+    can cost on deepseek-chat, from its output cap and a generous input."""
+    worst = {  # (input tokens, output tokens)
+        "chat": (6_000, 1_400 + 1_200),
+        "chat_exam": (6_000, 2_240 + 1_200),
+        "pdf_summary": (2_000, 1_800),
+        "lesson": (3_000, 5_000),
+        "go_deeper": (5_000, 700),
+        "explain": (3_000, 1_500),
+        "generation": (6_000, 2_350),
+        "grading": (3_000, 300),
+    }
+    for source, (input_tokens, output_tokens) in worst.items():
+        cost = pricing.estimate_cost_micro_usd("deepseek", "deepseek-chat", input_tokens, output_tokens)
+        price = credits.credits_for(source) * credits.CREDIT_PRICE_CENTS * 10_000
+        assert cost < price, (source, cost, price)
+    assert credits.credits_for("something-new") == credits.DEFAULT_CREDITS > 0
 
 
 # ---------------------------------------------------------------------------
 # resolve_model_config_async — the "hosted" backend's real gating logic
 # ---------------------------------------------------------------------------
 
-async def test_resolve_hosted_rejects_unknown_provider(student):
-    async with async_session() as db:
-        with pytest.raises(Exception) as exc_info:
-            await resolve_model_config_async(
-                ModelConfig(backend="hosted", hosted_provider="not-a-real-provider"),
-                {"id": student["user_id"], "encryption_key": "unused"},
-                db,
-            )
-        assert exc_info.value.status_code == 400
-
-
-async def test_resolve_hosted_requires_configured_key(student):
-    # No hosted_anthropic_configured fixture here on purpose — this repo's
-    # local .env has no HOSTED_ANTHROPIC_API_KEY set, so this should fail
-    # clearly (503) rather than silently using an empty key.
+async def test_resolve_hosted_requires_configured_key(student, monkeypatch):
+    # No hosted_configured fixture here on purpose: with no key for the
+    # server's hosted model this should fail clearly (503) rather than
+    # silently using an empty key.
+    monkeypatch.setenv("HOSTED_DEFAULT_PROVIDER", "deepseek")
+    monkeypatch.setenv("HOSTED_DEEPSEEK_API_KEY", "")
     get_settings.cache_clear()
     async with async_session() as db:
         with pytest.raises(Exception) as exc_info:
@@ -157,7 +177,7 @@ async def test_resolve_hosted_requires_configured_key(student):
     get_settings.cache_clear()
 
 
-async def test_resolve_hosted_requires_positive_balance(student, hosted_anthropic_configured):
+async def test_resolve_hosted_requires_positive_balance(student, hosted_configured):
     async with async_session() as db:
         with pytest.raises(Exception) as exc_info:
             await resolve_model_config_async(
@@ -169,20 +189,22 @@ async def test_resolve_hosted_requires_positive_balance(student, hosted_anthropi
 
 
 async def test_resolve_hosted_with_balance_uses_pooled_key_not_a_user_submitted_one(
-    student, hosted_anthropic_configured
+    student, hosted_configured
 ):
     async with async_session() as db:
         await billing_service.credit_topup(db, student["user_id"], 1000, "test-topup-2")
         await db.commit()
 
     async with async_session() as db:
+        # The student can't choose the provider: an old app's "anthropic"
+        # is ignored and the server's hosted model is used.
         config = await resolve_model_config_async(
             ModelConfig(backend="hosted", hosted_provider="anthropic"),
             {"id": student["user_id"], "encryption_key": "unused"},
             db,
         )
-        assert config["backend"] == "anthropic"
-        assert config["hosted_provider"] == "anthropic"
+        assert config["backend"] == "deepseek"
+        assert config["hosted_provider"] == "deepseek"
         assert config["api_key"] == "test-fake-key-not-real"  # the POOLED key, not a decrypted user one
         # No model_name override honored for the hosted tier (see
         # model_config.py's docstring) — pricing only has real numbers for
@@ -202,16 +224,16 @@ async def _fake_model_router_run(**kwargs):
     return {
         "text": "A fake but real-shaped hosted-tier reply.",
         "tier": kwargs.get("tier", "tiny"),
-        "backend": kwargs.get("backend", "anthropic"),
-        "usage": {"input_tokens": 100_000, "output_tokens": 100_000},
+        "backend": kwargs.get("backend", "deepseek"),
+        "usage": {"input_tokens": 1_000, "output_tokens": 500},
     }
 
 
 async def test_ask_text_with_hosted_backend_debits_wallet_end_to_end(
-    client, student, hosted_anthropic_configured, monkeypatch
+    client, student, hosted_configured, monkeypatch
 ):
     async with async_session() as db:
-        await billing_service.credit_topup(db, student["user_id"], 10_000, "test-topup-3")
+        await billing_service.credit_topup(db, student["user_id"], 100, "test-topup-3")
         await db.commit()
 
     monkeypatch.setattr(ask_router_module.engines.model_router, "run", _fake_model_router_run)
@@ -227,32 +249,46 @@ async def test_ask_text_with_hosted_backend_debits_wallet_end_to_end(
 
     async with async_session() as db:
         wallet = await billing_service.get_or_create_wallet(db, student["user_id"])
-        assert wallet.balance_cents == 10_000 - 234
+        assert wallet.balance_cents == 100 - 1
 
     usage_resp = await client.get("/api/v1/billing/usage", headers=student["headers"])
     assert usage_resp.status_code == 200, usage_resp.text
     entries = usage_resp.json()["entries"]
     assert len(entries) == 1
-    assert entries[0]["provider"] == "anthropic"
-    assert entries[0]["model_name"] == "claude-sonnet-5"
-    assert entries[0]["amount_cents"] == -234
+    assert entries[0]["credits"] == -1
+    assert entries[0]["feature_name"] == "Chat answer"
+    assert "provider" not in entries[0] and "model_name" not in entries[0]
 
-    # The token meter sees the same call, priced at what the wallet paid.
+    # The token meter shows credits for hosted calls, never their cost.
     meter = (await client.get("/api/v1/billing/ai-usage", headers=student["headers"])).json()
     assert meter["all_time"]["calls"] == 1
-    assert meter["all_time"]["input_tokens"] == 100_000
-    assert meter["all_time"]["cost_micro_usd"] == 2_340_000
-    assert meter["by_model"][0]["hosted"] is True
+    assert meter["all_time"]["credits_used"] == 1
+    assert meter["all_time"]["cost_micro_usd"] == 0
+    assert meter["by_model"] == [{
+        "provider": "Study OS", "model_name": "Study OS AI", "hosted": True, "calls": 1,
+        "input_tokens": 1_000, "output_tokens": 500, "cost_micro_usd": None, "credits": 1,
+    }]
+
+    # An exam-level answer costs more.
+    resp = await client.post(
+        "/api/ask/text",
+        json={"content": "hi again", "depth": "exam", "model_config": {"backend": "hosted"}},
+        headers=student["headers"],
+    )
+    assert resp.status_code == 200, resp.text
+    async with async_session() as db:
+        wallet = await billing_service.get_or_create_wallet(db, student["user_id"])
+        assert wallet.balance_cents == 100 - 1 - 2
 
 
 async def test_explain_concept_with_hosted_backend_debits_wallet_end_to_end(
-    client, student, hosted_anthropic_configured, monkeypatch
+    client, student, hosted_configured, monkeypatch
 ):
     """Same mechanism, second real call site (server/ai/moderator/router.py's
     /explain) — proves the write-back pattern wasn't special-cased to
     ask_text alone."""
     async with async_session() as db:
-        await billing_service.credit_topup(db, student["user_id"], 10_000, "test-topup-4")
+        await billing_service.credit_topup(db, student["user_id"], 100, "test-topup-4")
         await db.commit()
 
     space = await client.post("/api/projects", json={"display_name": "Physics"}, headers=student["headers"])
@@ -277,7 +313,92 @@ async def test_explain_concept_with_hosted_backend_debits_wallet_end_to_end(
 
     async with async_session() as db:
         wallet = await billing_service.get_or_create_wallet(db, student["user_id"])
-        assert wallet.balance_cents == 10_000 - 234
+        assert wallet.balance_cents == 100 - credits.FEATURE_CREDITS["explain"]
+
+
+# ---------------------------------------------------------------------------
+# App credits (2026-10-27): packs, prices, and the hidden allowance.
+# ---------------------------------------------------------------------------
+
+async def test_balance_shows_credits_prices_and_packs_and_a_pack_tops_up(client, student):
+    body = (await client.get("/api/v1/billing/balance", headers=student["headers"])).json()
+    assert body["credits"] == 0
+    assert "balance_cents" not in body
+    assert {"feature": "lesson", "name": "Lesson", "credits": 3} in body["prices"]
+    assert all(price["credits"] > 0 for price in body["prices"])
+    assert [pack["id"] for pack in body["packs"]] == ["small", "medium", "large"]
+
+    resp = await client.post("/api/v1/billing/topups", json={"pack": "medium"}, headers=student["headers"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["credits"] == 550
+    body = (await client.get("/api/v1/billing/balance", headers=student["headers"])).json()
+    assert body["credits"] == 550
+
+    bad = await client.post("/api/v1/billing/topups", json={"pack": "huge"}, headers=student["headers"])
+    assert bad.status_code == 422
+    old_app = await client.post("/api/v1/billing/topups", json={"amount_cents": 500}, headers=student["headers"])
+    assert old_app.status_code == 422
+
+
+async def test_hidden_allowance_stops_hosted_calls_that_cost_more_than_their_credits(
+    student, hosted_configured
+):
+    from server.domains.billing.models import AiUsage
+
+    async with async_session() as db:
+        await billing_service.credit_topup(db, student["user_id"], 1_000, "test-allowance")
+        await db.commit()
+    user = {"id": student["user_id"], "encryption_key": "unused"}
+
+    async with async_session() as db:
+        # A normal month: 10 chat answers at 1 credit, each costing well under a cent.
+        for _ in range(10):
+            db.add(AiUsage(
+                user_id=student["user_id"], provider="deepseek", model_name="deepseek-chat", source="chat",
+                hosted=True, input_tokens=1_000, output_tokens=500, cost_micro_usd=820, credits=1,
+            ))
+        await db.commit()
+        config = await resolve_model_config_async(ModelConfig(backend="hosted"), user, db)
+        assert config["backend"] == "deepseek"
+
+        # Then calls that cost Study OS far more than the credits they took.
+        db.add(AiUsage(
+            user_id=student["user_id"], provider="deepseek", model_name="deepseek-chat", source="chat",
+            hosted=True, input_tokens=1_000_000, output_tokens=0, cost_micro_usd=270_000, credits=1,
+        ))
+        await db.commit()
+        with pytest.raises(Exception) as exc_info:
+            await resolve_model_config_async(ModelConfig(backend="hosted"), user, db)
+        assert exc_info.value.status_code == 402
+        assert exc_info.value.detail == billing_service.ALLOWANCE_USED_UP
+        assert "$" not in exc_info.value.detail
+
+
+async def test_hidden_allowance_has_a_monthly_ceiling(student, hosted_configured, monkeypatch):
+    from server.domains.billing.models import AiUsage
+
+    monkeypatch.setenv("HOSTED_MONTHLY_COST_CAP_USD", "0.05")
+    get_settings.cache_clear()
+    async with async_session() as db:
+        await billing_service.credit_topup(db, student["user_id"], 1_000, "test-ceiling")
+        # Fairly priced calls (cost under their credits), but past the ceiling.
+        for _ in range(20):
+            db.add(AiUsage(
+                user_id=student["user_id"], provider="deepseek", model_name="deepseek-chat", source="lesson",
+                hosted=True, input_tokens=2_000, output_tokens=2_000, cost_micro_usd=2_740, credits=3,
+            ))
+        await db.commit()
+        with pytest.raises(Exception) as exc_info:
+            await resolve_model_config_async(ModelConfig(backend="hosted"), {"id": student["user_id"]}, db)
+        assert exc_info.value.status_code == 402
+
+
+async def test_out_of_credits_says_so_without_dollars(student, hosted_configured):
+    async with async_session() as db:
+        with pytest.raises(Exception) as exc_info:
+            await resolve_model_config_async(ModelConfig(backend="hosted"), {"id": student["user_id"]}, db)
+        assert exc_info.value.status_code == 402
+        assert "credits" in exc_info.value.detail and "$" not in exc_info.value.detail
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +450,7 @@ async def test_ai_usage_summary_totals_and_partial_pricing(client, student):
     for period in ("today", "last_30_days", "all_time"):
         assert body[period] == {
             "calls": 3, "input_tokens": 4010, "output_tokens": 1010,
-            "cost_micro_usd": 1200, "unpriced_calls": 1,
+            "cost_micro_usd": 1200, "unpriced_calls": 1, "credits_used": 0,
         }
     models = {m["model_name"]: m for m in body["by_model"]}
     assert models["gpt-4o-mini"]["calls"] == 2 and models["gpt-4o-mini"]["cost_micro_usd"] == 1200
@@ -432,12 +553,14 @@ async def test_two_charges_finishing_together_are_both_kept(student):
         await billing_service.credit_topup(db, student["user_id"], 1_000, "test-race")
         await db.commit()
 
-    usage = {"input_tokens": 1_000_000, "output_tokens": 0}  # 300 cents before markup
-    one_charge = pricing.compute_charge("anthropic", "claude-sonnet-5", 1_000_000, 0)["total_cents"]
+    usage = {"input_tokens": 1_000, "output_tokens": 0}
+    one_charge = credits.credits_for("lesson")
 
     async def charge():
         async with async_session() as db:
-            await billing_service.charge_for_usage(db, student["user_id"], "anthropic", "claude-sonnet-5", usage)
+            await billing_service.charge_for_usage(
+                db, student["user_id"], "deepseek", "deepseek-chat", usage, source="lesson"
+            )
             await asyncio.sleep(0.5)  # keep the transaction open so the two overlap
             await db.commit()
 

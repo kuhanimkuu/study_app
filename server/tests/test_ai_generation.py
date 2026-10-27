@@ -174,31 +174,44 @@ async def test_equation_answers_accept_caret_powers(client, space):
 
 # --- the user's model choice reaches every /api/ask/* route (2026-10-07) ---
 # Before this date image/pdf/audio/project hard-coded the free local model
-# and silently ignored the caller's choice. An unknown hosted provider is
-# rejected by resolve_model_config_async with a 400 *before* any model call
-# — so a 400 here proves the route actually read the config.
+# and silently ignored the caller's choice. On a server with no key for the
+# hosted model, resolve_model_config_async refuses "hosted" with a 503 that
+# names Study OS AI *before* any model call — so that message here proves
+# the route actually read the config (the local model's error differs).
 
-_BAD_HOSTED = '{"backend": "hosted", "hosted_provider": "not-a-provider"}'
+_HOSTED = '{"backend": "hosted"}'
 
 
-async def test_ask_pdf_followup_reads_the_form_model_config(client, space):
+@pytest.fixture
+def no_hosted_key(monkeypatch):
+    from server.core.config import get_settings
+
+    monkeypatch.setenv("HOSTED_DEFAULT_PROVIDER", "deepseek")
+    monkeypatch.setenv("HOSTED_DEEPSEEK_API_KEY", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+async def test_ask_pdf_followup_reads_the_form_model_config(client, space, no_hosted_key):
     resp = await client.post(
         "/api/ask/pdf",
-        data={"query": "summarise it", "session_id": "gen-test", "model_config": _BAD_HOSTED},
+        data={"query": "summarise it", "session_id": "gen-test", "model_config": _HOSTED},
         headers=space["headers"],
     )
-    assert resp.status_code == 400
-    assert "hosted_provider must be one of" in resp.json()["detail"]
+    assert resp.status_code == 503
+    assert "Study OS AI isn't available" in resp.json()["detail"]
 
 
-async def test_ask_project_reads_the_body_model_config(client, space):
+async def test_ask_project_reads_the_body_model_config(client, space, no_hosted_key):
     resp = await client.post(
         "/api/ask/project",
         json={"project": space["slug"], "query": "ATP?", "session_id": "gen-test",
-              "model_config": {"backend": "hosted", "hosted_provider": "not-a-provider"}},
+              "model_config": {"backend": "hosted"}},
         headers=space["headers"],
     )
-    assert resp.status_code == 400
+    assert resp.status_code == 503
+    assert "Study OS AI isn't available" in resp.json()["detail"]
 
 
 async def test_malformed_form_model_config_is_a_422(client, space):

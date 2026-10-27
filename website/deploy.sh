@@ -47,10 +47,18 @@ APK_NAME="study-os-$VERSION.apk"
 if [[ -n "$APK" ]]; then
   echo "Uploading the APK to Contabo as $APK_NAME ($(du -h "$APK" | cut -f1))..."
   # Older versioned files go; study-os.apk stays as "the latest" for old links.
-  "${SSH[@]}" "set -e; cd $SITE/download 2>/dev/null || mkdir -p $SITE/download && cd $SITE/download; \
-    cat > $APK_NAME.part && mv $APK_NAME.part $APK_NAME && chmod a+r $APK_NAME; \
+  # Only a complete copy goes live: the upload lands in a .part file and is
+  # swapped in only if its SHA-256 matches this one. A cut connection
+  # (2026-10-27: 30.8 of 65.6 MB) used to replace the real APK with half of
+  # one, because `cat` just ends early without an error.
+  SUM=$(sha256sum "$APK" | cut -d' ' -f1)
+  "${SSH[@]}" "set -e; mkdir -p $SITE/download && cd $SITE/download; \
+    cat > $APK_NAME.part; \
+    test \"\$(sha256sum $APK_NAME.part | cut -d' ' -f1)\" = $SUM || { rm -f $APK_NAME.part; echo 'upload incomplete - nothing replaced' >&2; exit 1; }; \
+    mv $APK_NAME.part $APK_NAME && chmod a+r $APK_NAME; \
     cp $APK_NAME study-os.apk.part && mv study-os.apk.part study-os.apk && chmod a+r study-os.apk; \
     find . -maxdepth 1 -name 'study-os-*.apk' ! -name '$APK_NAME' -delete" < "$APK"
+  echo "APK verified on the server."
 fi
 
 if [[ "$TARGET" == heliohost ]]; then

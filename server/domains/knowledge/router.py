@@ -329,6 +329,9 @@ async def _index_material(
                 except Exception as exc:
                     raise ValueError(f"could not read PDF: {exc}") from exc
                 text = extracted["content"]
+                pages = [p for p in extracted.get("pages") or [] if (p.get("text") or "").strip()]
+            else:
+                pages = []
             if not text or not text.strip():
                 raise ValueError(
                     "no text found in this file — if it's a scanned PDF (photos of pages), "
@@ -342,8 +345,11 @@ async def _index_material(
                 await index_store.ensure_index_file(restore_db, user_id, slug)
             projects_dir = engines.moderator._user_projects_dir(user_id)
             chunk_start = _chunk_count(projects_dir, slug)
+            # A PDF is indexed page by page, every passage labelled "(p. N)",
+            # so answers and lessons can cite the page (2026-10-27).
+            material = [f"[[p. {p['number']}]] {p['text']}" for p in pages] if pages else [text]
             result = await run_engine_in_thread(
-                engines.rag_projects, project=slug, material=[text], projects_dir=projects_dir
+                engines.rag_projects, project=slug, material=material, projects_dir=projects_dir
             )
             chunks = result["chunks"]
         except Exception as exc:
