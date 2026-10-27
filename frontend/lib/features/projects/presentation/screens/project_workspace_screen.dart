@@ -367,6 +367,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
         history: history,
         regenerate: regenerate,
         tutorMode: TutorMode.instance.on.value,
+        depth: TutorMode.instance.depth.value,
       );
       final blocks = result['blocks'] as List<dynamic>? ?? [];
       final activity = result['activity'] as Map<String, dynamic>?;

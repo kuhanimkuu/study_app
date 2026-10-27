@@ -30,3 +30,6 @@ BYOK_AUTOPROVISION_NOTES.md
 
 # Local desktop launcher logs
 desktop/logs/
+
+# Real-model teacher eval transcripts (server/scripts/teacher_eval.py) — local comparisons only
+eval_runs/

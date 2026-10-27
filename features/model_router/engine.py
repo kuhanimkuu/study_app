@@ -268,7 +268,9 @@ async def run(**kwargs: Any) -> dict:
     backend_name: str = kwargs.get("backend", "local")
     api_key: str | None = kwargs.get("api_key")
     model_name: str | None = kwargs.get("model_name")
-    max_tokens: int = kwargs.get("max_tokens", 200)
+    # Callers pass their own cap (server/ai/moderator/style.py); 200 cut
+    # answers short whenever one forgot (2026-10-27).
+    max_tokens: int = kwargs.get("max_tokens", 800)
 
     # Off the event loop too (2026-10-19): the local backend's first load
     # reads the model weights from disk, measured stalling every other

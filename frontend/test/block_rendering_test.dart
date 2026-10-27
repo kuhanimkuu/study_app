@@ -22,6 +22,21 @@ void main() {
     expect(find.textContaining('Solving 2x + 3 = 7'), findsOneWidget);
   });
 
+  testWidgets('text block shows code and maths blocks, not raw fences', (tester) async {
+    await tester.pumpWidget(_wrap(const BlockView(
+      block: {
+        'type': 'text',
+        'content': 'Recursion:\n```python\ndef f(n):\n    return 1\n```\nThe rule:\n\\[\nF = m \\times a\n\\]\nDone.',
+        'source': 'moderator',
+      },
+      baseUrl: _testBaseUrl,
+    )));
+    expect(find.textContaining('```'), findsNothing);
+    expect(find.text('def f(n):\n    return 1'), findsOneWidget);
+    expect(find.text('F = m × a'), findsOneWidget);
+    expect(find.textContaining(r'\['), findsNothing);
+  });
+
   testWidgets('equation block renders LaTeX without throwing', (tester) async {
     await tester.pumpWidget(_wrap(const BlockView(
       block: {'type': 'equation', 'latex': 'x = 2', 'source': 'symbolic'},

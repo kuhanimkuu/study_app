@@ -309,6 +309,7 @@ class _ChatScreenState extends State<ChatScreen> {
           history: history,
           regenerate: 'edited',
           tutorMode: TutorMode.instance.on.value,
+          depth: TutorMode.instance.depth.value,
         ));
   }
 
@@ -333,6 +334,7 @@ class _ChatScreenState extends State<ChatScreen> {
           history: retry.history,
           regenerate: 'retry',
           tutorMode: TutorMode.instance.on.value,
+          depth: TutorMode.instance.depth.value,
         ));
   }
 
@@ -368,6 +370,7 @@ class _ChatScreenState extends State<ChatScreen> {
           localEvents: localEvents,
           history: history,
           tutorMode: TutorMode.instance.on.value,
+          depth: TutorMode.instance.depth.value,
         ));
   }
 
@@ -654,6 +657,7 @@ class _ChatScreenState extends State<ChatScreen> {
               if (value == 'subject') _convertToProject();
               if (value == 'server') _openSettings();
               if (value == 'tutor') setState(() => TutorMode.instance.set(!TutorMode.instance.on.value));
+              if (value.startsWith('depth:')) setState(() => TutorMode.instance.setDepth(value.substring(6)));
             },
             itemBuilder: (context) => [
               CheckedPopupMenuItem(
@@ -661,6 +665,15 @@ class _ChatScreenState extends State<ChatScreen> {
                 checked: TutorMode.instance.on.value,
                 child: const Text('Sage checks I understood'),
               ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(enabled: false, height: 32, child: Text('How much to explain')),
+              for (final entry in TutorMode.depths.entries)
+                CheckedPopupMenuItem(
+                  value: 'depth:${entry.key}',
+                  checked: TutorMode.instance.depth.value == entry.key,
+                  child: Text(entry.value),
+                ),
+              const PopupMenuDivider(),
               PopupMenuItem(
                 value: 'subject',
                 enabled: _messages.isNotEmpty,

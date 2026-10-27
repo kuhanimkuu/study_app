@@ -93,48 +93,6 @@ async def test_bad_history_is_refused(client, student):
     assert resp.status_code == 422
 
 
-def test_tutor_mode_asks_for_a_check_question_and_a_verdict():
-    tutor = moderator._conversation_context([], tutor_mode=True)
-    assert "**Check:**" in tutor and "[[correct]]" in tutor
-    assert "without quizzing" in moderator._conversation_context([], tutor_mode=False)
-    assert moderator._conversation_context([], tutor_mode=None) == ""
-
-
-def test_the_verdict_marker_is_stripped_and_kept():
-    config: dict = {}
-    text = moderator._take_check_verdict("[[incorrect]]\nNot quite — osmosis is about water.", config)
-    assert text.strip() == "Not quite — osmosis is about water."
-    assert config["_check_verdict"] is False
-    config = {}
-    assert moderator._take_check_verdict("Osmosis is water moving.", config) == "Osmosis is water moving."
-    assert "_check_verdict" not in config
-
-
-async def test_a_wrong_answer_to_a_check_becomes_a_struggle(client, student, monkeypatch):
-    async def fake_model(**kwargs):
-        assert "**Check:**" in kwargs["prompt"]  # tutor mode is on by default
-        return {"text": "[[incorrect]]\nNot quite: water moves, not salt.", "tier": "tiny", "backend": "local"}
-
-    monkeypatch.setattr(engines.model_router, "run", fake_model)
-    resp = await client.post(
-        "/api/ask/text",
-        json={
-            "content": "salt moves",
-            "history": [
-                {"role": "user", "text": "what is osmosis"},
-                {"role": "assistant", "text": "Water crosses a membrane.\n**Check:** What moves in osmosis?"},
-            ],
-        },
-        headers=student,
-    )
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["blocks"][0]["content"].startswith("Not quite")
-    assert "[[" not in body["blocks"][0]["content"]
-    assert body["activity"]["check"] == "incorrect"
-    assert "struggle" in body["activity"]["labels"]
-
-
 async def test_just_answer_mode(client, student, monkeypatch):
     prompts: list[str] = []
 

@@ -1425,3 +1425,50 @@ Fixes:
 - **Offline:** online reviews now send `reviewed_at` too. The server stores the phone's exact time per card (`flashcards.last_review_client_time`, migration `57163adad463`) and skips a review carrying the same value, whatever the clocks say. A test with a phone clock an hour fast fails on the old code and passes now.
 - **Tests:** 268/268 backend (new `test_idempotency.py` and a clock-skew flashcard test), 96/96 Flutter (new `idempotent_client_test.dart`).
 - The user also shared `Downloads/Study_OS_plan.pdf`, a product and revenue plan with 4 Claude Code steps (teacher loop and depth, Go deeper links, rights-aware sources, cost measurement and billing rework). Not started yet. Step 1 needs a DeepSeek key in `.env` to record "before" transcripts.
+
+### 2026-10-27 — Release 1.0.14: Sage teaches like a teacher (plan step 1)
+
+The user shared `Downloads/Study_OS_plan.pdf`, a product and revenue plan with four Claude Code steps, and put a DeepSeek key in `.env`. Step 1 (depth and the teacher loop) is done.
+
+- **`server/scripts/teacher_eval.py`** (`python -m server.scripts.teacher_eval <label>`): runs, through the real chat and lesson code with deepseek-chat:
+  - 10 questions (maths, physics, chemistry, biology, programming, essays);
+  - 4 fixed check-question conversations (right, wrong twice, correct but slow, gave up);
+  - one lesson.
+
+  It writes transcripts, tokens and cost to `eval_runs/` (gitignored). The key is read from `.env` and never printed.
+- **Baseline ("before"):**
+  - Answers were 70–110 words with no worked example.
+  - A wrong answer got the full solution at once; correct-but-slow got praise only; one verdict was missing.
+  - **First real-model lesson run:** it parsed fine, with 4 steps of about 80 words.
+  - $0.004 for 17 calls.
+- **Changes:**
+  - Length caps live in one place, `server/ai/moderator/style.py`:
+    - `VERBOSITY_MAX_TOKENS` 300/900/1500 (was 70/220/400);
+    - `DEPTH_MAX_TOKENS` quick 350, full 1000, exam 1600, scaled by verbosity (`answer_max_tokens`);
+    - `LESSON_MAX_TOKENS` 5000;
+    - the model_router default is now 800 (was 200).
+  - **Depth:** chat requests take `depth` (quick, full, exam). The teaching note for "full" is intuition → idea → worked example with numbers → common mistakes → related topics → ONE **Check:** question; "exam" adds how it's examined plus an exam-style question with a model answer. The general reply prompt no longer says "2–4 sentences"; the personality verbosity wording was softened; maths explanations teach the steps and never mention the tool.
+  - **The teacher loop:** if Sage's last message ends with **Check:** or **Try again:**, the reply is marked by `_mark_check_answer`. Its structured JSON (`parse_marking`) has: is_answer, gave_up, verdict (correct/partial/wrong), what_was_right, error_step, misconception and its type, hint, full_solution, better_method, expected and student answers, follow_up.
+  - `same_math` (SymPy, with strict character and name allowlists before parsing) overrides the model's verdict where both answers are maths.
+  - `marking_reply` composes the reply:
+    - correct → confirm, a quicker way if theirs was longer, then a harder **Check:**;
+    - partly right → what was right, where it went wrong, a hint, **Try again:**;
+    - wrong the first time → the misconception, where it went wrong, a hint, **Try again:**;
+    - wrong the second time, or gave up → the full **Solution:**, then a similar **Check:**.
+  - A reply that isn't an answer (is_answer false) falls through to normal routing. The activity gets check, check_verified_by, and "struggle" + `misconception:<type>` labels (none when the student gave up).
+  - `_add_usage` sums tokens, so marking plus a reply are both metered.
+  - Context is the last 6 turns (was 12).
+  - Lessons: steps up to about 200 words, each with intuition, example and a common mistake; a worked example is always required; "Step N:" prefixes are stripped from headings.
+  - **App:**
+    - the chat menu has "How much to explain": Quick, Full (default) or Exam-level (`TutorMode.depth`), sent with both chats;
+    - MarkdownLite renders ``` code blocks (monospace, scrolls sideways) and multi-line `\[ … \]` maths.
+- **After:**
+  - 260–420 words per answer, all with a worked example, common mistakes and related topics.
+  - Marking works as the plan describes: a hint first, the solution after a second wrong try, "A quicker way" for the slow method, SymPy-verified verdicts, labelled misconceptions.
+  - The lesson has 5 steps of 140–155 words plus a full worked example.
+  - $0.011 for 16 calls (about $0.0007 per answer).
+- **Tests:** 298/298 backend (new `test_teacher_loop.py`; the old `[[correct]]` marker tests removed), 98/98 Flutter.
+- **Next in the plan:**
+  - Step 2: Go deeper — real videos, papers and books from official APIs; the model picks and never writes URLs.
+  - Step 3: rights-aware sources.
+  - Step 4: measure cost per feature, then rework the hosted wallet into app credits.

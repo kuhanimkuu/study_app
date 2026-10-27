@@ -58,8 +58,40 @@ class MarkdownLite extends StatelessWidget {
     final base = DefaultTextStyle.of(context).style;
     final children = <Widget>[];
 
+    // Fenced blocks (2026-10-27): ``` code, and \[ … \] maths spread over
+    // several lines. Fuller answers use both, and they showed up as raw
+    // backticks and backslashes.
+    List<String>? fenced;
+    var fenceIsMath = false;
+    void closeFence() {
+      final body = fenced!.join('\n');
+      children.add(fenceIsMath ? _mathBlock(context, body) : _codeBlock(context, body));
+      fenced = null;
+    }
+
     for (final raw in text.split('\n')) {
       final line = raw.trimRight();
+      final trimmed = line.trim();
+      if (fenced != null) {
+        final closes = fenceIsMath ? trimmed.endsWith(r'\]') : trimmed.startsWith('```');
+        if (closes) {
+          if (fenceIsMath && trimmed != r'\]') fenced!.add(trimmed.substring(0, trimmed.length - 2));
+          closeFence();
+        } else {
+          fenced!.add(fenceIsMath ? trimmed : raw);
+        }
+        continue;
+      }
+      if (trimmed.startsWith('```')) {
+        fenced = [];
+        fenceIsMath = false;
+        continue;
+      }
+      if (trimmed.startsWith(r'\[') && !trimmed.contains(r'\]')) {
+        fenced = [if (trimmed.length > 2) trimmed.substring(2)];
+        fenceIsMath = true;
+        continue;
+      }
       if (line.trim().isEmpty) {
         if (children.isNotEmpty) children.add(const SizedBox(height: 6));
         continue;
@@ -93,6 +125,7 @@ class MarkdownLite extends StatelessWidget {
       }
       children.add(Text.rich(_spans(context, line, base)));
     }
+    if (fenced != null) closeFence(); // an unclosed fence still shows its content
 
     return SelectionArea(
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
@@ -123,6 +156,39 @@ class MarkdownLite extends StatelessWidget {
 
   /// The handful of LaTeX commands that show up in short inline math,
   /// mapped to readable characters — e.g. `x \times 2` → `x × 2`.
+  /// A code sample: monospace, kept on its own lines, scrolling sideways
+  /// rather than wrapping (indentation matters in code).
+  Widget _codeBlock(BuildContext context, String code) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Text(code, style: monoTextStyle(context, fontSize: 13, color: theme.colorScheme.onSurface)),
+      ),
+    );
+  }
+
+  /// A displayed equation, shown centred in the mono font like inline maths.
+  Widget _mathBlock(BuildContext context, String latex) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Center(
+        child: Text(
+          _plainMath(latex),
+          textAlign: TextAlign.center,
+          style: monoTextStyle(context, fontSize: 15, fontWeight: FontWeight.w600, color: DefaultTextStyle.of(context).style.color),
+        ),
+      ),
+    );
+  }
+
   static String _plainMath(String latex) {
     const map = {
       r'\times': '×', r'\cdot': '·', r'\div': '÷', r'\pm': '±', r'\leq': '≤', r'\geq': '≥',

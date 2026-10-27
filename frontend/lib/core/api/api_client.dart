@@ -473,6 +473,7 @@ class ApiClient {
     List<Map<String, dynamic>>? history,
     String? regenerate,
     bool tutorMode = true,
+    String depth = 'full',
   }) async {
     final res = await _http
         .post(
@@ -493,6 +494,7 @@ class ApiClient {
             // Sage ends explanations with a check question (2026-10-21);
             // false is the "Just answer" switch.
             'tutor_mode': tutorMode,
+            'depth': depth,
           }),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
@@ -576,6 +578,7 @@ class ApiClient {
     List<Map<String, dynamic>>? history,
     String? regenerate,
     bool tutorMode = true,
+    String depth = 'full',
   }) async {
     final modelConfig = await _resolveModelConfig(null);
     final res = await _http
@@ -591,6 +594,7 @@ class ApiClient {
             if (history != null && history.isNotEmpty) 'history': history,
             if (regenerate != null) 'regenerate': regenerate,
             'tutor_mode': tutorMode,
+            'depth': depth,
           }),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);

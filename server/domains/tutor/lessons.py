@@ -29,13 +29,15 @@ def lesson_prompt(topic: str, material: str | None, level: str | None, style: st
         "You are Sage, a patient and encouraging tutor. Write a short interactive lesson that teaches a "
         f"student this topic: \"{topic}\".\n"
         f"{level_line}{material_block}"
-        "Teach it in 3 to 5 small steps that build on each other, starting from what a beginner needs. "
-        "Each step has a heading, an explanation of at most 120 words in plain language (Markdown allowed: "
-        "**bold**, short lists, inline formulas), and one question that checks that step was understood — "
-        "not trivia, but whether they got the idea. Mix the question types: \"mcq\" (4 options, exactly one "
-        "correct), \"true_false\", and \"short_answer\" (answerable in a few words). After the steps, give "
-        "a worked example (a concrete problem and its step-by-step solution) if the topic suits one, "
-        "otherwise null, and 5 recap flashcards covering the key ideas.\n"
+        "Teach it in 3 to 5 steps that build on each other, starting from what a beginner needs. Each step "
+        "has a heading and an explanation of up to about 200 words in plain language (Markdown allowed: "
+        "**bold**, short lists, inline formulas): the intuition first, then the idea, with a small concrete "
+        "example, and the mistake students most often make at that point. Each step ends with one question "
+        "that checks the step was understood — not trivia, but whether they got the idea. Mix the question "
+        "types: \"mcq\" (4 options, exactly one correct), \"true_false\", and \"short_answer\" (answerable "
+        "in a few words). After the steps, always give a worked example: a concrete problem with real numbers "
+        "or a real case, solved step by step with a reason for each step. Then 5 recap flashcards covering the "
+        "key ideas.\n"
         "Reply with only JSON, in exactly this shape:\n"
         '{"title": "...", "steps": [{"heading": "...", "explanation": "...", "check": {"type": "mcq", '
         '"prompt": "...", "options": ["...", "...", "...", "..."], "answer": "the correct option, copied '
@@ -115,7 +117,8 @@ def parse_lesson(text: str, topic: str) -> dict:
     for raw in (data.get("steps") or [])[:_MAX_STEPS]:
         if not isinstance(raw, dict):
             continue
-        heading = _text(raw.get("heading"), 200)
+        # The app numbers steps itself; models often do too ("Step 1: …").
+        heading = re.sub(r"^\s*step\s*\d+\s*[:.\-–—]\s*", "", _text(raw.get("heading"), 200), flags=re.IGNORECASE)
         explanation = _text(raw.get("explanation"), _MAX_EXPLANATION)
         if not heading or not explanation:
             continue

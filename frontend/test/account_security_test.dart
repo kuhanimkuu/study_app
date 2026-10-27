@@ -62,6 +62,17 @@ void main() {
     expect(asked.queryParameters['tz_offset_minutes'], '${DateTime.now().timeZoneOffset.inMinutes}');
   });
 
+  test('chat questions carry the depth and tutor mode', () async {
+    late Map<String, dynamic> sent;
+    final client = _client((request) {
+      sent = jsonDecode(request.body) as Map<String, dynamic>;
+      return _json({'blocks': [], 'session_id': 's'});
+    })..token = 't';
+    await client.askText(content: 'explain entropy', sessionId: 's', depth: 'exam', tutorMode: false);
+    expect(sent['depth'], 'exam');
+    expect(sent['tutor_mode'], false);
+  });
+
   test('the data export returns the file bytes', () async {
     final client = _client((_) => http.Response('{"account": {}}', 200))..token = 't';
     expect(utf8.decode(await client.exportAccountData()), '{"account": {}}');

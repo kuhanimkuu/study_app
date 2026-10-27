@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...ai.memory.models import Memory
-from ...ai.moderator.style import build_adaptive_style_note
+from ...ai.moderator.style import LESSON_MAX_TOKENS, build_adaptive_style_note
 from ...ai.personality.router import get_or_create_personality
 from ...core import security
 from ...core.model_config import ModelConfig, resolve_model_config_async
@@ -47,7 +47,6 @@ from .models import Lesson
 router = APIRouter(prefix="/api/v1")
 
 DEFAULT_SPACE_NAME = "My lessons"
-_LESSON_MAX_TOKENS = 3_000
 
 
 class StartLesson(BaseModel):
@@ -166,7 +165,7 @@ async def start_lesson(
     level = ", ".join(v for v in (user.education_level, user.course) if v) if user else None
     style = await _style_note(db, user_id)
     text = await generation.call_model(
-        lesson_prompt(topic, material, level, style), _LESSON_MAX_TOKENS, model_config, db, user_id
+        lesson_prompt(topic, material, level, style), LESSON_MAX_TOKENS, model_config, db, user_id
     )
     parsed = parse_lesson(text, topic)
 

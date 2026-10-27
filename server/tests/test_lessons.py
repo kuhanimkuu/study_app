@@ -179,3 +179,8 @@ async def test_a_chat_answer_becomes_flashcards(client, student, monkeypatch):
     assert resp.status_code == 200, resp.text
     assert [c["front"] for c in resp.json()["flashcards"]] == ["What is osmosis?", "Which way?"]
     assert f"<material>\n{answer}\n</material>" in prompts[-1]
+
+
+def test_step_headings_lose_the_models_own_numbering():
+    numbered = {**LESSON, "steps": [{**s, "heading": f"Step {i + 1}: {s['heading']}"} for i, s in enumerate(LESSON["steps"])]}
+    assert [s["heading"] for s in parse_lesson(json.dumps(numbered), "osmosis")["steps"]] == [s["heading"] for s in LESSON["steps"]]

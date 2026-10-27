@@ -46,7 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import engines
 from ..ai.memory.models import Memory
 from ..ai.moderator.server_events import get_server_side_events
-from ..ai.moderator.style import build_adaptive_style_note, verbosity_max_tokens
+from ..ai.moderator.style import answer_max_tokens, build_adaptive_style_note
 from ..ai.personality.router import get_or_create_personality
 from ..ai.schemas import ModeratorResponse
 from ..core import security
@@ -183,6 +183,10 @@ class TextAsk(BaseModel):
     # Sage teaches: ends explanations with a check question and marks the
     # answer (2026-10-21). False = the app's "Just answer" switch.
     tutor_mode: bool = True
+    # How much to explain (2026-10-27): "quick" (a paragraph), "full"
+    # (intuition, idea, worked example, common mistakes, related topics) or
+    # "exam" (full plus how it's examined). Sets the prompt and the length cap.
+    depth: Literal["quick", "full", "exam"] = "full"
     task: str | None = None
     requested_format: str | None = None
     # Structured arguments for the moderator's explicit-task-only routes
@@ -233,14 +237,14 @@ async def _charge_hosted_usage(result: dict, model_config: dict, db: AsyncSessio
     return result
 
 
-async def _personality_for(db: AsyncSession, user_id: int) -> tuple[str, int | None]:
+async def _personality_for(db: AsyncSession, user_id: int, depth: str = "full") -> tuple[str, int | None]:
     personality = await get_or_create_personality(db, user_id)
     explicit_memories = (
         await db.scalars(select(Memory).where(Memory.user_id == user_id, Memory.type == "explicit"))
     ).all()
     await db.commit()  # persists a just-created default personality, if any
     style = build_adaptive_style_note(personality, [{"key": m.key, "value": m.value} for m in explicit_memories])
-    return style, verbosity_max_tokens(personality)
+    return style, answer_max_tokens(personality, depth)
 
 
 @router.post("/api/ask/text", response_model=ModeratorResponse)
@@ -261,7 +265,7 @@ async def ask_text(
     # — see STUDY_OS_PROGRESS.md), not just /api/v1/concepts/{id}/explain.
     # Both are user-scoped (not concept-scoped), which is exactly what
     # makes them applicable here where there's no specific Concept in play.
-    personality_style, personality_max_tokens = await _personality_for(db, current_user["id"])
+    personality_style, personality_max_tokens = await _personality_for(db, current_user["id"], payload.depth)
 
     model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
     result = await engines.moderator.run(
@@ -280,6 +284,7 @@ async def ask_text(
         history=[turn.model_dump() for turn in payload.history],
         regenerate=payload.regenerate,
         tutor_mode=payload.tutor_mode,
+        depth=payload.depth,
     )
 
     return await _charge_hosted_usage(result, model_config, db, current_user["id"])
@@ -409,6 +414,10 @@ class ProjectAsk(BaseModel):
     # Sage teaches: ends explanations with a check question and marks the
     # answer (2026-10-21). False = the app's "Just answer" switch.
     tutor_mode: bool = True
+    # How much to explain (2026-10-27): "quick" (a paragraph), "full"
+    # (intuition, idea, worked example, common mistakes, related topics) or
+    # "exam" (full plus how it's examined). Sets the prompt and the length cap.
+    depth: Literal["quick", "full", "exam"] = "full"
     # See TextAsk's matching field for the trailing-underscore alias.
     model_config_: ModelConfig | None = Field(default=None, alias="model_config")
 
@@ -429,7 +438,7 @@ async def ask_project(
         await index_store.ensure_index_file(db, current_user["id"], payload.project)
     # The project chat is a full tutor now (2026-10-21), so it gets the
     # student's personality settings and the chat so far too.
-    personality_style, personality_max_tokens = await _personality_for(db, current_user["id"])
+    personality_style, personality_max_tokens = await _personality_for(db, current_user["id"], payload.depth)
     result = await engines.moderator.run(
         input_type="project",
         content=payload.content,
@@ -443,5 +452,6 @@ async def ask_project(
         history=[turn.model_dump() for turn in payload.history],
         regenerate=payload.regenerate,
         tutor_mode=payload.tutor_mode,
+        depth=payload.depth,
     )
     return await _charge_hosted_usage(result, model_config, db, current_user["id"])

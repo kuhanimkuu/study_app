@@ -29,9 +29,9 @@ _FORMALITY_PHRASES = {
 }
 
 _VERBOSITY_PHRASES = {
-    "concise": "Keep it brief — 1-2 sentences, no elaboration.",
-    "moderate": "Keep it to a few sentences — enough to explain clearly, no more.",
-    "detailed": "Feel free to go into more depth and cover multiple angles.",
+    "concise": "Keep it short: the key idea and one small example, no padding.",
+    "moderate": "Explain fully, with a worked example, but without padding.",
+    "detailed": "Go into depth: cover multiple angles and more than one example.",
 }
 
 _TEACHING_STYLE_PHRASES = {

@@ -12,7 +12,17 @@ from __future__ import annotations
 from ..personality.models import PersonalityProfile
 from ..personality.prompt import build_style_instruction
 
-VERBOSITY_MAX_TOKENS = {"concise": 70, "moderate": 220, "detailed": 400}
+# --- answer lengths, in tokens: the one place to tune them (2026-10-27) ---
+# Raised from 70/220/400, which were set for a tiny local model and left a
+# hosted one (DeepSeek) no room for a worked example. Longer answers cost
+# more: check `python -m server.scripts.teacher_eval` and the token meter
+# before changing these.
+VERBOSITY_MAX_TOKENS = {"concise": 300, "moderate": 900, "detailed": 1500}
+# Chat answers follow the student's depth choice (the app's quick / full /
+# exam-level switch), scaled by their verbosity setting.
+DEPTH_MAX_TOKENS = {"quick": 350, "full": 1000, "exam": 1600}
+_VERBOSITY_SCALE = {"concise": 0.7, "moderate": 1.0, "detailed": 1.4}
+LESSON_MAX_TOKENS = 5000
 
 
 def build_adaptive_style_note(personality: PersonalityProfile, memories: list[dict]) -> str:
@@ -30,7 +40,13 @@ def build_adaptive_style_note(personality: PersonalityProfile, memories: list[di
     return f"{memory_note}{build_style_instruction(personality)}"
 
 
-def verbosity_max_tokens(personality: PersonalityProfile, default: int = 220) -> int:
+def answer_max_tokens(personality: PersonalityProfile, depth: str = "full") -> int:
+    """The length cap for a chat answer at this depth."""
+    base = DEPTH_MAX_TOKENS.get(depth, DEPTH_MAX_TOKENS["full"])
+    return int(base * _VERBOSITY_SCALE.get(personality.verbosity, 1.0))
+
+
+def verbosity_max_tokens(personality: PersonalityProfile, default: int = 900) -> int:
     """See explain.py's history for why this is mechanical (max_tokens),
     not just a prompt instruction: the real local model didn't reliably
     self-terminate early even when told to be concise."""
