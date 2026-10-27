@@ -92,7 +92,12 @@ class OfflineFlashcards {
     final reviewedAt = now ?? DateTime.now();
     var queued = false;
     try {
-      await api.reviewFlashcard(flashcardId: flashcardId, rating: rating);
+      // The same time as a queued copy would carry: if this reaches the
+      // server but the answer is lost, the queued resend matches it and
+      // isn't counted twice (the server skips times at or before the
+      // card's last review). Without it the server used its own clock, and
+      // a phone clock running ahead made the resend count again.
+      await api.reviewFlashcard(flashcardId: flashcardId, rating: rating, reviewedAt: reviewedAt);
     } catch (e) {
       if (!isOffline(e)) rethrow;
       final queue = await _read(_queueKey);

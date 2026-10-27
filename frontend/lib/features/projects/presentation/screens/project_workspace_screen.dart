@@ -338,7 +338,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
 
   Future<void> _sendQuery() async {
     final text = _chatController.text.trim();
-    if (text.isEmpty) return;
+    if (text.isEmpty || _isAsking) return; // one question at a time
     _chatController.clear();
     final editing = _editing;
     if (editing != null) {

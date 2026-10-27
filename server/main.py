@@ -69,6 +69,7 @@ from .ai.memory.router import router as memory_router
 from .ai.moderator.router import router as moderator_router
 from .ai.personality.router import router as personality_router
 from .core.config import get_settings
+from .core.idempotency import IdempotencyMiddleware
 from .domains.assessment.router import router as assessment_router
 from .domains.billing.router import router as billing_router
 from .domains.diagnostics.router import router as diagnostics_router
@@ -125,6 +126,10 @@ app = FastAPI(title="Study OS", lifespan=lifespan)
 # credentials only makes sense with a real origin list — CORSMiddleware
 # itself refuses "*" + credentials, and this app uses a bearer token (not
 # cookies) anyway, so credentials stay off regardless of origin config.
+# Added first, so it's the innermost: it stores and replays the app's own
+# answers (before gzip). See core/idempotency.py.
+app.add_middleware(IdempotencyMiddleware)
+
 _cors_origins = get_settings().cors_allowed_origins_list
 app.add_middleware(
     CORSMiddleware, allow_origins=_cors_origins, allow_methods=["*"], allow_headers=["*"]

@@ -136,6 +136,11 @@ class Flashcard(Base):
     fsrs_difficulty: Mapped[float | None] = mapped_column(nullable=True)
     fsrs_due: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     fsrs_last_review: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The phone's own time for the last review it sent (2026-10-27), exactly
+    # as sent: a resend of that review (answer lost, then the offline queue
+    # tries again) carries the same value and is skipped, even when the
+    # phone's clock is ahead and the server stamped the review with its own.
+    last_review_client_time: Mapped[datetime.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     reviews: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime.datetime] = mapped_column(

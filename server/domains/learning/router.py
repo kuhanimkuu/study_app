@@ -518,6 +518,8 @@ def _review_time(flashcard: Flashcard, reviewed_at: datetime.datetime | None) ->
         return None
     if reviewed_at.tzinfo is None:
         reviewed_at = reviewed_at.replace(tzinfo=datetime.timezone.utc)
+    if flashcard.last_review_client_time is not None and reviewed_at == flashcard.last_review_client_time:
+        raise _AlreadyCounted
     now = datetime.datetime.now(datetime.timezone.utc)
     if reviewed_at > now or now - reviewed_at > _MAX_OFFLINE_REVIEW_AGE:
         return None
@@ -540,6 +542,9 @@ async def review_flashcard_endpoint(
         review_flashcard(flashcard, payload.rating, _review_time(flashcard, payload.reviewed_at))
     except _AlreadyCounted:
         return flashcard.public()
+    if payload.reviewed_at is not None:
+        sent = payload.reviewed_at
+        flashcard.last_review_client_time = sent if sent.tzinfo else sent.replace(tzinfo=datetime.timezone.utc)
     await db.commit()
     await db.refresh(flashcard)
     return flashcard.public()

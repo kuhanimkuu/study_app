@@ -256,3 +256,17 @@ async def test_a_resent_offline_review_is_not_counted_twice(client, student):
     again = await client.post(f"/api/v1/flashcards/{card_id}/review", json=review, headers=student["headers"])
     assert first.status_code == again.status_code == 200
     assert again.json() == first.json()
+
+
+async def test_a_resend_from_a_phone_with_its_clock_ahead_is_not_counted_twice(client, student):
+    import datetime
+
+    card_id = await _new_card(client, student)
+    # The phone's clock is an hour fast: the server stamps the review with
+    # its own time, so only the phone's exact value can match the resend.
+    phone_time = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).isoformat()
+    review = {"rating": "good", "reviewed_at": phone_time}
+    first = await client.post(f"/api/v1/flashcards/{card_id}/review", json=review, headers=student["headers"])
+    again = await client.post(f"/api/v1/flashcards/{card_id}/review", json=review, headers=student["headers"])
+    assert first.status_code == again.status_code == 200
+    assert again.json() == first.json()

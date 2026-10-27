@@ -3,6 +3,8 @@ import 'dart:math';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
+import 'idempotent_client.dart';
+
 /// Thin wrapper around Study OS's HTTP server (see ../../server/README.md
 /// for the endpoint contracts). Shared across every feature (chat, auth,
 /// account) — moved out of features/chat/ once auth/account also needed
@@ -19,7 +21,11 @@ import 'package:http/http.dart' as http;
 /// platform this project builds for (Android, Windows, web).
 class ApiClient {
   /// [httpClient] is for tests (package:http/testing's MockClient).
-  ApiClient({required this.baseUrl, this.token, http.Client? httpClient}) : _http = httpClient ?? http.Client();
+  ///
+  /// Every request goes through [IdempotentClient] (2026-10-27): repeats of
+  /// a request that changes something are done once on the server.
+  ApiClient({required this.baseUrl, this.token, http.Client? httpClient})
+      : _http = IdempotentClient(httpClient ?? http.Client());
 
   /// Applied to every request below. Without this, a dropped connection
   /// (a killed adb reverse tunnel, a server restart mid-request, a dead
@@ -62,9 +68,13 @@ class ApiClient {
   /// close) a fresh client per call — a new TCP + TLS handshake to Render
   /// every time, which on a phone means extra latency, data and battery
   /// for each of the many small JSON calls a screen makes (2026-10-19).
-  final http.Client _http;
+  final IdempotentClient _http;
 
-  Never _timeoutError() => throw ApiException(0, 'Request timed out — check the server is reachable.');
+  Never _timeoutError() {
+    // What timed out may still finish on the server; a repeat must reuse its key.
+    _http.pinInFlight();
+    throw ApiException(0, 'Request timed out — check the server is reachable.');
+  }
 
   /// Mutable (not final) — the settings screen edits this in place on the
   /// one shared instance every screen holds, so a URL change takes effect

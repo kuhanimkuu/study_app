@@ -338,7 +338,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Future<void> _sendText() async {
     final text = _textController.text.trim();
-    if (text.isEmpty) return;
+    // One message at a time: a second tap while Sage is answering used to
+    // send it again (and pay for two answers).
+    if (text.isEmpty || _isLoading) return;
     _textController.clear();
     final editing = _editing;
     if (editing != null) return _sendEdit(editing, text);

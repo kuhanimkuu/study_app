@@ -1400,3 +1400,28 @@ The user pointed out that most people won't know about bring-your-own-key, becau
 - Profile → AI model has "Set up AI step by step".
 - `AuthService.byokConfig` is shared by requests and the key test. `testAndSaveKey` encrypts the key before it leaves the phone (the test checks the plain key isn't sent). `debugSignIn` exists for tests.
 - Tests: 260/260 backend (new `test_ai_check.py`), 91/91 Flutter (new `ai_setup_test.dart`).
+
+### 2026-10-27 — Release 1.0.13: repeated requests are done once
+
+The user reported that creating things, messaging and offline sync had no protection against duplicate requests on retry. (Study OS has no "posts"; that was read as creating subjects, notes, flashcards, goals, lessons and uploads.) Checked first:
+
+- Creating things had no protection: a repeated POST created a second copy (and a second AI charge for lessons and generation).
+- Chat's send button stayed live while Sage was answering, so a double tap sent twice.
+- Offline sync was mostly covered by the server's "at or before the last review" rule, with one hole: online reviews were sent without a time. If the answer was lost, the queued copy carried the phone's clock, and a phone clock running ahead made it count again.
+
+Fixes:
+- **`server/core/idempotency.py`:** an `Idempotency-Key` ASGI middleware (innermost, before gzip), backed by an `idempotency_keys` table (migration `cb18dadda115`).
+  - The key is scoped to the account (sha256 of the Authorization header).
+  - The first request runs and a 2xx answer (up to 1 MB) is stored for 24 hours. The same key returns the stored answer (`Idempotent-Replayed: true`) without running anything.
+  - The same key while the first is still running gets 409 with Retry-After 2. A row stuck "in progress" over 10 minutes (process restart) is taken over.
+  - Non-2xx answers aren't stored, so a retry runs again. A key reused on a different route gets 422; a malformed key gets 400.
+  - The cleanup worker deletes rows older than 24 hours.
+- **App `core/api/idempotent_client.dart`:** wraps every ApiClient request.
+  - POST, PUT, PATCH and DELETE carry a random key.
+  - A request with the same method, address and body reuses it while the first is in flight, or after it failed.
+  - After a delivered success, the next identical request is a new action (so "make flashcards" again really makes more). The exception: when ApiClient timed out it calls `pinInFlight()`, so a later success keeps the key and the student's re-tap is replayed.
+  - A dropped connection (ClientException or SocketException) is retried once with the same key. Uploads aren't auto-retried (their stream can't be re-sent) but still carry the key.
+- Chat and subject chat ignore send while an answer is pending.
+- **Offline:** online reviews now send `reviewed_at` too. The server stores the phone's exact time per card (`flashcards.last_review_client_time`, migration `57163adad463`) and skips a review carrying the same value, whatever the clocks say. A test with a phone clock an hour fast fails on the old code and passes now.
+- **Tests:** 268/268 backend (new `test_idempotency.py` and a clock-skew flashcard test), 96/96 Flutter (new `idempotent_client_test.dart`).
+- The user also shared `Downloads/Study_OS_plan.pdf`, a product and revenue plan with 4 Claude Code steps (teacher loop and depth, Go deeper links, rights-aware sources, cost measurement and billing rework). Not started yet. Step 1 needs a DeepSeek key in `.env` to record "before" transcripts.
