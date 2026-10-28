@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../../../app/theme.dart';
 import '../../../../../core/api/api_client.dart';
 import '../../../../../core/widgets/ai_generate_button.dart';
+import '../../../../../core/widgets/mastery_ring.dart';
+import '../../../../../core/widgets/tab_kit.dart';
 import 'concept_detail_screen.dart';
 
 /// Concepts within one Knowledge Space (blueprint Section 15) — a new 4th
@@ -113,154 +115,159 @@ class _ConceptsListScreenState extends State<ConceptsListScreen> {
   }
 
   Widget _generateButton({bool expand = false}) => AiGenerateButton(
-        label: 'Generate concepts from material',
+        label: 'Find concepts in my sources',
         expand: expand,
         onGenerate: () async =>
             generatedSummary(await widget.apiClient.generateConcepts(widget.slug), 'concepts', 'concept'),
         onDone: _load,
       );
 
+  Future<void> _openConcept(Map<String, dynamic> concept) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => ConceptDetailScreen(
+          apiClient: widget.apiClient,
+          concept: concept,
+          knowledgeSpaceSlug: widget.slug,
+        ),
+      ),
+    );
+    _load(); // mastery may have changed while the detail screen was open
+  }
+
+  /// Where a concept stands, in words a student uses.
+  static ({String label, Color color, IconData icon}) _stage(double? mastery) {
+    if (mastery == null || mastery < 0.01) return (label: 'New', color: StudyOsColors.xp, icon: Icons.fiber_new_rounded);
+    if (mastery < 0.5) return (label: 'Learning', color: StudyOsColors.streak, icon: Icons.trending_up_rounded);
+    if (mastery < 0.75) return (label: 'Getting there', color: StudyOsColors.amber, icon: Icons.bolt_rounded);
+    return (label: 'Strong', color: StudyOsColors.success, icon: Icons.verified_rounded);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final concepts = (_concepts ?? []).cast<Map<String, dynamic>>();
+    final known = concepts.map((c) => _masteryById[c['id'] as int]).whereType<double>().toList();
+    final average = known.isEmpty ? 0.0 : known.reduce((a, b) => a + b) / known.length;
+    final strong = known.where((m) => m >= 0.75).length;
+
+    Widget body;
+    if (_isLoading && _concepts == null) {
+      body = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      body = ListView(
+        padding: const EdgeInsets.all(16),
+        children: [Text(_error!, style: TextStyle(color: theme.colorScheme.error))],
+      );
+    } else {
+      body = ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+        children: [
+          const TabIntro(
+            title: 'Concepts',
+            subtitle: 'The big ideas in this subject, and how well you know each one.',
+          ),
+          if (concepts.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                StatChip(icon: Icons.lightbulb_rounded, value: '${concepts.length}', label: concepts.length == 1 ? 'concept' : 'concepts', color: StudyOsColors.primary),
+                StatChip(icon: Icons.verified_rounded, value: '$strong', label: 'strong', color: StudyOsColors.success),
+                StatChip(icon: Icons.insights_rounded, value: '${(average * 100).round()}%', label: 'average', color: StudyOsColors.xp),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          SageActionCard(
+            title: concepts.isEmpty ? 'Let me find the key ideas' : 'Missing something?',
+            body: concepts.isEmpty
+                ? 'I can read this subject\'s sources and pull out the concepts worth learning. Or tap + to add one yourself.'
+                : 'I can look through your sources again for concepts not on this list yet.',
+            action: _generateButton(),
+          ),
+          const SizedBox(height: 18),
+          if (concepts.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 24),
+              child: Column(
+                children: [
+                  Icon(Icons.lightbulb_outline_rounded, size: 52, color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.35)),
+                  const SizedBox(height: 8),
+                  Text('No concepts yet', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                ],
+              ),
+            )
+          else
+            for (final concept in concepts) ...[
+              _conceptCard(context, concept),
+              const SizedBox(height: 10),
+            ],
+        ],
+      );
+    }
+
     return Scaffold(
-      floatingActionButton: FloatingActionButton(onPressed: _createConcept, child: const Icon(Icons.add)),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: Builder(
-          builder: (context) {
-            if (_isLoading && _concepts == null) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (_error != null) {
-              return ListView(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                  ),
-                ],
-              );
-            }
-            final concepts = _concepts ?? [];
-            if (concepts.isEmpty) {
-              return ListView(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 48),
-                    child: Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.school_outlined, size: 64, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.4)),
-                          const SizedBox(height: 16),
-                          Text(
-                            'No concepts yet. Let AI pull the key concepts out of this project\'s '
-                            'sources, or tap + to add one yourself.',
-                            textAlign: TextAlign.center,
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          ),
-                          const SizedBox(height: 20),
-                          _generateButton(expand: true),
-                        ],
-                      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _createConcept,
+        icon: const Icon(Icons.add_rounded),
+        label: const Text('New concept'),
+      ),
+      body: RefreshIndicator(onRefresh: _load, child: body),
+    );
+  }
+
+  Widget _conceptCard(BuildContext context, Map<String, dynamic> concept) {
+    final theme = Theme.of(context);
+    final mastery = _masteryById[concept['id'] as int];
+    final stage = _stage(mastery);
+    final description = (concept['description'] as String?)?.trim() ?? '';
+    return Material(
+      color: theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _openConcept(concept),
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.6)),
+          ),
+          child: Row(
+            children: [
+              mastery == null
+                  ? IconBadge(icon: Icons.lightbulb_rounded, color: stage.color, size: 46)
+                  : MasteryRing(mastery: mastery, size: 46),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      concept['name'] as String,
+                      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                  ),
-                ],
-              );
-            }
-            return ListView.builder(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              itemCount: concepts.length + 1,
-              itemBuilder: (context, rawIndex) {
-                if (rawIndex == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                    child: Align(alignment: Alignment.centerLeft, child: _generateButton()),
-                  );
-                }
-                final index = rawIndex - 1;
-                final concept = concepts[index] as Map<String, dynamic>;
-                final id = concept['id'] as int;
-                final name = concept['name'] as String;
-                final mastery = _masteryById[id];
-                // Mastery is the one number this screen exists to move —
-                // it gets its own bespoke card (icon badge tinted by
-                // progress + a real progress bar + a percentage pill)
-                // rather than the plain ListItemCard row every other list
-                // screen uses, the same way Nexora gives its one
-                // state-driven card (ElectricFlashCard) its own anatomy.
-                final masteryColor = mastery == null
-                    ? Theme.of(context).colorScheme.primary
-                    : Color.lerp(Theme.of(context).colorScheme.primary, StudyOsColors.amber, mastery)!;
-                return Card(
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(16),
-                    onTap: () async {
-                      await Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (context) => ConceptDetailScreen(
-                            apiClient: widget.apiClient,
-                            concept: concept,
-                            knowledgeSpaceSlug: widget.slug,
-                          ),
-                        ),
-                      );
-                      _load(); // mastery may have changed while the detail screen was open
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(12)),
-                            child: Icon(Icons.school_outlined, color: masteryColor),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(name, style: Theme.of(context).textTheme.titleSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                if (mastery != null) ...[
-                                  const SizedBox(height: 8),
-                                  ClipRRect(
-                                    borderRadius: BorderRadius.circular(4),
-                                    child: LinearProgressIndicator(
-                                      value: mastery,
-                                      minHeight: 6,
-                                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                                      valueColor: AlwaysStoppedAnimation(masteryColor),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          if (mastery != null) ...[
-                            const SizedBox(width: 12),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                              decoration: BoxDecoration(color: masteryColor.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(9999)),
-                              child: Text(
-                                '${(mastery * 100).round()}%',
-                                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: masteryColor, fontWeight: FontWeight.w800),
-                              ),
-                            ),
-                          ],
-                        ],
+                    if (description.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        description,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                       ),
-                    ),
-                  ),
-                );
-              },
-            );
-          },
+                    ],
+                    const SizedBox(height: 8),
+                    TagPill(label: stage.label, color: stage.color, icon: stage.icon),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: theme.colorScheme.onSurfaceVariant),
+            ],
+          ),
         ),
       ),
     );

@@ -1,5 +1,5 @@
 // The real ConceptsListScreen wired to a fake ApiClient (2026-10-07):
-// pins that "Generate concepts from material" is offered on an empty
+// pins that "Find concepts in my sources" is offered on an empty
 // project, calls the generate endpoint, then reloads so the new concepts
 // actually appear — and that the server's actionable error reaches the
 // student unchanged.
@@ -45,7 +45,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('No concepts yet'), findsOneWidget);
-    await tester.tap(find.text('Generate concepts from material'));
+    await tester.tap(find.text('Find concepts in my sources'));
     await tester.pumpAndSettle();
 
     expect(api.generateCalls, 1);
@@ -53,7 +53,7 @@ void main() {
     expect(find.text('Mitochondria'), findsOneWidget);
     expect(find.text('Osmosis'), findsOneWidget);
     // Still offered above a non-empty list, for after more material is added.
-    expect(find.text('Generate concepts from material'), findsOneWidget);
+    expect(find.text('Find concepts in my sources'), findsOneWidget);
   });
 
   testWidgets("a 503 shows the server's set-up-a-key message", (tester) async {
@@ -61,7 +61,7 @@ void main() {
     await tester.pumpWidget(_wrap(api));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Generate concepts from material'));
+    await tester.tap(find.text('Find concepts in my sources'));
     await tester.pumpAndSettle();
 
     expect(find.textContaining('add your own API key'), findsOneWidget);

@@ -624,6 +624,15 @@ User: generated PDFs were "a plain file with black text, zero structure, tiresom
 
 **Verified:** new `server/tests/test_document_templates.py` renders all 8 templates and reads each PDF back with PyMuPDF; Studio test with a mocked model on the real Postgres-backed API (prompt contains the material and the focus, title comes from the AI). 68/68 across the document, AI-generation, write_doc, project-files and account-security suites. Every template looked at as rendered page images. `flutter analyze` clean. **Not verified:** a real model writing a real document end to end (no AI key on this machine), and a click-through of the new Studio screen on a phone.
 
+### 2026-10-28 — Release 1.0.18: workspace tabs redesigned; Pillow security fix
+User asked for the Concepts, "courses" (read as Sources — the workspace has no Courses tab), Flashcards, Notes and Search tabs to get the Studio redesign's treatment, then shared a failed CI run.
+
+**Redesign:** a shared kit (`core/widgets/tab_kit.dart`: TabIntro, StatChip, SageActionCard, IconBadge, TagPill) and `core/utils/relative_time.dart` ("2 h ago", "Due in 3 days"). Sources: live counts, three "Add a source" tiles that open the matching input, cards by type (PDF / web page / text) with status and age. Concepts: summary chips (count, strong, average), a Sage card for generating, mastery ring + New / Learning / Getting there / Strong. Flashcards: a review hero (cards due, Start review; "All caught up" hides the button because the review screen only shows due cards), new/due stats, deck sorted by due date with Due now / New / Due in N days. Notes: sticky-note grid by last edit, word counts, delete now confirms. Search: big search bar, Sage start screen with quick ideas, results with a match-strength bar and the searched words highlighted, tap to expand.
+
+**CI failure:** pip-audit found 31 advisories in Pillow 12.3.0 (fixed in 13.0.0). fastembed 0.8.0 caps Pillow below 13, so both moved: Pillow 13.0.0 + fastembed 0.9.1 (same named embedding model, so existing indexes stay valid).
+
+**Verified:** every tab rendered with the real fonts to PNGs and checked (full and empty states, the Sources input opening, search with highlights); `flutter analyze` clean; 103/103 Flutter tests (one test's button label updated); full backend suite on the new Pillow/fastembed. **Not verified:** a click-through on the phone.
+
 ## Open questions / gaps to resolve
 
 - **Deployed Render backend has no usable AI model by default** (2026-10-06). **Decided 2026-10-07: students bring their own keys (BYOK) for now** — no pooled hosted-tier keys on Render. Without a key, every AI request there returns the `model_unavailable` card, whose button opens Account → model settings.

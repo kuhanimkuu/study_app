@@ -65,7 +65,9 @@ pygltflib==1.16.5
 
 # --- ocr / image_processing ---
 opencv-python-headless==5.0.0.93
-pillow==12.3.0
+# 13.0.0 (2026-10-28): fixes the 31 advisories CI's pip-audit flagged in
+# 12.3.0. Needs fastembed 0.9+ below (0.8 capped Pillow below 13).
+pillow==13.0.0
 pytesseract==0.3.13
 
 # --- document_engine (PDF processing) ---
@@ -85,7 +87,7 @@ beautifulsoup4==4.15.0
 lxml==6.1.3
 
 # --- rag (embeddings for project search) ---
-fastembed==0.8.0
+fastembed==0.9.1
 
 # --- model_router (BYOK backends only — the free local model's own
 # torch/transformers deps live in requirements-local-model.txt) ---

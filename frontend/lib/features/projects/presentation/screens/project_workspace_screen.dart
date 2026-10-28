@@ -7,10 +7,13 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../../app/theme.dart';
 import '../../../../core/api/api_client.dart';
 import '../../../../core/storage/local_db.dart';
+import '../../../../core/utils/relative_time.dart';
 import '../../../../core/widgets/empty_state.dart';
+import '../../../../core/widgets/gradient_button.dart';
 import '../../../../core/widgets/list_item_card.dart';
 import '../../../../core/widgets/project_accent.dart';
 import '../../../../core/widgets/sage_mascot.dart';
+import '../../../../core/widgets/tab_kit.dart';
 import '../../../chat/chat_conversation.dart';
 import '../../../chat/tutor_mode.dart';
 import '../../../chat/presentation/widgets/learn_more_sheet.dart';
@@ -57,6 +60,8 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   String get _sessionId => 'project_${widget.slug}';
 
   // --- Sources tab state ---
+  /// Which "Add a source" input is open: 'text', 'link' or none.
+  String? _addMode;
   final _materialController = TextEditingController();
   final _linkController = TextEditingController();
   int? _chunkCount;
@@ -516,115 +521,240 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   }
 
   Widget _buildSourcesTab(BuildContext context) {
+    final theme = Theme.of(context);
+    final materials = (_materials ?? const []).cast<Map<String, dynamic>>();
+    final ready = materials.where((m) => (m['status'] as String? ?? 'indexed') == 'indexed').length;
     return ListView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
       children: [
-        Text(
-          _chunkCount == null
-              ? 'Loading...'
-              : _chunkCount == 0
-                  ? 'No material yet — add some below.'
-                  : '$_chunkCount stored chunk(s).',
-          style: Theme.of(context).textTheme.bodySmall,
+        const TabIntro(
+          title: 'Sources',
+          subtitle: 'Everything Sage learns this subject from: notes, PDFs and links.',
         ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _materialController,
-          maxLines: 6,
-          decoration: const InputDecoration(labelText: 'Paste text to add'),
+        const SizedBox(height: 14),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            StatChip(
+              icon: Icons.folder_rounded,
+              value: '${materials.length}',
+              label: materials.length == 1 ? 'source' : 'sources',
+              color: StudyOsColors.primary,
+            ),
+            StatChip(icon: Icons.check_circle_rounded, value: '$ready', label: 'ready', color: StudyOsColors.success),
+            StatChip(
+              icon: Icons.auto_stories_rounded,
+              value: _chunkCount == null ? '…' : '$_chunkCount',
+              label: 'passages learned',
+              color: StudyOsColors.xp,
+            ),
+          ],
         ),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: _isAddingMaterial ? null : _addText,
-          icon: const Icon(Icons.note_add_outlined, size: 18),
-          label: const Text('Add text'),
+        const SizedBox(height: 20),
+        Text('Add a source', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            for (final (i, option) in _sourceOptions.indexed) ...[
+              if (i > 0) const SizedBox(width: 10),
+              Expanded(
+                child: _SourceOptionTile(
+                  label: option.label,
+                  icon: option.icon,
+                  color: option.color,
+                  selected: _addMode == option.key,
+                  onTap: _isAddingMaterial
+                      ? null
+                      : () {
+                          if (option.key == 'file') {
+                            setState(() => _addMode = null);
+                            _uploadFile();
+                          } else {
+                            setState(() => _addMode = _addMode == option.key ? null : option.key);
+                          }
+                        },
+                ),
+              ),
+            ],
+          ],
         ),
-        const Divider(height: 32),
-        TextField(
-          controller: _linkController,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: 'Add a link',
-            hintText: 'https://...',
-            prefixIcon: Icon(Icons.link_outlined),
-          ),
-          onSubmitted: (_) => _isAddingMaterial ? null : _addLink(),
-        ),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: _isAddingMaterial ? null : _addLink,
-          icon: const Icon(Icons.add_link_outlined, size: 18),
-          label: const Text('Add link'),
-        ),
-        const Divider(height: 32),
-        OutlinedButton.icon(
-          onPressed: _isAddingMaterial ? null : _uploadFile,
-          icon: const Icon(Icons.upload_file_outlined),
-          label: const Text('Upload a PDF or .txt file'),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+          child: _addMode == null ? const SizedBox(width: double.infinity) : _sourceInput(context),
         ),
         if (_isAddingMaterial) ...[
-          const SizedBox(height: 16),
-          const LinearProgressIndicator(minHeight: 2),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+              const SizedBox(width: 10),
+              Text('Adding your source…', style: theme.textTheme.bodySmall),
+            ],
+          ),
         ],
         if (_sourcesError != null) ...[
           const SizedBox(height: 12),
-          Text(_sourcesError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+          Text(_sourcesError!, style: TextStyle(color: theme.colorScheme.error)),
         ],
-        const Divider(height: 32),
-        Text('Uploaded material', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
+        const SizedBox(height: 22),
+        Text('Your sources', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+        const SizedBox(height: 10),
         if (_materials == null)
-          const SizedBox.shrink()
-        else if (_materials!.isEmpty)
-          Row(
-            children: [
-              Icon(Icons.description_outlined, size: 20, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
-              const SizedBox(width: 8),
-              Text(
-                'Nothing uploaded yet.',
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
-              ),
-            ],
+          const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
+        else if (materials.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: theme.colorScheme.outlineVariant, style: BorderStyle.solid),
+            ),
+            child: Column(
+              children: [
+                Icon(Icons.cloud_upload_rounded, size: 40, color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.45)),
+                const SizedBox(height: 8),
+                Text('Nothing here yet', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 4),
+                Text(
+                  'Add your lecture notes, a PDF or a web page above. Then Chat, Studio, Concepts and Flashcards can use them.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                ),
+              ],
+            ),
           )
         else
-          ..._materials!.map((raw) {
-            final material = raw as Map<String, dynamic>;
-            final sourceUrl = material['source_url'] as String?;
-            final status = material['status'] as String? ?? 'indexed';
-            final error = material['error'] as String?;
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: ListItemCard(
-                icon: sourceUrl != null ? Icons.link_outlined : Icons.description_outlined,
-                iconColor: status == 'failed' ? Theme.of(context).colorScheme.error : null,
-                // A link source's filename IS the URL (see router.py's
-                // _receive_material) — showing it again in the subtitle
-                // would just repeat the title, so this branch drops
-                // mime_type (always "text/html", not informative here).
-                title: material['filename'] as String,
-                subtitle: status == 'failed' && error != null
-                    ? 'Failed: $error'
-                    : sourceUrl != null
-                        ? material['created_at'] as String
-                        : '${material['mime_type']} · ${material['created_at']}',
-                subtitleMaxLines: status == 'failed' ? 3 : 1,
-                onTap: status == 'failed' ? null : () => _openMaterial(material),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
+          for (final material in materials) ...[
+            _materialCard(context, material),
+            const SizedBox(height: 10),
+          ],
+      ],
+    );
+  }
+
+  static const _sourceOptions = [
+    (key: 'text', label: 'Paste text', icon: Icons.notes_rounded, color: StudyOsColors.success),
+    (key: 'link', label: 'Add a link', icon: Icons.link_rounded, color: StudyOsColors.primary),
+    (key: 'file', label: 'Upload file', icon: Icons.upload_file_rounded, color: Color(0xFFE2457A)),
+  ];
+
+  Widget _sourceInput(BuildContext context) {
+    final isText = _addMode == 'text';
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (isText)
+            TextField(
+              controller: _materialController,
+              maxLines: 6,
+              minLines: 4,
+              decoration: const InputDecoration(
+                hintText: 'Paste your notes, a textbook section or anything to study…',
+              ),
+            )
+          else
+            TextField(
+              controller: _linkController,
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                hintText: 'https://…',
+                prefixIcon: Icon(Icons.link_rounded),
+              ),
+              onSubmitted: (_) => _isAddingMaterial ? null : _addLink(),
+            ),
+          const SizedBox(height: 10),
+          GradientButton(
+            label: isText ? 'Add this text' : 'Add this link',
+            icon: isText ? Icons.note_add_rounded : Icons.add_link_rounded,
+            color: isText ? StudyOsColors.success : StudyOsColors.primary,
+            isLoading: _isAddingMaterial,
+            onPressed: _isAddingMaterial ? null : (isText ? _addText : _addLink),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// PDF, web link or pasted text, each with its own colour.
+  static ({IconData icon, Color color, String kind}) _materialKind(Map<String, dynamic> material) {
+    if (material['source_url'] != null) return (icon: Icons.language_rounded, color: StudyOsColors.primary, kind: 'Web page');
+    final mime = (material['mime_type'] as String? ?? '').toLowerCase();
+    final name = (material['filename'] as String? ?? '').toLowerCase();
+    if (mime.contains('pdf') || name.endsWith('.pdf')) {
+      return (icon: Icons.picture_as_pdf_rounded, color: const Color(0xFFDC2F2F), kind: 'PDF');
+    }
+    return (icon: Icons.notes_rounded, color: StudyOsColors.success, kind: 'Text');
+  }
+
+  Widget _materialCard(BuildContext context, Map<String, dynamic> material) {
+    final theme = Theme.of(context);
+    final status = material['status'] as String? ?? 'indexed';
+    final error = material['error'] as String?;
+    final kind = _materialKind(material);
+    final failed = status == 'failed';
+    return Material(
+      color: theme.colorScheme.surface,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: failed ? null : () => _openMaterial(material),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 12, 4, 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: failed ? theme.colorScheme.error.withValues(alpha: 0.5) : theme.colorScheme.outlineVariant.withValues(alpha: 0.6),
+            ),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              IconBadge(icon: kind.icon, color: failed ? theme.colorScheme.error : kind.color, size: 42),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _MaterialStatusBadge(status: status),
-                    if (status != 'indexing')
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline),
-                        tooltip: 'Remove',
-                        onPressed: () => _deleteMaterial(material),
-                      ),
+                    Text(
+                      material['filename'] as String,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        TagPill(label: kind.kind, color: kind.color),
+                        _MaterialStatusBadge(status: status),
+                        Text(
+                          relativeTime(material['created_at'] as String?),
+                          style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                    if (failed && error != null) ...[
+                      const SizedBox(height: 6),
+                      Text(error, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error)),
+                    ],
                   ],
                 ),
               ),
-            );
-          }),
-      ],
+              if (status != 'indexing')
+                IconButton(
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  tooltip: 'Remove',
+                  onPressed: () => _deleteMaterial(material),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -917,7 +1047,7 @@ class _DocTypeTile extends StatelessWidget {
 }
 
 
-/// indexing → spinner, failed → red label, indexed → a quiet "Ready".
+/// indexing → spinner, failed → red label, indexed → a green "Ready".
 class _MaterialStatusBadge extends StatelessWidget {
   const _MaterialStatusBadge({required this.status});
 
@@ -925,19 +1055,72 @@ class _MaterialStatusBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     final style = Theme.of(context).textTheme.labelSmall;
     switch (status) {
       case 'indexing':
         return Row(mainAxisSize: MainAxisSize.min, children: [
           const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
           const SizedBox(width: 6),
-          Text('Indexing…', style: style),
+          Text('Learning it…', style: style?.copyWith(fontWeight: FontWeight.w700)),
         ]);
       case 'failed':
-        return Text('Failed', style: style?.copyWith(color: scheme.error, fontWeight: FontWeight.w700));
+        return TagPill(label: 'Failed', color: Theme.of(context).colorScheme.error, icon: Icons.error_rounded);
       default:
-        return Text('Ready', style: style?.copyWith(color: scheme.primary));
+        return const TagPill(label: 'Ready', color: StudyOsColors.success, icon: Icons.check_rounded);
     }
+  }
+}
+
+/// One of the "Add a source" choices: Paste text / Add a link / Upload file.
+class _SourceOptionTile extends StatelessWidget {
+  const _SourceOptionTile({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected ? color.withValues(alpha: 0.12) : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: selected ? color : Colors.transparent, width: 2),
+          ),
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(12)),
+                child: Icon(icon, color: Colors.white, size: 20),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
