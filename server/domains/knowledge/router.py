@@ -25,15 +25,17 @@ import weakref
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import engines
 from ...core import security
+from ...core.model_config import ModelConfig, resolve_model_config_async
 from ...core.rate_limit import ai_user, upload_user
 from ...core.threads import run_engine_in_thread
 from ...db.session import async_session, get_db
+from ...domains.billing import service as billing_service
 from . import index_store
 from .files_router import store_file
 from .models import GeneratedArtifact, KnowledgeSpace, Material, ProjectIndex, StoredFile
@@ -471,6 +473,41 @@ def _chunk_count(projects_dir: Path, slug: str) -> int:
 class GenerateStudioDoc(BaseModel):
     doc_type: str
     title: str | None = None
+    # What to concentrate on ("chapter 3", "just the enzyme part"); the
+    # material is searched for it instead of sampled evenly.
+    focus: str | None = Field(default=None, max_length=300)
+    model_config_: ModelConfig | None = Field(default=None, alias="model_config")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+# How much of a space's material goes into one prompt: about 6k tokens,
+# which keeps the worst case inside the "pdf_summary" credit price
+# (server/domains/billing/credits.py).
+_STUDIO_MATERIAL_CHARS = 24_000
+
+
+async def _studio_material(index: dict, focus: str | None) -> str:
+    """The material the model writes from. With a focus, the chunks that
+    best match it (in the order they appear in the sources); without one,
+    an even spread across all of it, so a long book isn't summarised from
+    its first chapter only."""
+    chunks: list[str] = [c for c in index.get("chunks") or [] if isinstance(c, str) and c.strip()]
+    picked: list[str] = chunks
+    if focus and index.get("vectors"):
+        try:
+            found = (await run_engine_in_thread(engines.semantic_search, index=index, query=focus, top_k=40))["results"]
+            wanted = {r["chunk"] for r in found}
+            picked = [c for c in chunks if c in wanted] or chunks
+        except Exception:
+            logger.exception("studio focus search failed; using all material")
+    total = sum(len(c) for c in picked)
+    if total > _STUDIO_MATERIAL_CHARS:
+        keep = max(1, int(len(picked) * _STUDIO_MATERIAL_CHARS / total))
+        step = len(picked) / keep
+        picked = [picked[int(i * step)] for i in range(keep)]
+    text = "\n\n".join(picked)
+    return text[:_STUDIO_MATERIAL_CHARS]
 
 
 @router.post("/api/projects/{slug}/studio")
@@ -480,6 +517,13 @@ async def generate_studio_doc(
     current_user: dict = Depends(ai_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
+    """The AI writes the document from the space's material in the
+    chosen template's shape (document_generation/generate_docs/
+    templates.py), and generate_docs lays it out. When the free local model
+    isn't installed (or can't write one), the material is laid out in the
+    same template as it is, and the cover says so. A BYOK or hosted
+    failure is an error: the student chose that AI and should hear it
+    failed."""
     if payload.doc_type not in _DOC_TYPES:
         raise HTTPException(status_code=400, detail=f"doc_type must be one of {sorted(_DOC_TYPES)}")
 
@@ -491,13 +535,41 @@ async def generate_studio_doc(
     if index is None or not index.get("chunks"):
         raise HTTPException(status_code=400, detail="this project has no material yet — add some in Sources first")
 
-    title = payload.title or payload.doc_type.replace("_", " ").title()
+    model_config = await resolve_model_config_async(payload.model_config_, current_user, db)
+    focus = (payload.focus or "").strip()
+    is_local = model_config.get("backend", "local") == "local"
+    prompt = engines.generate_docs.build_prompt(
+        payload.doc_type, material=await _studio_material(index, focus), focus=focus, topic=space.display_name,
+    )
+    spec = None
+    try:
+        result = await engines.model_router.run(
+            prompt=prompt, max_tokens=engines.generate_docs.max_tokens_for(payload.doc_type), **model_config
+        )
+    except Exception as exc:
+        if not is_local:
+            raise HTTPException(status_code=502, detail=f"Your AI didn't respond: {exc}") from exc
+        result = None  # the free local model isn't installed here: lay out the material as it is
+    if result is not None:
+        await billing_service.record_ai_usage(db, current_user["id"], model_config, result.get("usage"), "pdf_summary")
+        await db.commit()
+        text = result.get("text") or ""
+        spec = engines.generate_docs.parse_spec(text) or engines.generate_docs.spec_from_markdown(text, payload.doc_type)
+        if not spec and not is_local:
+            raise HTTPException(status_code=502, detail="The AI's reply couldn't be turned into a document — please try again.")
+
+    label = engines.generate_docs.TEMPLATES[payload.doc_type]["label"]
+    title = (payload.title or (spec or {}).get("title") or f"{label}: {space.display_name}").strip()[:200]
     filename = f"{uuid.uuid4().hex}.pdf"
     dest = _user_generated_dir(current_user["id"]) / filename
     try:
-        await run_engine_in_thread(
-            engines.generate_docs, material=index["chunks"], doc_type=payload.doc_type, title=title, output_path=str(dest)
-        )
+        if spec is not None:
+            spec["title"] = title
+            await run_engine_in_thread(engines.generate_docs, spec=spec, doc_type=payload.doc_type, output_path=str(dest))
+        else:
+            await run_engine_in_thread(
+                engines.generate_docs, material=index["chunks"], doc_type=payload.doc_type, title=title, output_path=str(dest)
+            )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"could not generate document: {exc}") from exc
     url_path = f"/generated/user_{current_user['id']}/{filename}"

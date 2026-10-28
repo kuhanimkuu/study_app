@@ -83,17 +83,21 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   ChatMessage? _editing;
 
   // --- Studio tab state ---
-  static const _docTypeLabels = {
-    'study_guide': 'Study guide',
-    'revision_notes': 'Revision notes',
-    'summary': 'Summary',
-    'formula_sheet': 'Formula sheet',
-    'worksheet': 'Worksheet',
-    'flashcards': 'Flashcards',
-    'practice_exam': 'Practice exam',
-    'lab_report': 'Lab report',
-  };
+  // Each type is its own template on the server (generate_docs/
+  // templates.py, 2026-10-28): its own sections, colours and layout.
+  static const _docTypes = [
+    (key: 'study_guide', label: 'Study guide', blurb: 'Learn it from the start', icon: Icons.menu_book_rounded, color: Color(0xFF4F46E5)),
+    (key: 'revision_notes', label: 'Revision notes', blurb: 'Short notes for the night before', icon: Icons.bolt_rounded, color: Color(0xFFDB2777)),
+    (key: 'summary', label: 'Summary', blurb: 'The big picture on a page or two', icon: Icons.short_text_rounded, color: Color(0xFF0D9488)),
+    (key: 'formula_sheet', label: 'Formula sheet', blurb: 'Every formula, with what it means', icon: Icons.functions_rounded, color: Color(0xFF2563EB)),
+    (key: 'worksheet', label: 'Worksheet', blurb: 'Practice, easy to hard, with answers', icon: Icons.edit_note_rounded, color: Color(0xFFEA580C)),
+    (key: 'flashcards', label: 'Flashcards', blurb: 'Print, cut out and fold', icon: Icons.style_rounded, color: Color(0xFF7C3AED)),
+    (key: 'practice_exam', label: 'Practice exam', blurb: 'A real-style paper with a mark scheme', icon: Icons.assignment_rounded, color: Color(0xFF334155)),
+    (key: 'lab_report', label: 'Lab report', blurb: 'A template to fill in', icon: Icons.science_rounded, color: Color(0xFF16A34A)),
+  ];
+  static final _docTypeLabels = {for (final t in _docTypes) t.key: t.label};
   String _selectedDocType = 'study_guide';
+  final _focusController = TextEditingController();
   List<dynamic>? _artifacts;
   bool _isGenerating = false;
   String? _studioError;
@@ -150,6 +154,7 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   void dispose() {
     _materialsPoll?.cancel();
     _chatFocusNode.dispose();
+    _focusController.dispose();
     super.dispose();
   }
 
@@ -176,7 +181,11 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
       _studioError = null;
     });
     try {
-      await widget.apiClient.generateStudioDoc(slug: widget.slug, docType: _selectedDocType);
+      await widget.apiClient.generateStudioDoc(
+        slug: widget.slug,
+        docType: _selectedDocType,
+        focus: _focusController.text,
+      );
       await _loadArtifacts();
     } on ApiException catch (e) {
       setState(() => _studioError = e.message);
@@ -715,79 +724,194 @@ class _ProjectWorkspaceScreenState extends State<ProjectWorkspaceScreen> {
   }
 
   Widget _buildStudioTab(BuildContext context) {
-    return Column(
+    final theme = Theme.of(context);
+    final selected = _docTypes.firstWhere((t) => t.key == _selectedDocType);
+    final artifacts = _artifacts ?? const [];
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
+        Text('What do you need?', style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        Text(
+          'Your AI writes it from this project\'s sources, laid out for how you\'ll use it.',
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 12),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final width = (constraints.maxWidth - 10) / 2;
+            return Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final type in _docTypes)
+                  SizedBox(
+                    width: width,
+                    child: _DocTypeTile(
+                      label: type.label,
+                      blurb: type.blurb,
+                      icon: type.icon,
+                      color: type.color,
+                      selected: type.key == _selectedDocType,
+                      onTap: _isGenerating ? null : () => setState(() => _selectedDocType = type.key),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          controller: _focusController,
+          enabled: !_isGenerating,
+          maxLength: 300,
+          textInputAction: TextInputAction.done,
+          decoration: const InputDecoration(
+            labelText: 'Focus on (optional)',
+            hintText: 'e.g. chapter 3, or just enzymes',
+            prefixIcon: Icon(Icons.center_focus_strong_rounded),
+            counterText: '',
+          ),
+        ),
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(
+            backgroundColor: selected.color,
+            minimumSize: const Size.fromHeight(48),
+          ),
+          onPressed: _isGenerating ? null : _generateStudioDoc,
+          icon: _isGenerating
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : Icon(selected.icon, size: 20),
+          label: Text(_isGenerating ? 'Writing your ${selected.label.toLowerCase()}…' : 'Make ${selected.label.toLowerCase()}'),
+        ),
+        if (_isGenerating)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'This usually takes under a minute. You can keep using the app.',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+            ),
+          ),
+        if (_studioError != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(_studioError!, style: TextStyle(color: theme.colorScheme.error)),
+          ),
+        const SizedBox(height: 20),
+        const Divider(height: 1),
+        const SizedBox(height: 12),
+        Text('Your documents', style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700)),
+        const SizedBox(height: 4),
+        if (artifacts.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: EmptyState(icon: Icons.auto_awesome_outlined, message: 'No documents yet.'),
+          ),
+        for (final item in artifacts) _buildArtifactCard(item as Map<String, dynamic>),
+      ],
+    );
+  }
+
+  Widget _buildArtifactCard(Map<String, dynamic> artifact) {
+    final docType = artifact['doc_type'] as String;
+    final url = artifact['url'] as String;
+    final fileId = artifact['file_id'] as int?;
+    final type = _docTypes.where((t) => t.key == docType).firstOrNull;
+    // Older artifacts (before 2026-10-07) only exist on the server's disk,
+    // which a restart wipes — try the old URL for those.
+    Future<void> open() => fileId != null
+        ? _openStoredFile(fileId)
+        : launchUrl(Uri.parse('${widget.apiClient.baseUrl}$url'), mode: LaunchMode.externalApplication);
+    return ListItemCard(
+      icon: type?.icon ?? Icons.picture_as_pdf_outlined,
+      iconColor: type?.color ?? Theme.of(context).colorScheme.secondary,
+      title: artifact['title'] as String? ?? _docTypeLabels[docType] ?? docType,
+      subtitle: '${_docTypeLabels[docType] ?? 'PDF'} · tap to open',
+      onTap: open,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(icon: const Icon(Icons.open_in_new), tooltip: 'Open', onPressed: open),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Delete',
+            onPressed: () => _deleteArtifact(artifact['id'] as int),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One choice in Studio's "What do you need?" grid.
+class _DocTypeTile extends StatelessWidget {
+  const _DocTypeTile({
+    required this.label,
+    required this.blurb,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final String blurb;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Material(
+      color: selected ? color.withValues(alpha: 0.12) : theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          height: 92,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: selected ? color : Colors.transparent, width: 2),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _selectedDocType,
-                  decoration: const InputDecoration(labelText: 'Document type'),
-                  items: [
-                    for (final entry in _docTypeLabels.entries)
-                      DropdownMenuItem(value: entry.key, child: Text(entry.value)),
-                  ],
-                  onChanged: (value) => setState(() => _selectedDocType = value ?? _selectedDocType),
-                ),
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(5),
+                    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+                    child: Icon(icon, size: 16, color: Colors.white),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                  if (selected) Icon(Icons.check_circle_rounded, size: 18, color: color),
+                ],
               ),
-              const SizedBox(width: 12),
-              FilledButton.icon(
-                onPressed: _isGenerating ? null : _generateStudioDoc,
-                icon: _isGenerating
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.auto_awesome_rounded, size: 18),
-                label: const Text('Generate'),
+              const SizedBox(height: 6),
+              Text(
+                blurb,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
             ],
           ),
         ),
-        if (_studioError != null)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(_studioError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          ),
-        const Divider(height: 1),
-        Expanded(
-          child: (_artifacts == null || _artifacts!.isEmpty)
-              ? const EmptyState(icon: Icons.auto_awesome_outlined, message: 'No generated documents yet.')
-              : ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  itemCount: _artifacts!.length,
-                  itemBuilder: (context, index) {
-                    final artifact = _artifacts![index] as Map<String, dynamic>;
-                    final docType = artifact['doc_type'] as String;
-                    final url = artifact['url'] as String;
-                    final fileId = artifact['file_id'] as int?;
-                    // Older artifacts (before 2026-10-07) only exist on the
-                    // server's disk, which a restart wipes — try the old
-                    // URL for those.
-                    Future<void> open() => fileId != null
-                        ? _openStoredFile(fileId)
-                        : launchUrl(Uri.parse('${widget.apiClient.baseUrl}$url'), mode: LaunchMode.externalApplication);
-                    return ListItemCard(
-                      icon: Icons.picture_as_pdf_outlined,
-                      iconColor: Theme.of(context).colorScheme.secondary,
-                      title: artifact['title'] as String? ?? _docTypeLabels[docType] ?? docType,
-                      subtitle: 'PDF · tap to open or download',
-                      onTap: open,
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(icon: const Icon(Icons.open_in_new), tooltip: 'Open', onPressed: open),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline),
-                            tooltip: 'Delete',
-                            onPressed: () => _deleteArtifact(artifact['id'] as int),
-                          ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ],
+      ),
     );
   }
 }

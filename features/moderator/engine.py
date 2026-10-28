@@ -1583,48 +1583,24 @@ async def _route_static_image(expression: str, params: dict, content: str) -> tu
     return blocks, "static_images", expr
 
 
-_HEADING_RE = re.compile(r"^(#{1,3})\s+(.*)$")
-_DOC_BULLET_RE = re.compile(r"^(?:[-*•]|\d+\.)\s+(.*)$")
+# Which Studio template a chat "... as a pdf" request wants (2026-10-28,
+# the template redesign): first match wins, so "revision notes" beats the
+# bare "notes" a study guide also matches. Flashcards have their own route.
+_DOC_TYPE_REQUESTS = [
+    ("practice_exam", _EXAM_REQUEST_RE),
+    ("revision_notes", re.compile(r"\b(revision|revise|cram|last[- ]minute)\b", re.IGNORECASE)),
+    ("formula_sheet", re.compile(r"\b(formula|equation)s?\s+sheet\b|\bcheat\s?sheet\b|\bformulae\b", re.IGNORECASE)),
+    ("worksheet", re.compile(r"\bworksheet\b|\bexercises\b", re.IGNORECASE)),
+    ("lab_report", re.compile(r"\blab(oratory)?\s+(report|write[- ]?up)\b", re.IGNORECASE)),
+    ("summary", re.compile(r"\b(summary|summari[sz]e|overview|tl;?dr|brief)\b", re.IGNORECASE)),
+]
 
 
-def _doc_text_to_material(text: str) -> tuple[str, list[str]]:
-    """Turns the LLM's plain-text study guide (see _route_write_doc's
-    prompt for the exact format it's asked for) into
-    document_generation/generate_docs' `material: list[str]` input shape,
-    plus a separate title. The first "# " (H1) line becomes the title, not
-    a chunk — every other heading line (further H1s, any H2/H3) becomes a
-    chunk prefixed "## " so _build_compiled_document can tell a section
-    heading apart from an ordinary bullet and render it as one (see that
-    function's own doc comment). Bullet markers (-, *, •, "1.") are
-    stripped since generate_docs already bullets every plain chunk itself;
-    any other non-empty line is kept as-is (verbatim prose, not a bullet
-    or heading). "**" is stripped everywhere — the LLM sometimes bolds
-    text Markdown-style even when explicitly told not to, and reportlab's
-    Paragraph would otherwise try to parse "**" as literal characters, not
-    markup, and print them."""
-    title = ""
-    title_taken = False
-    material: list[str] = []
-    for raw_line in text.splitlines():
-        line = raw_line.strip().replace("**", "")
-        if not line:
-            continue
-        heading_match = _HEADING_RE.match(line)
-        if heading_match:
-            hashes, heading_text = heading_match.groups()
-            heading_text = heading_text.strip()
-            if not title_taken and hashes == "#":
-                title = heading_text
-                title_taken = True
-            else:
-                material.append(f"## {heading_text}")
-            continue
-        bullet_match = _DOC_BULLET_RE.match(line)
-        if bullet_match:
-            material.append(bullet_match.group(1).strip())
-            continue
-        material.append(line)
-    return title, material
+def _requested_doc_type(text: str) -> str:
+    for doc_type, pattern in _DOC_TYPE_REQUESTS:
+        if pattern.search(text):
+            return doc_type
+    return "study_guide"
 
 
 async def _call_model_or_unavailable(prompt: str, max_tokens: int, model_config: dict) -> str:
@@ -1657,62 +1633,42 @@ async def _route_write_doc(
     model_config: dict,
     personality_style: str | None = None,
 ) -> tuple[list[dict], str, str]:
-    """A free-text "write me a study guide/summary/notes ... as a pdf"
-    request — distinct from _route_static_image's "graph/plot ... as a
-    pdf" (see _infer_task's routing comment for how the two are told
-    apart). Unlike generate_doc's own _STRUCTURED_ENGINES entry (which
-    needs the caller to already supply structured `material`), this asks
-    the LLM to author the document's content first, then compiles it the
-    same way generate_docs always has.
+    """A free-text "write me revision notes/a summary/a study guide ... as
+    a pdf" request — distinct from _route_static_image's "graph/plot ... as
+    a pdf" (see _infer_task's routing comment for how the two are told
+    apart). Picks the Studio template the request asks for
+    (_requested_doc_type), has the model write the content in that
+    template's JSON shape, and generate_docs lays it out — the same
+    templates the Studio tab uses (document_generation/generate_docs/
+    templates.py).
 
-    max_tokens=1800 (vs. general-conversation's 220 and math's 120) — a
-    5-8 section study guide genuinely needs the room; personality_style
+    max_tokens comes from the template (2,500-5,000) — personality_style
     (tone/verbosity) still applies, but personality_max_tokens does not
-    override this — a document isn't a chat reply, and letting a chat-
-    length cap truncate it defeats the purpose."""
+    override it: a document isn't a chat reply, and a chat-length cap
+    would cut it off. A reply that isn't the JSON asked for is still used
+    if it has headings and bullets (spec_from_markdown)."""
     topic = _PDF_MODIFIER_RE.sub(" ", content).strip()
-    is_exam = bool(_EXAM_REQUEST_RE.search(topic))
-    if is_exam:
-        doc_type = "practice_exam"
-        prompt = (
-            "Write a practice exam on the following topic, in exactly this plain-text format: a "
-            "'# Title' line, then a '## Questions' heading followed by 8-12 lines each starting "
-            "'- Q1.', '- Q2.', ... (mix multiple-choice questions, with options A-D on the same line, "
-            "and short-answer questions), then a '## Answer key' heading followed by one '- Q1. answer' "
-            "line per question with a one-sentence explanation. No tables, no bold text, no preamble — "
-            "output only the exam itself.\n\n"
-            f"Topic: {topic}{personality_style or ''}"
-        )
-    else:
-        doc_type = "study_guide"
-        prompt = (
-            "Write a university-level study guide on the following topic, in exactly this plain-text "
-            "format: a '# Title' line, then 5-8 '## Section' headings each followed by 3-6 '- point' "
-            "bullet lines, ending with a '## Key formulas' section and a '## Common mistakes' section. "
-            "No tables, no bold text, no preamble or commentary — output only the document itself.\n\n"
-            f"Topic: {topic}{personality_style or ''}"
-        )
-    text = await _call_model_or_unavailable(prompt, 1800, model_config)
-    title, material = _doc_text_to_material(text)
-    if not material:
+    doc_type = _requested_doc_type(topic)
+    prompt = _generate_docs.build_prompt(doc_type, topic=topic, style=personality_style or "")
+    text = await _call_model_or_unavailable(prompt, _generate_docs.max_tokens_for(doc_type), model_config)
+    spec = _generate_docs.parse_spec(text) or _generate_docs.spec_from_markdown(text, doc_type)
+    if not spec:
         raise NeedsClarification(
-            "I couldn't turn that into a document — could you rephrase what you'd like the guide to cover?",
+            "I couldn't turn that into a document — could you rephrase what you'd like it to cover?",
             {"input_type": "text", "content": content},
         )
-    title = title or ("Practice Exam" if is_exam else "Study Guide")
+    label = _generate_docs.TEMPLATES[doc_type]["label"]
+    title = str(spec.get("title") or "").strip() or label
+    spec["title"] = title
 
     fs_path, url_path = _generated_file("pdf")
     try:
-        # Always the compiled-document layout (headings + bullets): the
-        # exam's questions and answer key are already written out by the
-        # model — generate_docs' own "practice_exam" builder is a cloze
-        # heuristic for raw material, not for finished questions.
-        await run_in_thread(_generate_docs, material=material, doc_type="study_guide", title=title, output_path=fs_path)
+        await run_in_thread(_generate_docs, spec=spec, doc_type=doc_type, output_path=fs_path)
     except Exception as exc:
         return [{"type": "error", "engine": "generate_docs", "message": str(exc)}], "generate_docs", topic
 
     blocks = [
-        {"type": "text", "content": f"Here's your PDF: {title}.", "source": "moderator"},
+        {"type": "text", "content": f"Here's your {label.lower()}: {title}.", "source": "moderator"},
         {"type": "pdf", "content": url_path, "doc_type": doc_type, "source": "generate_docs"},
     ]
     return blocks, "generate_docs", topic

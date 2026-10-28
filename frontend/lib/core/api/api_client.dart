@@ -427,12 +427,22 @@ class ApiClient {
     required String slug,
     required String docType,
     String? title,
+    String? focus,
+    Map<String, dynamic>? modelConfig,
   }) async {
+    // The AI writes the document from the material (2026-10-28), so this
+    // now carries the student's AI choice like every other AI call.
+    modelConfig = await _resolveModelConfig(modelConfig);
     final res = await _http
         .post(
           Uri.parse('$baseUrl/api/projects/$slug/studio'),
           headers: _jsonHeaders,
-          body: jsonEncode({'doc_type': docType, if (title != null) 'title': title}),
+          body: jsonEncode({
+            'doc_type': docType,
+            if (title != null) 'title': title,
+            if (focus != null && focus.trim().isNotEmpty) 'focus': focus.trim(),
+            if (modelConfig != null) 'model_config': modelConfig,
+          }),
         )
         .timeout(_aiRequestTimeout, onTimeout: _timeoutError);
     return _decode(res);

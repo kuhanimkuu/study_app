@@ -336,3 +336,34 @@ async def test_project_chat_without_a_model_still_shows_the_passages(client, spa
     assert r.status_code == 200, r.text
     types = [b["type"] for b in r.json()["blocks"]]
     assert "source" in types and types[-1] == "model_unavailable"
+
+
+# --- Studio documents are written by the AI into a template (2026-10-28) ---
+
+
+async def test_studio_writes_the_document_from_the_material_in_its_template(client, space, monkeypatch):
+    from server.domains.knowledge.models import GeneratedArtifact  # noqa: F401  (the table the artifact lands in)
+
+    captured: list = []
+    reply = (
+        '{"title": "Cell Biology Revision", "objectives": ["Know what each organelle does"],'
+        ' "sections": [{"heading": "Organelles", "blocks": ['
+        '{"type": "bullets", "items": ["Mitochondria make ATP"]},'
+        '{"type": "definition", "term": "Osmosis", "text": "Diffusion of water across a membrane"},'
+        '{"type": "question", "text": "What makes ATP?", "lines": 1}]}],'
+        ' "answers": [{"q": 1, "answer": "Mitochondria"}]}'
+    )
+    _mock_model(monkeypatch, reply, captured)
+    h, slug = space["headers"], space["slug"]
+    made = await client.post(
+        f"/api/projects/{slug}/studio", json={"doc_type": "revision_notes", "focus": "organelles"}, headers=h
+    )
+    assert made.status_code == 200, made.text
+    assert made.json()["doc_type"] == "revision_notes"
+    assert made.json()["title"] == "Cell Biology Revision"
+
+    prompt = captured[0]["prompt"]
+    assert "Mitochondria are the powerhouse" in prompt  # written from the student's own material
+    assert "Focus only on: organelles" in prompt
+    assert "revision notes" in prompt
+    assert captured[0]["max_tokens"] >= 3000

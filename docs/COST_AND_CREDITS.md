@@ -37,7 +37,7 @@ That makes its biggest possible bill known. Inputs below are generous upper esti
 |---|---|---|---|---|---|
 | Chat answer (quick/full; reply 1,400 + marking 1,200) | 6,000 | 2,600 | $0.0045 | 1 credit | $0.01 |
 | Exam-level answer (2,240 + marking 1,200) | 6,000 | 3,440 | $0.0054 | 2 credits | $0.02 |
-| Study guide / PDF summary | 2,000 | 1,800 | $0.0025 | 2 credits | $0.02 |
+| PDF document (chat or Studio, any template; up to 24k chars of sources) | 8,000 | 5,000 | $0.0077 | 2 credits | $0.02 |
 | Lesson | 3,000 | 5,000 | $0.0063 | 3 credits | $0.03 |
 | Go deeper (picking sources) | 5,000 | 700 | $0.0021 | 1 credit | $0.01 |
 | Explanation | 3,000 | 1,500 | $0.0025 | 1 credit | $0.01 |

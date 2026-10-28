@@ -1,25 +1,37 @@
 # Document generation / PDF output
 
-> Status: ✅ wired up — reachable via `server/routers/projects.py`'s `/api/projects/{slug}/studio` endpoint (the Studio tab), which feeds it a project's own stored material chunks (also still callable directly by the moderator's structured `generate_doc` task for non-project use)
+> Status: ✅ wired up. The Studio tab (`POST /api/projects/{slug}/studio`, server/domains/knowledge/router.py) and chat's "... as a pdf" requests (moderator `_route_write_doc`) both use it, and so does the chat flashcard route's printable copy.
 
-- **Input:** material
-- **Output:** revision notes, formula sheets, study guides, lab reports, summaries, practice exams, flashcard PDFs, worksheets
+- **Input:** a spec written by the AI, or raw material
+- **Output:** a designed PDF: study guide, revision notes, summary, formula sheet, worksheet, flashcards, practice exam, lab report
+
+## How it works: templates (redesigned 2026-10-28)
+
+Until 2026-10-28 every document was the material printed as one black bullet per chunk. Now each type is a **template**:
+
+| File | Job |
+|---|---|
+| `templates.py` | One entry per doc_type: what the AI is asked to write (the plan of sections and blocks), its colour and layout options (numbered sections, a name/date line, lines to write on, the answer page's title), and `max_tokens`. Also `SPEC_SCHEMA`, the one JSON shape every template asks for. |
+| `render.py` | Draws a spec with reportlab: a coloured title band, numbered section bars, callout boxes (tip, watch out, remember, worked example, key idea), glossary tables, formula boxes, tables, questions with marks/options/answer lines, cut-out flashcards, fill-in blanks, and the answer key or mark scheme on its own page. Header and page numbers on every page. |
+| `engine.py` | `build_prompt()`, `parse_spec()` (tolerates code fences and unescaped LaTeX backslashes), `spec_from_markdown()` (a reply that came back as headings and bullets), `spec_from_material()` (no AI), and `run()`. |
+
+The AI only writes content; the design is fixed, so a revision sheet looks like a revision sheet whichever model wrote it.
+
+**Maths** in `$...$`, and every formula block, is drawn with matplotlib's mathtext in Computer Modern (the textbook look chat got in 1.0.16) and placed inline. LaTeX mathtext can't parse falls back to readable text (Greek letters, superscripts), never raw source.
+
+**Fonts:** DejaVu Sans from inside matplotlib, so Greek letters, arrows and ≤ ≥ print on any server.
+
+**Without AI** (the free local model isn't installed): the material is laid out in the same template, as paragraphs under its headings; flashcards split at the first sentence; the practice exam and worksheet are cloze questions (the longest word blanked out). The cover says it was compiled without AI.
 
 ## JSON shape
 
-Input: `{ "material": ["<chunk 1>", "<chunk 2>"], "doc_type": "study_guide", "title": "My Study Guide", "output_path": "output.pdf" }` (`title`/`output_path` optional)
-Output: `{ "document": "<path to generated pdf file>", "doc_type": "study_guide" }`
+Input: `{"spec": {...}, "doc_type": "revision_notes", "output_path": "out.pdf"}` or `{"material": ["<chunk>", ...], "doc_type": "study_guide", "title": "...", "output_path": "out.pdf"}`
+Output: `{"document": "<path to pdf>", "doc_type": "..."}`
 
-## Notes
+## Adding a type
 
-Built on `reportlab` — produces a **real PDF file**, not a placeholder reference.
+Add it to `TEMPLATES`, to `_DOC_TYPES` in server/domains/knowledge/router.py, to `_docTypes` in the app's project_workspace_screen.dart, and (for chat) a pattern in the moderator's `_DOC_TYPE_REQUESTS`.
 
-**Honesty note on `doc_type` handling** — there's no LLM in this phase to write real quiz questions or classify material into report sections:
-- `study_guide` / `revision_notes` / `summary` / `formula_sheet` / `worksheet` (and any unrecognized `doc_type`) compile the material chunks into a titled document, one bullet per chunk — real, if simple.
-- `flashcards` splits each chunk into front/back using a crude sentence heuristic (front = first sentence, back = the rest) — real work, not semantic Q&A generation.
-- `practice_exam` generates real **cloze-deletion** questions (blanks out the longest word in each chunk, answer = the removed word) — a genuine, well-known simple quiz technique, not fabricated understanding.
-- `lab_report` compiles chunks under generic section headers (Objective / Notes / Discussion) since there's no way to classify which chunk belongs where without real content understanding — all material lands under "Notes", with Objective/Discussion left as manual-fill placeholders.
+## Tests
 
-Tested and verified for real (not just "file exists"): generated `study_guide`, `flashcards`, and `practice_exam` PDFs, then **read the `practice_exam` PDF back** through `document_engine/pdf_processing` to confirm actual content — correctly produced 3 cloze questions (e.g. `"Entropy is a measure of disorder in a _____ system."`) with a matching answer key (`"thermodynamic"`, `"thermodynamics"`, `"spontaneously"`).
-
-**Studio wiring verified over real HTTP too:** generated a `study_guide` and `flashcards` PDF for a project via `/api/projects/{slug}/studio`, fetched the file back and confirmed real `%PDF` magic bytes (1.7KB, not an empty stub), listed both artifacts, deleted one and confirmed both its DB row and its file on disk were gone (a second fetch 404'd), and confirmed a project with no material yet is rejected with a clear 400 rather than generating an empty document.
+`server/tests/test_document_templates.py` renders every template and reads each PDF back with PyMuPDF (title, kicker, answer page, `<`/`&` escaped, no LaTeX source left). `test_ai_generation.py` covers Studio writing from the material with a focus.

@@ -27,7 +27,7 @@ from __future__ import annotations
 FEATURE_CREDITS: dict[str, int] = {
     "chat": 1,         # reply 1,400 out + marking 1,200 out, ~6k in: $0.0045
     "chat_exam": 2,    # exam-level reply 2,240 out + marking: $0.0054
-    "pdf_summary": 2,  # study guide or practice exam, 1,800 out: $0.0025
+    "pdf_summary": 2,  # any PDF template, chat or Studio: 5,000 out, ~8k in of sources: $0.0077
     "lesson": 3,       # 5,000 out, ~3k in: $0.0063
     "go_deeper": 1,    # picks 700 out, ~5k in of candidates: $0.0021
     "explain": 1,      # concept explanation, up to 1,500 out: $0.0025
@@ -52,7 +52,7 @@ PACKS: dict[str, dict] = {
 FEATURE_NAMES: dict[str, str] = {
     "chat": "Chat answer",
     "chat_exam": "Exam-level answer",
-    "pdf_summary": "Study guide",
+    "pdf_summary": "PDF document",
     "lesson": "Lesson",
     "go_deeper": "Go deeper",
     "explain": "Explanation",
