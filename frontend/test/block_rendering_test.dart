@@ -6,8 +6,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter_math_fork/flutter_math.dart';
 
 import 'package:study_os_frontend/features/chat/presentation/widgets/block_view.dart';
+import 'package:study_os_frontend/features/chat/presentation/widgets/blocks/text_block.dart';
 
 const _testBaseUrl = 'http://127.0.0.1:8000';
 
@@ -33,8 +35,38 @@ void main() {
     )));
     expect(find.textContaining('```'), findsNothing);
     expect(find.text('def f(n):\n    return 1'), findsOneWidget);
-    expect(find.text('F = m × a'), findsOneWidget);
+    // Typeset like a textbook, not printed in the code font (2026-10-28).
+    final math = tester.widgetList<Math>(find.byType(Math)).toList();
+    expect(math, hasLength(1));
+    expect(math.single.mathStyle, MathStyle.display);
     expect(find.textContaining(r'\['), findsNothing);
+  });
+
+  testWidgets('inline and display maths are typeset; prices stay text', (tester) async {
+    await tester.pumpWidget(_wrap(const BlockView(
+      block: {
+        'type': 'text',
+        'content': 'Area is \$\\pi r^2\$ and \\(\\frac{1}{2}bh\\). It costs \$5 and \$10.\n'
+            '\$\$\\int_0^1 x^2\\,dx = \\frac{1}{3}\$\$\n'
+            'So x^2 + y^2 = r^2 at 10^-3 m.',
+        'source': 'moderator',
+      },
+      baseUrl: _testBaseUrl,
+    )));
+    final math = tester.widgetList<Math>(find.byType(Math)).toList();
+    expect(math.where((m) => m.mathStyle == MathStyle.text), hasLength(2));
+    expect(math.where((m) => m.mathStyle == MathStyle.display), hasLength(1));
+    final text = tester.widgetList<RichText>(find.byType(RichText)).map((t) => t.text.toPlainText()).join('\n');
+    expect(text, contains('It costs \$5 and \$10.'));
+    expect(text, contains('So x² + y² = r² at 10⁻³ m.'));
+    expect(tester.takeException(), isNull);
+  });
+
+  test('maths the typesetter cannot read falls back to readable symbols', () {
+    expect(plainMath(r'\frac{a+b}{2} \leq \sqrt{x} \times 10^{3}'), '(a+b)/2 ≤ √x × 10³');
+    expect(plainMath(r'\text{speed} = \Delta d'), 'speed = Δ d');
+    expect(superscripts('x^2.'), 'x².');
+    expect(superscripts('x^2.5'), 'x^2.5');
   });
 
   testWidgets('equation block renders LaTeX without throwing', (tester) async {
@@ -296,7 +328,8 @@ void main() {
       baseUrl: _testBaseUrl,
     )));
     final rendered = tester.widgetList<RichText>(find.byType(RichText)).map((t) => t.text.toPlainText()).join('\n');
-    expect(rendered, contains('Start with the equation: We have 2x + 3 = 7.'));
+    expect(rendered, contains('Start with the equation: We have '));
+    expect(tester.widget<Math>(find.byType(Math)).mathStyle, MathStyle.text);
     expect(rendered, isNot(contains('**')));
     expect(rendered, isNot(contains(r'\(')));
     expect(find.text('•'), findsOneWidget);

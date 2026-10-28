@@ -1504,3 +1504,16 @@ The user asked for the rest of the plan, plus: a YouTube link should play inside
   - Migration `a3f19c7d2e58` adds `ledger_entries.feature` and `ai_usage.credits`.
 - **Deploy:** `website/deploy.sh` now checks the APK's SHA-256 on the server before swapping it in, after a truncated 1.0.14 upload. `ops/server-scripts-1.0.15.sh` installs the two new server commands.
 - **Tests:** 324/324 backend (`test_go_deeper.py` added; `test_billing.py` reworked for credits, worst-case-vs-price, packs and the hidden allowance; two config-reading tests now expect the 503 for an unconfigured hosted tier), 101/101 Flutter.
+
+### 2026-10-28 — Release 1.0.16: maths looks like maths
+
+The user didn't like how mathematical symbols, letters and numbers looked. In chat text and lessons, `MarkdownLite` showed maths in the code font. It only half-converted the LaTeX, so `\int`, `x^2` and `\,` appeared raw.
+
+- **Typeset maths** with `flutter_math_fork` (KaTeX fonts, already a dependency for equation blocks):
+  - `\( … \)` and `$…$` are typeset inline. They sit on the text baseline at the text's colour, scaled to match the app font's letter size. Fractions are full size (`\dfrac`). Expressions longer than 40 characters scroll sideways.
+  - `\[ … \]` and `$$ … $$`, on one line or several, become centred display equations that scroll when wide. The equation block does the same and takes the text colour.
+  - A lone `$` needs no space just inside it and no digit after it, so prices like "$5 and $10" stay text.
+- **Plain text:** `x^2`, `10^-3` and `m^{12}` outside maths become x², 10⁻³ and m¹².
+- **Fallback:** if the typesetter can't read something, `plainMath` shows readable symbols in the normal font (∫, ≤, √, Greek letters, a/b fractions, \text{}), not raw LaTeX in the code font.
+- Checked visually by rendering a real answer with the real fonts.
+- **Tests:** 103/103 Flutter (new: inline and display typesetting, prices, superscripts, fallback).
